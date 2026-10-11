@@ -24,6 +24,13 @@ The package supports three algorithms:
 - `heuristic`: fast two-stage constructive heuristic.
 - `column-generation`: master problem and pricing subproblem implementation.
 
+## Problem Description
+
+The full research problem, system structure, constraints, assumptions, and
+English problem diagram are documented here:
+
+[`docs/problem_description.md`](docs/problem_description.md)
+
 ## Requirements
 
 - Python 3.11 or newer.

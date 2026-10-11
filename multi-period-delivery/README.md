@@ -28,6 +28,13 @@ The ALNS implementation includes 10 destroy operators, 8 repair operators,
 adaptive operator weights, parameter tuning, feasibility repair, and
 machine-learning-based operator selection.
 
+## Problem Description
+
+The full production-driven multi-period problem, inventory structure,
+constraints, assumptions, and English problem diagram are documented here:
+
+[`docs/problem_description.md`](docs/problem_description.md)
+
 ## Requirements
 
 - Python 3.10 or newer.

@@ -59,6 +59,11 @@ tools/
 └── generate_data.py
 ```
 
+Detailed problem definitions are kept inside each project:
+
+- `single-period-delivery/docs/problem_description.md`
+- `multi-period-delivery/docs/problem_description.md`
+
 Only small sample datasets are included in this portfolio repository. The
 full experimental instances and generated output folders are intentionally
 excluded.
