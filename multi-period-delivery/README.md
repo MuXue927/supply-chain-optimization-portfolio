@@ -35,6 +35,11 @@ constraints, assumptions, and English problem diagram are documented here:
 
 [`docs/problem_description.md`](docs/problem_description.md)
 
+The result, cost, constraint, and plot validation for `dataset_1` is documented
+in:
+
+[`docs/dataset_1_validation.md`](docs/dataset_1_validation.md)
+
 ## Requirements
 
 - Python 3.10 or newer.

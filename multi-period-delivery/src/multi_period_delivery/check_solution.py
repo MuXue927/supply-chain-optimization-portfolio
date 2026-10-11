@@ -37,13 +37,15 @@ from .alns_config import default_config as ALNSConfig
 # Configure logging in the main program; this module only obtains its logger.
 logger = logging.getLogger(__name__)
 
-# Resolve paths relative to this file so moving the file does not break the
-# default dataset and output locations.
-current_dir = os.path.dirname(__file__)
-# Parent directory of the current file.
-par_path = os.path.dirname(current_dir)
-input_loc = os.path.join(par_path, 'datasets', 'multiple-periods', ALNSConfig.DATASET_TYPE)
-output_loc = os.path.join(par_path, 'OutPut-ALNS', 'multiple-periods', ALNSConfig.DATASET_TYPE)
+# Default paths are resolved from the current working directory. This keeps the
+# source-tree and editable-install workflows consistent.
+project_root = os.getcwd()
+input_loc = os.path.join(
+    project_root, 'datasets', 'multiple-periods', ALNSConfig.DATASET_TYPE
+)
+output_loc = os.path.join(
+    project_root, 'OutPut-ALNS', 'multiple-periods', ALNSConfig.DATASET_TYPE
+)
 
 
 @dataclass

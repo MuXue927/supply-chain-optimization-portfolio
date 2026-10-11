@@ -62,7 +62,6 @@ from .destroy_operators import (
 from .repair_operators import (
     greedy_repair,
     inventory_balance_repair,
-    infeasible_repair,
     # wrapper factories for repair operators
     wrap_repair_no_args,
     create_local_search_repair,
@@ -654,11 +653,6 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_repair_ops", 0) + 1
             )
 
-            alns.add_repair_operator(wrap_repair_no_args(infeasible_repair))
-            self._num_registered_repair_ops = (
-                getattr(self, "_num_registered_repair_ops", 0) + 1
-            )
-
             smart_iter = repair_params.get("smart_batch_repair", {}).get(
                 "max_iter", smart_defaults.get("max_iter", 10)
             )
@@ -1002,7 +996,23 @@ class ALNSOptimizer:
             # The callback-maintained fully feasible state has highest priority.
             callback_best_feasible = getattr(self, "best_feasible_state", None)
             if callback_best_feasible is not None:
-                self.best_solution = safe_state_snapshot(callback_best_feasible)
+                callback_snapshot = safe_state_snapshot(callback_best_feasible)
+                if self.best_solution is None:
+                    self.best_solution = callback_snapshot
+                else:
+                    try:
+                        current_cost = float(self.best_solution.calculate_cost())
+                        callback_cost = float(callback_snapshot.calculate_cost())
+                        if callback_cost < current_cost or (
+                            abs(callback_cost - current_cost) <= 1e-9
+                            and len(callback_snapshot.vehicles)
+                            < len(self.best_solution.vehicles)
+                        ):
+                            self.best_solution = callback_snapshot
+                    except Exception:
+                        # Keep the safer callback-maintained feasible state if
+                        # objective comparison is unavailable.
+                        self.best_solution = callback_snapshot
 
             # Run one light consolidation before output and roll back if infeasible.
             if self.best_solution is not None and getattr(
@@ -1030,10 +1040,25 @@ class ALNSOptimizer:
                         feasible_after, _ = self.best_solution.validate()
                     except Exception:
                         feasible_after = False
-                    if not feasible_after and snapshot_before is not None:
+                    cost_after = None
+                    cost_before = None
+                    try:
+                        cost_after = float(self.best_solution.calculate_cost())
+                        if snapshot_before is not None:
+                            cost_before = float(snapshot_before.calculate_cost())
+                    except Exception:
+                        pass
+                    if (
+                        not feasible_after
+                        or (
+                            cost_after is not None
+                            and cost_before is not None
+                            and cost_after > cost_before + 1e-9
+                        )
+                    ) and snapshot_before is not None:
                         self.best_solution = snapshot_before
                         self.log_printer.print(
-                            "Final consolidation produced infeasible state; rolled back.",
+                            "Final consolidation did not improve the actual objective; rolled back.",
                             color="yellow",
                         )
                     else:
@@ -1330,6 +1355,23 @@ class ALNSOptimizer:
 
             # Reset the index.
             df_summary = df_summary.reset_index()
+
+            # Add the same cost decomposition used by the actual objective.
+            df_summary["below_min_load"] = (
+                df_summary["occupied_size"] + 1e-9
+                < df_summary["min_standard_size"]
+            )
+            df_summary["fixed_cost"] = df_summary["vehicle_type"].map(
+                self.data.veh_type_cost
+            )
+            df_summary["minimum_load_penalty"] = np.where(
+                df_summary["below_min_load"],
+                float(self.data.param_alpha) * df_summary["fixed_cost"],
+                0.0,
+            )
+            df_summary["total_cost"] = (
+                df_summary["fixed_cost"] + df_summary["minimum_load_penalty"]
+            )
 
             summary_file = output_location / "opt_summary.csv"
             if is_file_in_use(summary_file):

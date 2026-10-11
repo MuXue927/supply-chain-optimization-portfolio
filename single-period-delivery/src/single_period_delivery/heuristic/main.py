@@ -3,10 +3,11 @@ import csv
 import time
 import random
 import datetime
+import numpy as np
 import pandas as pd
 from .InputDataHeuristic import InputDataHeuristic
 from .HeuristicModel import HeuristicModel
-from .optutility import LogPrinter
+from .optutility import LogPrinter, POSITIVEEPS
 
 random.seed(1234)
 
@@ -259,10 +260,24 @@ def result_state(r_data: InputDataHeuristic):
     df_tmp = df_stat1.groupby(['plant_code', 'day', 'client_code', 'vehicle_id']).agg(
         {'vehicle_type': 'first', 'qty': 'sum', 'carry_standard_size': 'first',
          'min_standard_size': 'first', 'occupied_size': 'sum'})
-    
-    df_tmp.to_csv(os.path.join(output_location, 'opt_summary.csv'))
-    
+
     df_tmp = df_tmp.reset_index()
+    df_tmp['below_min_load'] = (
+        df_tmp['occupied_size'] + POSITIVEEPS < df_tmp['min_standard_size']
+    )
+    df_tmp['fixed_cost'] = (
+        df_tmp['vehicle_type'].astype(str).map(r_data.veh_type_cost)
+    )
+    df_tmp['minimum_load_penalty'] = np.where(
+        df_tmp['below_min_load'],
+        r_data.param_alpha * df_tmp['fixed_cost'],
+        0.0,
+    )
+    df_tmp['total_cost'] = (
+        df_tmp['fixed_cost'] + df_tmp['minimum_load_penalty']
+    )
+    df_tmp.to_csv(os.path.join(output_location, 'opt_summary.csv'), index=False)
+
     # Check whether every vehicle's loaded SKU volume satisfies its capacity constraint.
     is_cap_exceed = pd.Series(df_tmp['occupied_size'] <= df_tmp['carry_standard_size'])
     if is_cap_exceed.all():  # Return True when every value is True.

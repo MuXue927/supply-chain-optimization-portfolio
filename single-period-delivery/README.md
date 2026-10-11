@@ -31,6 +31,10 @@ English problem diagram are documented here:
 
 [`docs/problem_description.md`](docs/problem_description.md)
 
+The static code review and heuristic result checks are documented in:
+
+[`docs/code_review.md`](docs/code_review.md)
+
 ## Requirements
 
 - Python 3.11 or newer.

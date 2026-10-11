@@ -237,6 +237,20 @@ class HeuristicModel:
         total_cost = 0
         for veh_type, veh_nums in self.N_f.items():
             total_cost += self.data.veh_type_cost[veh_type] * veh_nums
+
+        for vehicle in self.Vehicles:
+            if not vehicle.cargo:
+                continue
+            loaded_volume = sum(
+                self.data.sku_sizes[sku_id] * qty
+                for sku_id, qty in vehicle.cargo.items()
+            )
+            min_load = self.data.veh_type_min_load[vehicle.type]
+            if loaded_volume + POSITIVEEPS < min_load:
+                total_cost += (
+                    self.data.param_alpha
+                    * self.data.veh_type_cost[vehicle.type]
+                )
         return total_cost
         
     

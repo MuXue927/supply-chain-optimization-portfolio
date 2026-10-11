@@ -578,19 +578,32 @@ class SolutionState:
 
     def actual_objective(self) -> float:
         """
-        Return the actual objective aligned with the Gurobi evaluation metric.
+        Return the objective aligned with the ILP evaluation metric.
 
-        The value equals vehicle fixed cost plus the underloaded-vehicle penalty,
-        where the latter is ``underloaded_vehicle_count * param_pun_objective``.
+        The value equals vehicle fixed cost plus the minimum-load penalty. By
+        default, the penalty follows the thesis formula
+        ``alpha * vehicle_cost`` for every used vehicle whose load is below its
+        minimum shipment quantity. ``param_pun_objective`` remains available as
+        a legacy override when explicitly configured.
         """
         feasibility, _ = self.validate()
         if not feasibility:
             return float("inf")
 
         fixed_cost, underload_vehicle_count, _ = self._vehicle_cost_components()
-        punishment_cost = float(underload_vehicle_count) * float(
-            self.data.param_pun_objective
-        )
+        if self.data.param_pun_objective > 0.0:
+            punishment_cost = float(underload_vehicle_count) * float(
+                self.data.param_pun_objective
+            )
+        else:
+            punishment_cost = 0.0
+            for veh in self.vehicles:
+                loaded = self.compute_veh_load(veh)
+                min_load = float(self.data.veh_type_min_load.get(veh.type, 0.0))
+                if loaded < min_load:
+                    punishment_cost += float(self.data.param_alpha) * float(
+                        self.data.veh_type_cost.get(veh.type, 0.0)
+                    )
         return float(fixed_cost + punishment_cost)
 
     def calculate_cost(self) -> float:

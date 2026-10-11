@@ -2,6 +2,7 @@
 # Loads and normalizes the data stored in datasets/single-period.
 # Exposes each dataset in the representation required by the heuristic.
 import os
+import json
 import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -49,6 +50,8 @@ class InputDataHeuristic:
     veh_type_cap: Dict[str, int] = field(init=False)
     # Minimum load of each vehicle type: {v_type: min_load}.
     veh_type_min_load: Dict[str, int] = field(init=False)
+    # Penalty coefficient applied to underloaded vehicles.
+    param_alpha: float = field(init=False)
     
     df_order: pd.DataFrame = field(default_factory=pd.DataFrame)
     df_sku_inv: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -62,6 +65,10 @@ class InputDataHeuristic:
         
     def load(self):
         input_file_loc = self.input_file_loc
+        with open(os.path.join(input_file_loc, "model_config.json")) as fp:
+            model_config = json.load(fp)
+        self.param_alpha = float(model_config.get("alpha", 2.0))
+
         # reading data from each dataset
         input_file_loc = os.path.join(input_file_loc, self.dataset_name)
         
@@ -192,4 +199,3 @@ class InputDataHeuristic:
                         supply_chain[plant, dealer].add(sku)
         supply_chain = dict(supply_chain)
         return supply_chain
-

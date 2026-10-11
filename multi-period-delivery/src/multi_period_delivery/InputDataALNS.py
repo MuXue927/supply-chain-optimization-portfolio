@@ -109,6 +109,7 @@ class DataALNS:
     param_pun_factor3: float = field(init=False)
     param_pun_factor4: float = field(init=False)
     param_pun_objective: float = field(init=False)
+    param_alpha: float = field(init=False)
 
     # ==== Base sets and attributes ====
     plants: Set[str] = field(init=False)
@@ -308,6 +309,7 @@ class DataALNS:
             self.param_pun_factor3 = float(param.get("pun_factor3", 0))
             self.param_pun_factor4 = float(param.get("pun_factor4", 0))
             self.param_pun_objective = float(param.get("pun_objective", 0))
+            self.param_alpha = float(param.get("alpha", 2.0))
 
             self.logger.info("Configuration parameters loaded successfully")
         except Exception as e:

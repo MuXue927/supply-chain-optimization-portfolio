@@ -48,13 +48,15 @@ def run_model(input_file_loc=None, output_file_loc=None):
     try:
         # Use default paths when no explicit paths are provided.
         if input_file_loc is None:
-            current_dir = Path(__file__).parent
-            par_path = current_dir.parent
-            input_file_loc = par_path / 'datasets' / 'multiple-periods' / DATASET_TYPE
+            project_root = Path.cwd()
+            input_file_loc = (
+                project_root / 'datasets' / 'multiple-periods' / DATASET_TYPE
+            )
         if output_file_loc is None:
-            current_dir = Path(__file__).parent
-            par_path = current_dir.parent
-            output_file_loc = par_path / 'OutPut-ALNS' / 'multiple-periods' / DATASET_TYPE
+            project_root = Path.cwd()
+            output_file_loc = (
+                project_root / 'OutPut-ALNS' / 'multiple-periods' / DATASET_TYPE
+            )
 
         dataset_name = f'dataset_{DATASET_IDX}'
 

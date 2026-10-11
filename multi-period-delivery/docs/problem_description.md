@@ -32,7 +32,6 @@ Plant inventory has two parts:
 
    Finished products available at the beginning of a period and ready for
    shipment.
-
 2. **Scheduled-production inventory**
 
    Products assigned to the production plan for a period. They become
@@ -60,7 +59,6 @@ whose loaded volume falls below the minimum shipment quantity.
 
    For every dealer and SKU, the total quantity shipped from all plants over
    all periods must satisfy the total demand of that dealer and SKU.
-
 2. **Inventory-flow balance**
 
    For each plant, SKU, and period, the shipped quantity equals:
@@ -73,17 +71,14 @@ whose loaded volume falls below the minimum shipment quantity.
 
    This equation captures the dynamic coupling between production, delivery,
    and inventory carried across periods.
-
 3. **Plant inventory-capacity constraint**
 
    At the end of every period, the total inventory of all SKUs at a plant
    cannot exceed that plant's storage capacity.
-
 4. **Vehicle capacity constraint**
 
    The total volume loaded into a vehicle cannot exceed the capacity of its
    vehicle type.
-
 5. **Minimum shipment quantity**
 
    If a used vehicle is loaded below the required threshold, a penalty cost is
@@ -97,17 +92,14 @@ whose loaded volume falls below the minimum shipment quantity.
    For every SKU, total supply from opening inventory and scheduled production
    is at least total demand. Global stockout therefore does not make the model
    infeasible.
-
 2. **Exogenous production plan**
 
    Production quantities by plant, SKU, and period are known parameters. They
    are not decision variables in this optimization problem.
-
 3. **One-dimensional measurement**
 
    SKU volume and vehicle capacity use a linear volume scale. Weight, stacking,
    and other complex geometric loading constraints are ignored.
-
 4. **Unlimited vehicle availability**
 
    The 3PL can provide an unlimited number of vehicles. Vehicle-type selection
