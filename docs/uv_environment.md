@@ -68,7 +68,19 @@ after a `uv` dependency change that reinstalls the `cplex` wheel is safe.
 
 After activation, `python -m single_period_delivery.cplex_api_monolithic` and
 `python -m multi_period_delivery.cplex_api_monolithic` use the Python API path.
-The original `cplex_*` folders remain available as command-line fallbacks.
+
+## Running the Tests
+
+From the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+The root `pytest.ini` sets `--import-mode=importlib` (the two projects contain
+tests with identical file names) and restricts collection to the two `tests/`
+folders, so no extra flags are required and generated folders such as
+`outputs/` are never scanned.
 
 ## Network and Proxy Note
 

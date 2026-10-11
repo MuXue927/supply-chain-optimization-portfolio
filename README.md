@@ -102,6 +102,22 @@ uv pip install --python .venv cplex==22.1.2.0 docplex==2.32.264
 Gurobi requires a valid license; the ALNS, the heuristic, and the CPLEX Python
 API paths do not.
 
+## Testing
+
+Run the full suite from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Both subprojects ship tests with the same file names (for example
+`test_cli.py`, `test_cplex_api.py`), and a bare `pytest` from the root would
+otherwise recurse into generated folders such as `outputs/`. The root
+`pytest.ini` pins the collection scope and the import mode, so no extra flags
+are needed. Each project also carries an equivalent
+`[tool.pytest.ini_options]` block in its `pyproject.toml`, so running pytest
+from inside a single project works the same way.
+
 ## Reproducing the Experiments
 
 ```powershell

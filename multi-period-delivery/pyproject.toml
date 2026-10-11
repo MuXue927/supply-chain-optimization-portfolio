@@ -47,6 +47,13 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["multi_period_delivery*"]
 
+# The portfolio root also carries tests with the same file names, and the
+# combined run uses --import-mode=importlib (see ../../pytest.ini). Setting it
+# here keeps a run from inside this project consistent with the combined run.
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
