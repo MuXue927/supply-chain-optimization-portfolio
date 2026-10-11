@@ -15,21 +15,30 @@ Design notes
    - Updates the exploration phase marker through adjust_exploration to support
      exploration, exploitation, and refinement strategies.
 
-2. Operator overview:
+2. Operator overview, in registration order. Every operator name ends in
+   "_removal" and mirrors ALNSOptimizer._register_destroy_operators:
    - random_removal: stratified random removal of less efficient vehicles to
      introduce diversity.
-   - worst_removal: remove inferior vehicles using a combined utilization and
-     cost-efficiency score, favoring known heuristics.
-   - infeasible_removal: targeted reduction or partial rollback for negative
-     inventory and resulting infeasibility.
-   - surplus_inventory_removal: release shipments from plants under high
-     inventory pressure to reduce source-side overflow risk.
    - shaw_removal: remove related vehicles by plant, dealer, day, and cargo
      similarity to create structural disruption.
    - periodic_shaw_removal: combine clustering, multidimensional feature
      engineering, and relatedness scoring for multi-period decisions.
+   - worst_removal: remove inferior vehicles using a combined utilization and
+     cost-efficiency score, favoring known heuristics.
+   - surplus_inventory_removal: release shipments from plants under high
+     inventory pressure to reduce source-side overflow risk.
    - path_removal: evaluate plant-to-dealer paths and remove inefficient
      subsets.
+   - cross_period_dealer_removal: prioritize dealers that span many periods
+     with many vehicles, then remove their vehicles in batches to trigger
+     larger cross-period restructuring.
+   - period_range_removal: choose a contiguous window of days and remove
+     low-load vehicles inside it to break cross-day local optima.
+   - infeasible_removal: targeted reduction or partial rollback for negative
+     inventory and the infeasibility it causes.
+   - inventory_level_removal: remove deliveries for dealers whose inventory is
+     abnormally low or high; the dealer-side counterpart of
+     surplus_inventory_removal, which looks at plant inventory.
 
 3. Performance optimizations:
    - precompute_dealer_shipments precomputes dealer-level shipments and demand
@@ -52,8 +61,8 @@ Design notes
 
 Maintenance guidance:
 - When adding a destroy operator, capture prev_obj = state.objective() inside
-  the operator and call post_destroy after the destruction step.
-- If destruction can produce partial changes, ensure that the removed array
+  the operator and call post_destroy after the removal step.
+- If a removal can produce partial changes, ensure that the removed array
   represents only whole-vehicle removals for inventory restoration. Explicitly
   update state.s_ikt for non-whole-vehicle adjustments.
 """
@@ -690,7 +699,7 @@ def surplus_inventory_removal(
 
 
 # ---------------------------------------------------------------------
-# 5. Shaw similarity-based destruction
+# 5. Shaw similarity-based removal
 # ---------------------------------------------------------------------
 def shaw_removal(
     current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
@@ -839,7 +848,7 @@ def shaw_removal(
 
 
 # ---------------------------------------------------------------------
-# 6. Multi-period / clustering-enhanced Shaw destruction
+# 6. Multi-period / clustering-enhanced Shaw removal
 # ---------------------------------------------------------------------
 def periodic_shaw_removal(
     current: SolutionState,
@@ -851,7 +860,7 @@ def periodic_shaw_removal(
     k_cluster: Optional[int] = None,
 ) -> SolutionState:
     """
-    Multidimensional feature clustering plus relatedness-based destruction:
+    Multidimensional feature clustering plus relatedness-based removal:
       Features: [normalized day, dealer demand satisfaction, previous-day
       inventory (normalized), vehicle utilization, plant inventory pressure].
       Procedure:
@@ -1372,7 +1381,7 @@ def period_range_removal(
       - Select a continuous day segment from [1, horizons].
       - Prefer removing low-load vehicles in that segment to create room for
         replanning.
-      - Goal: break cross-day local optima while keeping destruction size
+      - Goal: break cross-day local optima while keeping the removal size
         controlled.
     """
     t0 = time.time()
@@ -1728,11 +1737,11 @@ def path_removal(
     return state
 
 
-def inventory_level_destruction(
+def inventory_level_removal(
     current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
 ) -> SolutionState:
     """
-    Inventory-level destruction with P1 priority.
+    Inventory-level removal.
 
     Core idea:
       Identify abnormal dealer inventory levels, either too low or too high,
@@ -1746,7 +1755,7 @@ def inventory_level_destruction(
       - Promotes reoptimization toward inventory balance.
     """
     t0 = time.time()
-    print("[OPLOG] Starting inventory_level_destruction operator")
+    print("[OPLOG] Starting inventory_level_removal operator")
     state = current.copy()
     prev_obj = state.objective()
 
@@ -1755,17 +1764,17 @@ def inventory_level_destruction(
         post_destroy(
             state,
             [],
-            "inventory_level_destruction",
+            "inventory_level_removal",
             early=True,
             prev_obj=prev_obj,
             t0=t0,
         )
         print(
-            f"[OPLOG] inventory_level_destruction: insufficient vehicles ({time.time() - t0:.4f}s)"
+            f"[OPLOG] inventory_level_removal: insufficient vehicles ({time.time() - t0:.4f}s)"
         )
         return state
 
-    degree = float(resolve_degree("inventory_level_destruction", state, degree))
+    degree = float(resolve_degree("inventory_level_removal", state, degree))
     degree = max(0.1, min(0.8, degree))
 
     # Calculate plant-SKU inventory anomaly scores. ``s_ikt`` is keyed by
@@ -1809,20 +1818,20 @@ def inventory_level_destruction(
                     anomaly_score_map[(plant, sku_id)] = anomaly
 
     except Exception as e:
-        print(f"[OPLOG] inventory_level_destruction: failed to calculate anomaly scores: {e}")
+        print(f"[OPLOG] inventory_level_removal: failed to calculate anomaly scores: {e}")
         return state
 
     if not anomaly_score_map:
         post_destroy(
             state,
             [],
-            "inventory_level_destruction",
+            "inventory_level_removal",
             early=True,
             prev_obj=prev_obj,
             t0=t0,
         )
         print(
-            f"[OPLOG] inventory_level_destruction: no anomalous dealers ({time.time() - t0:.4f}s)"
+            f"[OPLOG] inventory_level_removal: no anomalous dealers ({time.time() - t0:.4f}s)"
         )
         return state
 
@@ -1861,22 +1870,22 @@ def inventory_level_destruction(
         state.mark_objective_dirty()
 
     post_destroy(
-        state, removed_vehicles, "inventory_level_destruction", prev_obj=prev_obj, t0=t0
+        state, removed_vehicles, "inventory_level_removal", prev_obj=prev_obj, t0=t0
     )
     print(
-        f"[OPLOG] inventory_level_destruction: removed {len(removed_vehicles)} vehicles, "
+        f"[OPLOG] inventory_level_removal: removed {len(removed_vehicles)} vehicles, "
         f"targeted {len(target_pairs)} pairs ({time.time() - t0:.4f}s)"
     )
     return state
 
 
-def create_inventory_level_destruction(degree: Optional[float] = None):
-    """Factory that creates an inventory-level destruction wrapper."""
-    defaults = ALNSConfig.get_operator_default("inventory_level_destruction").get(
+def create_inventory_level_removal(degree: Optional[float] = None):
+    """Factory that creates an inventory-level removal wrapper."""
+    defaults = ALNSConfig.get_operator_default("inventory_level_removal").get(
         "params", {}
     )
     degree = degree if degree is not None else defaults.get("degree", 0.25)
-    name = "inventory_level_destruction"
+    name = "inventory_level_removal"
     return DestroyOperatorWrapper(
-        func=inventory_level_destruction, name=name, degree=degree
+        func=inventory_level_removal, name=name, degree=degree
     )

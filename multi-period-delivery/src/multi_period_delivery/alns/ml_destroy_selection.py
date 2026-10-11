@@ -34,7 +34,7 @@ Operator set, kept consistent with MLOperatorSelector.destroy_op_map
     - cross_period_dealer_removal
     - period_range_removal
     - infeasible_removal
-    - inventory_level_destruction
+    - inventory_level_removal
 
 Performance and safety
     - Operate only on the state.copy() result.
@@ -85,7 +85,7 @@ from .destroy_operators import (
     path_removal,
     cross_period_dealer_removal,
     period_range_removal,
-    inventory_level_destruction,
+    inventory_level_removal,
 )
 
 # ---------------------------------------------------------------------
@@ -106,7 +106,7 @@ _DESTROY_OPERATOR_FUNCTIONS: Dict[str, callable] = {
     ),
     "period_range_removal": lambda s, r, **kw: period_range_removal(s, r, **kw),
     "infeasible_removal": lambda s, r, **kw: infeasible_removal(s, r, **kw),
-    "inventory_level_destruction": lambda s, r, **kw: inventory_level_destruction(
+    "inventory_level_removal": lambda s, r, **kw: inventory_level_removal(
         s, r, **kw
     ),
 }
@@ -130,7 +130,7 @@ def _sanitize_destroy_params(op_name: str, params: Dict[str, Any]) -> Dict[str, 
         "path_removal": {"degree"},
         "cross_period_dealer_removal": {"degree"},
         "period_range_removal": {"degree", "window_ratio"},
-        "inventory_level_destruction": {"degree"},
+        "inventory_level_removal": {"degree"},
         "worst_removal": {"degree", "value_bias"},
         "infeasible_removal": set(),
         "surplus_inventory_removal": {"degree"},

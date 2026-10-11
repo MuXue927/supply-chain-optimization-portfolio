@@ -116,7 +116,9 @@ class ALNSConfig:
     LATE_FLEET_HARD_PRIORITY_START_PROGRESS: float = 0.60
     LATE_FLEET_HARD_PRIORITY_MAX_ACTUAL_WORSE: float = 0.75
     LATE_FLEET_HARD_PRIORITY_MAX_ACTUAL_REL_WORSE: float = 0.01
-    # Deprecated: late fleet hard priority is now applied to all instance scales.
+    # Retained so older configuration dictionaries still load. The late fleet
+    # hard-priority rule is applied at every instance scale now, so this scale
+    # threshold is no longer read.
     LATE_FLEET_HARD_PRIORITY_MAX_SCALE: int = 250
 
     # --------------------------
@@ -243,7 +245,7 @@ class ALNSConfig:
                 "params": {"degree": 0.25},
                 "ranges": {"degree": (0.1, 0.5)},
             },
-            "inventory_level_destruction": {
+            "inventory_level_removal": {
                 "params": {"degree": 0.25},
                 "ranges": {"degree": (0.1, 0.5)},
             },
@@ -290,7 +292,7 @@ class ALNSConfig:
             "cross_period_dealer_removal_degree": 0.45,
             "period_range_removal_degree": 0.35,
             "period_range_removal_window_ratio": 0.30,
-            "inventory_level_destruction_degree": 0.25,  # P1: inventory-level destruction
+            "inventory_level_removal_degree": 0.25,
         }
     )
 
@@ -298,10 +300,11 @@ class ALNSConfig:
         default_factory=lambda: {
             "greedy_repair": {"demand_weight": 0.8, "stock_weight": 0.2},
             "local_search_repair": {"max_iter": 10},
+            "inventory_balance_repair": {},
             "smart_batch_repair": {"max_iter": 10, "batch_size": 10, "timeout": None},
             "regret_based_repair": {"k": 2, "topN": 6, "time_limit": 10.0},
             "cross_period_consolidation_repair": {},
-            "sequential_repair": {},  # P0: sequential repair
+            "sequential_repair": {},
             "lookahead_repair": {"lookahead_horizon": 2},
             "fleet_consolidation_repair": {},
         }
@@ -443,8 +446,8 @@ class ALNSConfig:
             "period_range_removal_window_ratio": self.DESTROY_DEFAULTS.get(
                 "period_range_removal_window_ratio", 0.30
             ),
-            "inventory_level_destruction_degree": self.DESTROY_DEFAULTS.get(
-                "inventory_level_destruction_degree", 0.25
+            "inventory_level_removal_degree": self.DESTROY_DEFAULTS.get(
+                "inventory_level_removal_degree", 0.25
             ),
         }
 

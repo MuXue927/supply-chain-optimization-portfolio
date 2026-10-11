@@ -2,8 +2,8 @@
 repair_operators.py
 
 Module overview
-- This module implements and exposes ALNS repair operators for registration by
-  the main workflow.
+- This module implements and exposes the ALNS repair operators that
+  ``ALNSOptimizer`` registers through ``alns.add_repair_operator``.
 - Design principles:
   1. Do not change the behavior of other multi_period_delivery modules; treat
      dependencies as read-only and reuse existing utilities where possible.
@@ -14,19 +14,34 @@ Module overview
   4. Explicitly document potentially expensive simulations, such as the regret
      operator, and note optimization opportunities.
 
-Public interfaces; keep these names unchanged when using them externally:
-- greedy_repair(partial, rng)
-- local_search_repair(partial, rng, max_iter=10, time_limit=5.0)
-- inventory_balance_repair(partial, rng)
-- smart_batch_repair(partial, rng)
-- infeasible_repair(partial, rng)  # Feasibility wrapper that calls infeasible_removal.
-- regret_based_repair(partial, rng, k=2, topN=6, time_limit=10.0)
-- RegretBasedRepairOperator, which can be passed directly to
-  alns.add_repair_operator.
+Registered repair operators, in ALNSOptimizer._register_repair_operators order:
+- greedy_repair(partial, rng, demand_weight=None, stock_weight=None)
+- cross_period_consolidation_repair(partial, rng, time_limit=None,
+  max_moves=None): move a full vehicle load onto an existing same-route vehicle
+  in a different period, removing an underutilized vehicle-period. Each
+  candidate needs a state copy, so the operator carries its own time / move
+  budget.
+- local_search_repair(partial, rng, max_iter=None): correct vehicle types and
+  local loadings after an initial repair.
+- inventory_balance_repair(partial, rng): spread allocation across plants by
+  descending available inventory.
+- smart_batch_repair(partial, rng, max_iter=None, batch_size=None, timeout=None)
+- regret_based_repair(partial, rng, k=None, topN=None, time_limit=None)
+- FleetConsolidationRepairOperator: merge smaller vehicles into larger ones to
+  reduce fleet size while preserving feasibility.
+- sequential_repair(partial, rng, lookahead_horizon=None): repair in
+  chronological period order so the inventory recursion stays consistent by
+  construction.
+- lookahead_repair(partial, rng, lookahead_horizon=None): sequential repair that
+  scores candidate insertions over a [t, t+h] window.
 
-Note: counting core repair operators, this module covers eight categories.
-infeasible_repair exists only as a compatibility wrapper and is not counted as
-a separate core repair-operator category.
+Minimum-load filling and same-route consolidation are not standalone operators;
+they run inside ``post_repair`` in repair_utils.py after every repair.
+
+Compatibility helper, not registered as an ALNS repair operator:
+- infeasible_repair(partial, rng) delegates to the ``infeasible_removal``
+  destroy operator and is used by the callbacks and the initial-solution
+  repair path.
 """
 
 # -------------------------
@@ -1759,7 +1774,7 @@ def sequential_repair(
     partial: SolutionState, rng: rnd.Generator, lookahead_horizon: Optional[int] = None
 ) -> SolutionState:
     """
-    Sequential Repair with P0 priority.
+    Sequential repair following the period order.
 
     Core idea:
       Repair in chronological period order and exploit the recursive structure

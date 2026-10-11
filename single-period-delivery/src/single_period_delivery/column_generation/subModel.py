@@ -1,6 +1,8 @@
 # Subproblem for the column-generation algorithm.
-# Intended for Model 1: the decomposition approach.
-# Model 1 assumes a single period, SKU inventory greater than demand, and unlimited storage at production plants.
+# This is the pricing problem of the decomposition approach for the
+# single-period problem; it generates vehicle-route patterns for the master.
+# It assumes a single period, SKU inventory greater than demand, and unlimited
+# storage capacity at the production plants.
 # It supports multiple production plants, dealers, vehicle types, and SKUs.
 # Production plants may supply overlapping SKU sets.
 import math
@@ -8,7 +10,6 @@ from gurobipy import GRB
 import gurobipy as gp
 from typing import Dict, Tuple, Set, Hashable
 from dataclasses import dataclass, field
-from .masterModel import log_printer
 from .InputDataCG import InputDataCG
 
 @dataclass
@@ -138,17 +139,6 @@ class SubModel:
         self.model.write("SubModel.lp")
 
         if self.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
-            # log_printer.print("Exception: Sub Model Is Infeasible or Unbounded!")
-            # self.model.computeIIS()
-            # self.model.write("Infeasible_SubModel.ilp")
-            # if self.model.IISMinimal:  # Check whether computeIIS() returned a minimal irreducible infeasible subsystem.
-            #     log_printer.print('IIS is minimal \n')
-            # else:
-            #     log_printer.print('IIS is not minimal \n')
-            # log_printer.print('\n The following constraint (s) cannot be satisfied: ')
-            # for c in self.model.getConstrs():
-            #     if c.IISConstr:
-            #         log_printer.print('%s' % c.ConstrName)
             return False
         return True
 

@@ -105,7 +105,8 @@ output, and it upgrades the target vehicle type when a merge requires it.
 
 Independent of the algorithm design, the thesis code contained defects that
 corrupted individual evaluations: a wrong inventory namespace in
-`inventory_level_destruction`, division by remaining instead of rated
+`inventory_level_removal` (named `inventory_level_destruction` in the thesis
+code), division by remaining instead of rated
 capacity, a Shaw off-by-one, a missing inventory restore in periodic Shaw,
 stale objective caches, empty vehicles counted in fleet-size guidance, mutable
 shared demand dictionaries, and a final output that could continue after the

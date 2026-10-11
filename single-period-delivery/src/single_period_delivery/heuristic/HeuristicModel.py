@@ -208,12 +208,7 @@ class HeuristicModel:
         # Compute the number of vehicles for each vehicle type f.
         for veh_type in self.data.all_veh_types:
             self.N_f[veh_type] = 0
-        
-        # for veh_type in self.data.all_veh_types:
-        #     for (i, j, k, f, l) in self.X_full.keys():
-        #         if veh_type == f:
-        #             self.N_f[veh_type] += 1
-        
+
         for vehicle in self.Vehicles:
             veh_type = vehicle.type
             self.N_f[veh_type] += 1

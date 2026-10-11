@@ -111,8 +111,6 @@ class InputDataMultiple:
         self.param_time_limit = param['time_limit']
         self.param_output_flag = param['output_flag']
 
-        # multiple-factor for sku size and vehicle capacity
-        multiple_factor = 100
         # reading data from each dataset
         input_file_loc = os.path.join(input_file_loc, self.dataset_name)
 
@@ -220,9 +218,6 @@ class InputDataMultiple:
             if dealer not in self.skus_dealer:
                 self.skus_dealer[dealer] = set()
             self.skus_dealer[dealer].add(sku)
-        # Compute total demand across all dealers and SKUs.
-        sku_total_demands = sum(self.demands.values())
-
         # =========================================================
         # Derive an upper bound on the required number of vehicles.
         # Identify all vehicle types present in the dataset.

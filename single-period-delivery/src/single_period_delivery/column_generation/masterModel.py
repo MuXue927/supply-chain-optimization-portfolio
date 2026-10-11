@@ -1,6 +1,8 @@
 # Master model for the column-generation algorithm.
-# Intended for Model 1: the decomposition approach.
-# Model 1 assumes a single period, SKU inventory greater than demand, and unlimited storage at production plants.
+# This is the decomposition approach for the single-period problem: the master
+# selects vehicle-route patterns and subModel.py prices new ones.
+# It assumes a single period, SKU inventory greater than demand, and unlimited
+# storage capacity at the production plants.
 # It supports multiple production plants, dealers, vehicle types, and SKUs.
 # Production plants may supply overlapping SKU sets.
 import time

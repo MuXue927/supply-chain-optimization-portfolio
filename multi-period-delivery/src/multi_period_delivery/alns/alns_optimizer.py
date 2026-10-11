@@ -54,7 +54,7 @@ from .destroy_operators import (
     create_worst_removal,
     create_surplus_inventory_removal,
     create_path_removal,
-    create_inventory_level_destruction,
+    create_inventory_level_removal,
     create_cross_period_dealer_removal,
     create_period_range_removal,
     wrap_operator_no_args,
@@ -560,7 +560,7 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # period_range_removal: contiguous time-window destruction
+            # period_range_removal: contiguous time-window removal
             period_range_defaults = ALNSConfig.get_operator_default(
                 "period_range_removal"
             ).get("params", {})
@@ -585,17 +585,17 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # inventory_level_destruction: destroy around abnormal dealer inventory.
+            # inventory_level_removal: remove deliveries around abnormal dealer inventory.
             inv_defaults = ALNSConfig.get_operator_default(
-                "inventory_level_destruction"
+                "inventory_level_removal"
             ).get("params", {})
-            inventory_level_destruction_op = create_inventory_level_destruction(
+            inventory_level_removal_op = create_inventory_level_removal(
                 destroy_params.get(
-                    "inventory_level_destruction_degree",
+                    "inventory_level_removal_degree",
                     inv_defaults.get("degree", 0.25),
                 )
             )
-            alns.add_destroy_operator(inventory_level_destruction_op)
+            alns.add_destroy_operator(inventory_level_removal_op)
             self._num_registered_destroy_ops = (
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )

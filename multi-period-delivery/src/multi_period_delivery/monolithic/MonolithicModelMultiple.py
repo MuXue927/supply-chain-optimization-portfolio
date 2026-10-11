@@ -413,15 +413,11 @@ class MonolithicModelMultiple:
                 )
         self.cons_plant_inv_limit = gp.tupledict(_cons_plant_inv_limit_tmp)
 
-        # Constraint 9: add symmetry-breaking cuts to reduce model symmetry.
-        # Gurobi detects and handles symmetry automatically, so these cuts are optional.
-        # If added, evaluate their effect on solver efficiency.
-        # self.cons_symmetry_break = self.model.addConstrs((
-        #     self.z_lt[v_id, t] <= self.z_lt[v_id_1, t]
-        #     for v_type in self.all_veh_types
-        #     for v_id, v_id_1 in zip(list(self.veh_ids[v_type]), list(self.veh_ids[v_type])[1:])
-        #     for t in self.periods
-        # ), name="cons_symmetry_break")
+        # Constraint 9 (optional): symmetry-breaking cut of the form
+        # z_lt[v_id, t] <= z_lt[v_id_1, t] over consecutive vehicle ids of the
+        # same type within a period. Gurobi detects and handles symmetry on its
+        # own, so the cut is not added by default; enable it only when profiling
+        # shows it helps on the target instances.
 
         # Enable solver logs.
         self.model.setParam("OutputFlag", self.param_output_flag)
@@ -431,12 +427,11 @@ class MonolithicModelMultiple:
         self.model.Params.TimeLimit = self.param_time_limit
 
     def run(self):
-        # If BestBd improves slowly or not at all during optimization, try the following
-        # parameter settings. For algorithm comparison experiments, it is generally better
-        # to set only TimeLimit and MIPGap.
-        # self.model.Params.MIPFocus = 3    # Focus on improving the bound.
-        # self.model.Params.MIPFocus = 2    # Focus on proving optimality.
-        # self.model.Params.Cuts = 2        # Generate more cutting planes.
+        # The Gurobi settings that helped most during development when the best
+        # bound improved slowly were MIPFocus = 3 (focus on improving the
+        # bound), MIPFocus = 2 (focus on proving optimality), and Cuts = 2
+        # (generate more cutting planes). The reported comparisons set only
+        # TimeLimit and MIPGap so that the runs stay comparable.
 
         # Collect solver status information.
         meta = {}

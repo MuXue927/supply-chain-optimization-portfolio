@@ -1,3 +1,16 @@
+"""
+Legacy script-style entry point for the multi-period ALNS.
+
+``multi_period_delivery.__init__`` re-exports ``run_model`` from this module
+for backward compatibility with the pre-package layout. The supported entry
+points are the console script (``multi-period-delivery``) and
+``python -m multi_period_delivery``, both of which delegate to
+``multi_period_delivery.cli``.
+
+Note: importing this module reads the default ALNS configuration and opens the
+log file, so the package root imports it lazily rather than at import time.
+"""
+
 import os
 import sys
 import logging
@@ -30,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import ALNSOptimizer implementation moved to separate module
+# Imported after the logging setup above so the optimizer can reuse this logger.
 from .alns_optimizer import ALNSOptimizer
 
 def run_model(input_file_loc=None, output_file_loc=None):
@@ -75,21 +88,16 @@ def run_model(input_file_loc=None, output_file_loc=None):
         sys.exit(1)
 
 if __name__ == "__main__":
-    # Prefer running this file as a module or install the package.
-    # Running the file directly can break package-relative imports.
-    msg = (
-        "Please run this module as a package or install the project first.\n"
-        "Development options:\n"
-        "  1) Run as a module: python -m multi_period_delivery.alns.main\n"
-        "  2) Install editable: pip install -e . (then python -m multi_period_delivery)\n"
-        "If you intended to run this as a script, change imports to absolute ones or run via -m."
-    )
-    print(msg)
-    # Optionally attempt to run when executed as package (works when invoked via -m)
-    # If running via `python -m multi_period_delivery.alns.main`, __package__ is
-    # set and run_model will work.
-    if __package__:
-        run_model()
-    else:
-        # Exit with non-zero status to indicate incorrect invocation
+    # Running the file directly (for example `python alns/main.py`) leaves
+    # __package__ empty and breaks the relative imports above. Only the module
+    # form (`python -m multi_period_delivery.alns.main`) is supported.
+    if not __package__:
+        print(
+            "Please run this module as a package or install the project first.\n"
+            "Development options:\n"
+            "  1) Run as a module: python -m multi_period_delivery.alns.main\n"
+            "  2) Install editable: pip install -e . "
+            "(then run: python -m multi_period_delivery)"
+        )
         sys.exit(2)
+    run_model()

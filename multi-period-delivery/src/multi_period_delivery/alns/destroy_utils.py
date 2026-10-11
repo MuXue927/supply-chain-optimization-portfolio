@@ -503,7 +503,7 @@ def resolve_degree(op_name: str, state, degree):
     Resolve and clamp the degree parameter for a destroy operator.
     Priority: explicit degree -> ParamAutoTuner.get_operator_params(op_name)
     -> ALNSConfig default -> fallback default.
-    Integrate adaptive_degree when available to adjust destruction strength
+    Integrate adaptive_degree when available to adjust removal strength
     dynamically based on iteration progress.
     Output: a float in [0, 1].
     """
@@ -559,11 +559,11 @@ def resolve_degree(op_name: str, state, degree):
                 "shaw_removal",
                 "worst_removal",
                 "surplus_inventory_removal",
-                "inventory_level_destruction",
+                "inventory_level_removal",
             }:
                 adaptive_max_degree = 0.60
 
-            # Use adaptive_degree to adjust destruction strength based on
+            # Use adaptive_degree to adjust removal strength based on
             # iteration progress. base_degree=val provides the starting value.
             val = param_tuner.adaptive_degree(
                 base_degree=val,

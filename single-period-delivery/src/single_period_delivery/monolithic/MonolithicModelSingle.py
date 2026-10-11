@@ -1,8 +1,8 @@
 # Gurobi implementation of the single-period mathematical model.
-# This module implements the model defined as Model 1.
-# Model 1 assumes a single period, SKU inventory greater than or equal to demand,
-# unlimited storage capacity at production plants, multiple plants and dealers,
-# multiple vehicle types and SKUs, and overlapping SKU portfolios across plants.
+# The model assumes a single period, SKU inventory greater than or equal to
+# demand, unlimited storage capacity at the production plants, multiple plants
+# and dealers, multiple vehicle types and SKUs, and overlapping SKU portfolios
+# across plants.
 import os
 import time
 from gurobipy import GRB
@@ -229,17 +229,15 @@ class MonolithicModelSingle:
             self.x_ijkl.sum(plant, '*', sku_id, '*') <= self.sku_inv[plant, sku_id]
             for (plant, sku_id) in self.new_duet_ik), name="cons_sku_supply")
 
-        # # Constraint 8: the quantity of SKU k shipped from all plants must not exceed total SKU k inventory.
-        # self.cons_sku_total_supply = self.model.addConstrs((
-        #     self.x_ijkl.sum('*', '*', sku_id, '*') <= self.sku_total_inv[sku_id]
-        #     for sku_id in self.sku_total_inv), name="cons_sku_total_inv")
+        # Constraint 8 (optional): cap total shipments of SKU k at its total
+        # inventory across all plants, that is
+        # sum(x_ijkl[:, :, k, :]) <= sku_total_inv[k]. The per-plant supply
+        # constraint above already implies it for the instances used here, so
+        # the aggregated cut is not added.
 
-        # # # Constraint 9: symmetry-breaking cuts reduce symmetry in the model.
-        # self.cons_symmetry_break = self.model.addConstrs((
-        #     self.z_l[v_id] <= self.z_l[v_id_1]
-        #     for v_type in self.all_veh_types
-        #     for v_id, v_id_1 in zip(list(self.veh_ids[v_type]), list(self.veh_ids[v_type])[1:])
-        # ), name="cons_symmetry_break")
+        # Constraint 9 (optional): symmetry-breaking cut z_l[v_id] <=
+        # z_l[v_id_1] over consecutive vehicle ids of the same type. Gurobi
+        # handles symmetry internally, so this cut is not added by default.
 
         # Enable solver output.
         self.model.setParam('OutputFlag', self.param_output_flag)

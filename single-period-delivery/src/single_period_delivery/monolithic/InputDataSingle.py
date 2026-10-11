@@ -220,10 +220,6 @@ class InputDataSingle:
             if dealer not in self.skus_dealer:
                 self.skus_dealer[dealer] = set()
             self.skus_dealer[dealer].add(sku)
-        
-        # Compute total demand across all dealers and SKUs.
-        sku_total_demands = sum(self.demands.values())
-
         # ============================================================
         # Method 2 computes an upper bound on the required number of vehicles.
         # Identify all vehicle types present in the dataset.
@@ -248,21 +244,16 @@ class InputDataSingle:
         veh_num_ub2 = math.floor(total_volume2 / min_veh_cap)
         print(f"The first upper bound on the number of vehicles used is {veh_num_ub1}")
         print(f"The second upper bound on the number of vehicles used is {veh_num_ub2}")
-        # Length of the interval (veh_num_ub2, veh_num_ub1).
-        interval_len = veh_num_ub1 - veh_num_ub2 - 1
-        # Allow an increase of up to half the interval length above veh_num_ub2.
-        max_increase = math.floor(interval_len / 2)
-        # self.max_veh_num = random.randint(veh_num_ub2 + 1, veh_num_ub2 + max_increase)
         plant_nums = len(self.plants)
         dealer_nums = len(self.dealers)
         veh_num_ub3 = plant_nums * dealer_nums
         print(f"The third upper bound on the number of vehicles used is {veh_num_ub3}")
         self.max_veh_num = max(veh_num_ub1, veh_num_ub2, veh_num_ub3)
-        # What is the risk of randomly choosing an integer from the interval (veh_num_ub2, veh_num_ub1) as the vehicle upper bound?
-        # If the interval is wide, the chosen bound may be loose and increase model construction and solution time.
-        # The number of model variables and constraints grows with the number of available vehicles.
-        # Under the dataset generation rules, however, this interval is not wide, so a few additional vehicles have limited impact.
-        # max_veh_num = veh_num_ub2
+        # Taking the largest of the three bounds keeps the model conservative:
+        # the number of variables and constraints grows with the number of
+        # available vehicles, so a looser bound costs build and solve time. The
+        # generated instances keep the three bounds close, so the extra vehicles
+        # have limited impact.
         
         # Assign sequential identifiers to all vehicles.
         self.all_vehicles = {v_id for v_id in range(1, self.max_veh_num + 1)}

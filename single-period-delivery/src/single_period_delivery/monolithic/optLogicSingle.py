@@ -47,40 +47,6 @@ def run_model(
     output_result(model)
     result_state(r_data=data)
     log_printer.print_title(f'The Vehicle Loading Plan is Done! {datetime.datetime.now()}')
-    # ========================================================================================
-
-    # # Create the output directory for the Gurobi solve log.
-    # log_path = os.path.join('solve-logs', 'single-period', 'small', 'dataset_3')
-    # # Create the directory if it does not already exist.
-    # if not os.path.exists(log_path):
-    #     os.makedirs(log_path)
-    # # Specify the log file.
-    # log_file = os.path.join(log_path, 'Windows PowerShell.txt')
-    # # Preserve the original standard output and error streams.
-    # origin_stdout = sys.stdout
-    # origin_stderr = sys.stderr
-    # try:
-    #     # Redirect standard output and error streams to the file.
-    #     with open(log_file, 'w') as file:
-    #         sys.stdout = sys.stderr = file
-    #         model = MonolithicModelSingle(data=data)
-    #         flag = model.run()
-    #         output_result(model)
-    #         if not flag:
-    #             return False
-    #         result_state(r_data=data)
-    #         log_printer.print_title(f'The Vehicle Loading Plan is Done! {datetime.datetime.now()}')
-    #         # Flush buffered output to the file.
-    #         sys.stdout.flush()
-    #         sys.stderr.flush()
-    # finally:  # Cleanup runs regardless of whether an exception occurred.
-    #     # Restore the original standard output and error streams.
-    #     sys.stdout = origin_stdout
-    #     sys.stderr = origin_stderr
-    # # Print the log file location.
-    # log_printer.print(f'Log file has been saved to the location: {log_file}')
-    # # A return statement in the finally block overrides a return statement in the try block.
-    # return flag
 
 
 def clear_output_file(output_file_loc=output_loc):

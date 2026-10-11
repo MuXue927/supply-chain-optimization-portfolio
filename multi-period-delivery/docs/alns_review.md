@@ -113,7 +113,7 @@ The review also fixed:
   vehicle type;
 - `sequential_repair` and `lookahead_repair` compared SKU quantities directly
   with remaining volume capacity;
-- `inventory_level_destruction` looked up `(dealer, sku, day)` in a
+- `inventory_level_removal` looked up `(dealer, sku, day)` in a
   `(plant, sku, day)` inventory table and was therefore effectively using the
   wrong namespace;
 - two destroy operators divided by remaining capacity instead of rated
@@ -246,7 +246,7 @@ Authoritative registered operators:
 - destroy (10): `random_removal`, `shaw_removal`, `periodic_shaw_removal`,
   `worst_removal`, `surplus_inventory_removal`, `path_removal`,
   `cross_period_dealer_removal`, `period_range_removal`, `infeasible_removal`,
-  `inventory_level_destruction`.
+  `inventory_level_removal`.
 - repair (9): `greedy_repair`, `cross_period_consolidation_repair`,
   `local_search_repair`, `inventory_balance_repair`, `smart_batch_repair`,
   `regret_based_repair`, `fleet_consolidation_repair`, `sequential_repair`,

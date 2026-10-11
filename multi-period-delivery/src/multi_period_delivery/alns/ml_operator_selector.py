@@ -132,7 +132,7 @@ DESTROY_OPERATOR_NAMES: Tuple[str, ...] = (
     "cross_period_dealer_removal",
     "period_range_removal",
     "infeasible_removal",
-    "inventory_level_destruction",
+    "inventory_level_removal",
 )
 
 REPAIR_OPERATOR_NAMES: Tuple[str, ...] = (

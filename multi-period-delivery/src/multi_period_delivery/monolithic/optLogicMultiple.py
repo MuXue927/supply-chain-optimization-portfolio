@@ -1,9 +1,7 @@
 # Execution logic for the multi-period monolithic optimization model.
 # Solver results are written to CSV files.
 import os
-import sys
 import csv
-import datetime
 import pandas as pd
 from .MonolithicModelMultiple import *
 
@@ -238,38 +236,6 @@ def run_model_from_paths(input_file_loc=input_loc, output_file_loc=output_loc, d
     # call general runner
     return run_model(data, model, time_limit=time_limit, out_dir=os.path.join(output_file_loc, dataset_name),
                      write_outputs=write_outputs)
-
-    # Optional Gurobi log-file capture retained as reference code.
-    # log_path = os.path.join('solve-logs', 'multiple-periods', 'small', 'dataset_1')
-    # Create the log path if needed.
-    # if not os.path.exists(log_path):
-    #     os.makedirs(log_path)
-    # Specify the solver log file.
-    # log_file = os.path.join(log_path, 'Windows PowerShell.txt')
-    # Preserve the original stdout and stderr streams.
-    # origin_stdout = sys.stdout
-    # origin_stderr = sys.stderr
-    # try:
-    # Redirect stdout and stderr to the log file.
-    #     with open(log_file, 'w') as file:
-    #         sys.stdout = sys.stderr = file
-    #         model = MonolithicModelMultiple(data=data)
-    #         flag = model.run()
-    #         output_result(model)
-    #         if not flag:
-    #             return False
-    #         result_state(r_data=data)
-    #         log_printer.print_title(f'The Vehicle Loading Plan is Done! {datetime.datetime.now()}')
-    # Flush buffered output to disk.
-    #         sys.stdout.flush()
-    #         sys.stderr.flush()
-    # finally:  # Restore streams even if an exception occurs.
-    #     sys.stdout = origin_stdout
-    #     sys.stderr = origin_stderr
-    #     # Print the log-file location.
-    # log_printer.print(f'Log file has been saved to the location: {log_file}')
-    # A return inside finally would override the try-block return value.
-    # return flag
 
 
 def clear_output_file(output_file_loc=output_loc):

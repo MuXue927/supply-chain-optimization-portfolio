@@ -1,5 +1,35 @@
 """
-Use the machine-learning operator selector to choose the best repair operator.
+ml_repair_selection
+===================
+
+Purpose
+    Provide the adaptive repair-operator selection entry point backed by
+    MLOperatorSelector. It mirrors ml_destroy_selection.py: read the current
+    state features and the recorded (feature, operator, improvement) samples,
+    predict the expected improvement of each repair operator, and select one.
+    When training data is insufficient it falls back to random selection.
+
+Core flow
+    1. Copy the current solution so the caller's state is not modified.
+    2. If no ML selector is attached (state.ml_selector is None), fall back to
+       random selection over the candidate set.
+    3. Train on the available samples when the sample count allows it, then ask
+       the selector for the best repair operator.
+    4. Execute the chosen operator, evaluate the improvement, record the
+       sample, and tune the operator parameters when a ParamAutoTuner is
+       attached.
+    5. Return the updated solution copy.
+
+Operator set, kept consistent with MLOperatorSelector.REPAIR_OPERATOR_NAMES:
+    - greedy_repair
+    - cross_period_consolidation_repair
+    - local_search_repair
+    - inventory_balance_repair
+    - smart_batch_repair
+    - regret_based_repair
+    - fleet_consolidation_repair
+    - sequential_repair
+    - lookahead_repair
 """
 
 import time
