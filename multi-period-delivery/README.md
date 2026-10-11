@@ -13,7 +13,6 @@ multi-period-delivery/
 │   └── monolithic/
 ├── experiments/
 ├── scripts/
-│   ├── generate_data.py
 │   └── write_config.py
 ├── datasets/multiple-periods/small/dataset_1/
 └── pyproject.toml
@@ -224,15 +223,15 @@ The pipeline covers:
 ## Development Utilities
 
 ```powershell
-python scripts/generate_data.py 5 0 3
+python tools/generate_data.py --problem multi --periods 5 --scale small --count 3 --seed 20260408
 python scripts/write_config.py --scale small
 ```
 
 Explanation:
 
-- `scripts/generate_data.py 5 0 3` creates three small multi-period instances
-  with a five-period planning horizon. The scale codes are `0=small`,
-  `1=medium`, and `2=large`.
+- `tools/generate_data.py` is the shared generator for both projects.
+  `--problem multi --periods 5` creates multi-period instances with a
+  five-period planning horizon.
 - `scripts/write_config.py --scale small` writes `model_config.json` and
   `model_config_alns.json` into `datasets/multiple-periods/small`.
 

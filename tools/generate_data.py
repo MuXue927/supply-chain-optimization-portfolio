@@ -1,13 +1,8 @@
-# 不依赖任何原始数据的输入, 生成全新的数据集
-# 要求该程序对外开放一些接口, 表示生成数据集需要的关键参数
-# 需要的关键参数包括：规划周期、数据集规模的大小、运行一次程序可以生成的数据集的数量
-# 规划周期 -- horizons 默认值为1
-# 数据集规模的大小 -- dataset_size [0, 1, 2] 0表示小规模  1表示中规模  2表示大规模
-# 运行一次程序可以生成的数据集的数量 -- dataset_nums 默认值为1
-# 上述这些参数, 要求可以在通过命令行调用py文件时, 跟随在脚本文件名称的后面
-# 使用命令示例如下：
-# python scripts/generate_data.py 1 0 3
-# 上述命令表示, 生成3个单周期的小规模数据集
+# Shared dataset generator for the supply-chain optimization portfolio.
+#
+# Examples:
+#   python tools/generate_data.py --problem single --scale small --count 3
+#   python tools/generate_data.py --problem multi --periods 5 --scale small --count 3
 
 # 对于单周期的问题, 需要生成的csv文件包括：
 # 1)order.csv文件
@@ -56,46 +51,82 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
-parser = argparse.ArgumentParser(description="The arguments needed to generate dataset")
-# 规划周期
-parser.add_argument("horizons", type=int, default=1, help="The planning horizon needed to be considered")
-# 数据集的规模, 0 -- 小规模, 1 -- 中规模, 2 -- 大规模
-parser.add_argument("dataset_size", type=int, choices=[0, 1, 2], help="The size of dataset")
-# 生成数据集的数量
-parser.add_argument("dataset_nums", type=int, default=1,
-                    help="The quantities of different datasets needed to be generated")
-# 新增：可选的输出目录参数, 优先级高于默认的基于脚本的位置
-parser.add_argument("--output-dir", type=str, default=None, help="Optional output directory. If omitted, defaults to datasets next to the script.")
+parser = argparse.ArgumentParser(description="Generate datasets for both optimization projects")
+parser.add_argument(
+    "--problem",
+    choices=["single", "multi"],
+    required=True,
+    help="Problem type. Use 'single' for the single-period project and 'multi' for the multi-period project.",
+)
+parser.add_argument(
+    "--scale",
+    choices=["small", "medium", "large"],
+    default="small",
+    help="Dataset scale.",
+)
+parser.add_argument(
+    "--periods",
+    type=int,
+    default=5,
+    help="Planning horizon for multi-period datasets. Single-period generation always uses one period.",
+)
+parser.add_argument(
+    "--count",
+    type=int,
+    default=1,
+    help="Number of dataset_N directories to generate.",
+)
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=None,
+    help="Optional random seed for reproducible generation.",
+)
+parser.add_argument(
+    "--output-dir",
+    type=Path,
+    default=None,
+    help="Optional exact output directory. Defaults to the target project's datasets folder.",
+)
 args = parser.parse_args()
+HORIZONS = 1 if args.problem == "single" else args.periods
+DATASET_SIZE = {"small": 0, "medium": 1, "large": 2}[args.scale]
+DATASET_NUMS = args.count
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 def generate_dataset():
-    horizons = args.horizons
-    dataset_size = args.dataset_size
-    dataset_nums = args.dataset_nums
+    horizons = HORIZONS
+    dataset_size = DATASET_SIZE
+    dataset_nums = DATASET_NUMS
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
 
     logger.info(f"Start generating datasets: horizons={horizons}, dataset_size={dataset_size}, dataset_nums={dataset_nums}")
 
-    # 使用 Path 对象构建路径, 优先使用用户提供的 --output-dir
     if args.output_dir:
-        # 将用户提供的路径解析为绝对路径, 确保无论脚本被移动到何处, 输出仍写入期望位置
         base_file_loc = Path(args.output_dir).resolve()
     else:
-        base_file_loc = PROJECT_ROOT / "datasets"
+        project_dir = (
+            "single-period-delivery"
+            if args.problem == "single"
+            else "multi-period-delivery"
+        )
+        base_file_loc = PROJECT_ROOT / project_dir / "datasets"
 
-    if horizons == 1:
+    if args.problem == "single":
         print("Generating datasets for single period.")
         base_file_loc = base_file_loc / "single-period"
     else:
         print("Generating datasets for multiple periods.")
         base_file_loc = base_file_loc / "multiple-periods"
 
-    if dataset_size == 0:
+    if args.scale == "small":
         base_file_loc = base_file_loc / "small"
-        # base_file_loc = os.path.join(base_file_loc, "small-test")
-    elif dataset_size == 1:
+    elif args.scale == "medium":
         base_file_loc = base_file_loc / "medium"
     else:
         base_file_loc = base_file_loc / "large"
@@ -248,7 +279,7 @@ def order_to_csv(orders, file_loc):
     :return: None
     """
     rows = []
-    if args.horizons == 1:  # 单周期
+    if args.problem == "single":
         for (dealer, sku), qty in orders.items():
             rows.append({
                 'client_code': dealer,
@@ -441,7 +472,7 @@ def generate_order(dealers, skus):
             sku_dealer_map[sku].add(dealer)
 
     orders = {}
-    if args.horizons == 1:  # 单周期
+    if args.problem == "single":
         for dealer, skus_need in dealer_sku_map.items():
             for sku in skus_need:
                 orders[dealer, sku] = int(round(random.uniform(5, 40)))
@@ -544,7 +575,7 @@ def aggregate_order(orders):
     :return: 生成SKU需求数量的字典
     """
     sku_demands = defaultdict(int)
-    if args.horizons == 1:  # 单周期
+    if args.problem == "single":
         for (dealer_id, sku_id), qty in orders.items():
             sku_demands[sku_id] += qty
     else:  # 多周期

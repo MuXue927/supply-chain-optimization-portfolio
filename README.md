@@ -52,6 +52,13 @@ portfolio of optimization, Python, and experiment-engineering work.
     └── datasets/multiple-periods/small/dataset_1/
 ```
 
+Shared, cross-project development tools live at the repository root:
+
+```text
+tools/
+└── generate_data.py
+```
+
 Only small sample datasets are included in this portfolio repository. The
 full experimental instances and generated output folders are intentionally
 excluded.

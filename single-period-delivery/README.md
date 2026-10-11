@@ -13,7 +13,6 @@ single-period-delivery/
 │   ├── heuristic/
 │   └── column_generation/
 ├── scripts/
-│   ├── generate_data.py
 │   └── write_config.py
 ├── datasets/single-period/small/dataset_9/
 └── pyproject.toml
@@ -195,19 +194,18 @@ the package itself does not immediately import Gurobi.
 
 ## Development Utilities
 
-The `scripts/` directory contains development utilities:
+Dataset generation is shared at the monorepo root:
 
 ```powershell
-python scripts/generate_data.py 1 0 3
+python tools/generate_data.py --problem single --scale small --count 3 --seed 20260408
 python scripts/write_config.py --scale small
 ```
 
 Explanation:
 
-- `scripts/generate_data.py 1 0 3` creates three small single-period
-  instances. The first number is the planning horizon, the second selects the
-  scale (`0=small`, `1=medium`, `2=large`), and the third is the number of
-  instances.
+- `tools/generate_data.py` is the shared generator for both projects.
+  `--problem single` writes single-period instances into this project's
+  `datasets/single-period/small` directory.
 - `scripts/write_config.py --scale small` writes `model_config.json` and
   `model_config_cg.json` into `datasets/single-period/small`.
 
