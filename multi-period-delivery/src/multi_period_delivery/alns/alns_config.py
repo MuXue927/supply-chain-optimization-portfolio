@@ -18,12 +18,10 @@ class ALNSConfig:
     # --------------------------
     SEED: int = 15926535
     LOG_LEVEL: str = "INFO"  # DEBUG / INFO / WARN / ERROR
-    VERBOSE: bool = True
 
     # Feature toggles
     ENABLE_PARAM_TUNER: bool = False
     ENABLE_ML_OPERATORS: bool = False
-    TRACKER_ENABLED: bool = False
     # Enable paper-oriented visual reports by default (objective/gap/operator charts).
     ENABLE_REPORTS: bool = True
     # Keep startup plotting off by default to avoid extra overhead.
@@ -31,9 +29,7 @@ class ALNSConfig:
     # Explicitly disable supply-chain 3D interactive plotting (time-consuming, low thesis value).
     ENABLE_SUPPLY_CHAIN_3D: bool = False
     QUIET_OPERATOR_LOGS: bool = True
-    SHOW_BEST_FEASIBLE_PROGRESS: bool = True
     QUIET_INITIAL_SOLUTION_LOGS: bool = True
-    VALIDATE_PRINT_STACK_ON_OVERLOAD: bool = False
 
     # Dataset defaults (can be overridden by user config)
     DATASET_TYPE: str = "large"
@@ -44,11 +40,9 @@ class ALNSConfig:
     # --------------------------
     MAX_RUNTIME: int = 600  # seconds (10 minutes) — increased for long-run profiling
     MAX_ITERATIONS: int = 1000
-    MAX_ITERATIONS_NO_IMPROVEMENT: int = 100  # currently unused
     DYNAMIC_MAX_ITERATIONS_PER_SECOND: float = 1000.0
     DYNAMIC_MAX_ITERATION_BUFFER: int = 200
     DYNAMIC_MAX_ITERATION_SAFETY_FACTOR: float = 1.5
-    DYNAMIC_MAX_ITERATION_MIN_RATE: float = 1.0
     PREFER_FINAL_BEST_ACTUAL_SOLUTION: bool = True
     TERMINATE_ON_INFEASIBLE_INITIAL: bool = True
     # Hard-feasibility policy: only states satisfying all hard constraints
@@ -116,10 +110,6 @@ class ALNSConfig:
     LATE_FLEET_HARD_PRIORITY_START_PROGRESS: float = 0.60
     LATE_FLEET_HARD_PRIORITY_MAX_ACTUAL_WORSE: float = 0.75
     LATE_FLEET_HARD_PRIORITY_MAX_ACTUAL_REL_WORSE: float = 0.01
-    # Retained so older configuration dictionaries still load. The late fleet
-    # hard-priority rule is applied at every instance scale now, so this scale
-    # threshold is no longer read.
-    LATE_FLEET_HARD_PRIORITY_MAX_SCALE: int = 250
 
     # --------------------------
     # Simulated annealing / acceptance
@@ -136,34 +126,16 @@ class ALNSConfig:
     ROULETTE_SEG_LENGTH: int = 80
 
     # --------------------------
-    # Initial solution / parallelism
+    # Initial solution
     # --------------------------
-    PARALLEL_DEMAND_THRESHOLD: int = 1000
-    MAX_INIT_THREADS: int = 8
-    INITIAL_SOLUTION_STRATEGY: str = "improved_greedy"  # placeholder key
     INITIAL_USE_DEALER_GROUPING: bool = True
     INITIAL_ENABLE_CUMULATIVE_CONSTRAINT: bool = True
     INITIAL_ENABLE_RELAXED_REALLOCATION: bool = True
 
     # --------------------------
-    # Random removal variants (convenience)
-    # --------------------------
-    RANDOM_REMOVAL_VARIANTS: List[Dict[str, Any]] = field(
-        default_factory=lambda: [
-            {"degree": 0.15, "name": "random_gentle"},
-            {"degree": 0.25, "name": "random_normal"},
-            {"degree": 0.35, "name": "random_aggressive"},
-        ]
-    )
-
-    # --------------------------
     # ML / learning-based repair defaults
     # --------------------------
-    ML_LEARNING_ENABLED: bool = False
-    ML_MODEL_TYPE: str = "adaptive"  # 'linear', 'random_forest', 'adaptive'
-    ML_MIN_SCORE: float = 0.4
     ML_INITIAL_SAMPLE_SIZE: int = 25
-    ML_ADAPTIVE_SAMPLE_SIZE: int = 200
     ML_RETRAIN_INTERVAL: int = 80
     ML_TAKEOVER_MIN_SAMPLE_SIZE: int = 80
     ML_TAKEOVER_MIN_SAMPLE_SIZE_SMALL: int = 120
@@ -178,7 +150,6 @@ class ALNSConfig:
     # --------------------------
     # Param tuner defaults (sync with ParamAutoTuner)
     # --------------------------
-    TUNER_ENABLED: bool = False
     TUNER_LEARNING_RATE: float = 0.1
     TUNER_EXPLORATION_INITIAL: float = 0.3
     TUNER_PHASE_THRESHOLDS: Tuple[float, float] = (
@@ -385,15 +356,6 @@ class ALNSConfig:
     CROSS_PERIOD_REMOVAL_STAGNATION_BOOST: float = 1.20
 
     # --------------------------
-    # periodic_shaw KMeans tuning knobs (micro-tuning / perf)
-    # Exposed here so users/CI can reduce KMeans cost without code edits.
-    # --------------------------
-    PERIODIC_SHAW_N_INIT: int = 3
-    PERIODIC_SHAW_MAX_ITER: int = 50
-    PERIODIC_SHAW_TOL: float = 1e-3
-    PERIODIC_SHAW_USE_FLOAT32: bool = True
-
-    # --------------------------
     # Regret operator practical caps (safeguards for production)
     # These limit candidate branching / caching granularity.
     # --------------------------
@@ -420,7 +382,6 @@ class ALNSConfig:
     # Logging / persistence
     # --------------------------
     LOG_DIR: Optional[str] = "logs-alns"
-    SAVE_BEST_EVERY_N_ITERS: int = 50
 
     # --------------------------
     # Helper instance methods
