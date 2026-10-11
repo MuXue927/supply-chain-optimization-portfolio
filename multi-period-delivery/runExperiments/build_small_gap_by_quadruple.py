@@ -87,9 +87,13 @@ def load_gap_detail(path: Path) -> pd.DataFrame:
     # Keep ALNS variants only.
     variant_map = {
         "basic": "ALNS-B",
+        "alns-b": "ALNS-B",
         "full": "ALNS-F",
+        "alns-f": "ALNS-F",
         "ml": "ALNS-ML",
+        "alns-ml": "ALNS-ML",
         "tuner": "ALNS-T",
+        "alns-t": "ALNS-T",
     }
     df = df[df["variant"].isin(variant_map.keys())].copy()
     df["method"] = df["variant"].map(variant_map)

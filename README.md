@@ -54,9 +54,10 @@ excluded.
 ## Reproducing
 
 Each subproject has its own `pyproject.toml` and README with commands.
-The code requires Python 3.10+ and a valid Gurobi installation for the
-mathematical-programming components. The ALNS code also uses the public
-`alns` package.
+The multi-period project requires Python 3.10+, while the single-period
+environment was locked with Python 3.13. A valid Gurobi installation is needed
+for the mathematical-programming components. The ALNS code also uses the
+public `alns` package.
 
 Start with the project-level README:
 

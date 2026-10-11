@@ -33,6 +33,21 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def canonical_variant(value: Any) -> str:
+    aliases = {
+        "basic": "ALNS-B",
+        "alns-b": "ALNS-B",
+        "full": "ALNS-F",
+        "alns-f": "ALNS-F",
+        "ml": "ALNS-ML",
+        "alns-ml": "ALNS-ML",
+        "tuner": "ALNS-T",
+        "alns-t": "ALNS-T",
+    }
+    text = str(value).strip()
+    return aliases.get(text.lower(), text)
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -231,13 +246,7 @@ def build_wide(detail: pd.DataFrame) -> pd.DataFrame:
     if detail.empty:
         return pd.DataFrame()
 
-    method_order = ["basic", "full", "ml", "tuner"]
-    method_labels = {
-        "basic": "ALNS-B",
-        "full": "ALNS-F",
-        "ml": "ALNS-ML",
-        "tuner": "ALNS-T",
-    }
+    method_order = ["ALNS-B", "ALNS-F", "ALNS-ML", "ALNS-T"]
 
     per_dataset = (
         detail.groupby(["scale", "dataset_name", "variant"], as_index=False)[
@@ -246,7 +255,7 @@ def build_wide(detail: pd.DataFrame) -> pd.DataFrame:
         .mean()
         .rename(columns={"improvement_pct": "improvement_mean_pct"})
     )
-    per_dataset["method"] = per_dataset["variant"].map(method_labels)
+    per_dataset["method"] = per_dataset["variant"].map(canonical_variant)
 
     wide = per_dataset.pivot_table(
         index=["scale", "dataset_name"],
@@ -286,10 +295,10 @@ def build_instance_wide(
         return pd.DataFrame()
 
     method_labels = {
-        "basic": "ALNS-B",
-        "full": "ALNS-F",
-        "ml": "ALNS-ML",
-        "tuner": "ALNS-T",
+        "ALNS-B": "ALNS-B",
+        "ALNS-F": "ALNS-F",
+        "ALNS-ML": "ALNS-ML",
+        "ALNS-T": "ALNS-T",
     }
 
     keys = ["scale", "dataset_name"]
@@ -297,7 +306,7 @@ def build_instance_wide(
         keys.append("instance")
 
     sub = detail[keys + ["variant", "improvement_pct"]].copy()
-    sub["method"] = sub["variant"].map(method_labels)
+    sub["method"] = sub["variant"].map(canonical_variant).map(method_labels)
 
     instance_wide = sub.pivot_table(
         index=keys,

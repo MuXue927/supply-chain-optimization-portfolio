@@ -162,8 +162,8 @@ def build_summary_table(detail: pd.DataFrame) -> pd.DataFrame:
                     "metric": m,
                     "count": 0,
                     "mean": float("nan"),
-                    "best": float("nan"),
-                    "worst": float("nan"),
+                    "median": float("nan"),
+                    "std": float("nan"),
                 }
             )
             continue
@@ -173,8 +173,8 @@ def build_summary_table(detail: pd.DataFrame) -> pd.DataFrame:
                 "metric": m,
                 "count": int(valid.shape[0]),
                 "mean": float(valid.mean()),
-                "best": float(valid.min()),
-                "worst": float(valid.max()),
+                "median": float(valid.median()),
+                "std": float(valid.std(ddof=1)) if valid.shape[0] > 1 else 0.0,
             }
         )
 

@@ -1,5 +1,9 @@
 def main():
-    print("Hello from problem1!")
+    print(
+        "Single-period delivery optimization. "
+        "Run the algorithm-specific entry script under monolithic/, heuristic/, "
+        "or column-generation/."
+    )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 - 接受实例列表、算法变体、seeds、time_limit、并行度、输出目录等参数
 - 对每个 (instance, variant, seed) 组合创建独立输出目录并运行 ALNSCode 优化器
 - 在每次运行前通过 ALNSCode.alns_config.default_config.update_from_dict 临时设置 ENABLE_PARAM_TUNER / ENABLE_ML_OPERATORS / SEED / MAX_RUNTIME / LOG_DIR
-- 每次运行结束写入 run_metadata.json（包含元数据与运行状态），便于后续 aggregator 合并
+- 每次运行结束写入 run_metadata.json（包含元数据与运行状态），便于后续 prepare_thesis_results.py 汇总
 
 说明:
 - 在 Windows 上建议使用 --parallel 以 1 为默认值（Gurobi/第三方库可能对并行有限制）。
@@ -192,14 +192,14 @@ def make_variant_flags(variant: str):
     """
     variant -> (enable_tuner, enable_ml)
     """
-    v = variant.lower()
-    if v in ("basic",):
+    v = variant.strip().lower()
+    if v in ("alns-b", "basic"):
         return False, False
-    if v in ("tuner", "paramtuner"):
+    if v in ("alns-t", "tuner", "paramtuner"):
         return True, False
-    if v in ("ml", "mlo", "mlops", "mloperators"):
+    if v in ("alns-ml", "ml", "mlo", "mlops", "mloperators"):
         return False, True
-    if v in ("full", "tuner+ml", "full+ml"):
+    if v in ("alns-f", "full", "tuner+ml", "full+ml"):
         return True, True
     if v in ("monolithic", "gurobi", "mono"):
         return None, None
@@ -474,8 +474,11 @@ def main():
     parser.add_argument(
         "--variants",
         type=str,
-        default="basic,full",
-        help="逗号分隔的变体列表 (basic,tuner,ml,full,monolithic)",
+        default="ALNS-B,ALNS-F",
+        help=(
+            "Comma-separated variants. Thesis names: "
+            "ALNS-B,ALNS-T,ALNS-ML,ALNS-F; monolithic is also supported."
+        ),
     )
     parser.add_argument(
         "--seeds",

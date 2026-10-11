@@ -1,6 +1,5 @@
-def main():
-    print("Hello from problem2!")
+from ALNSCode.main import run_model
 
 
 if __name__ == "__main__":
-    main()
+    run_model()

@@ -145,10 +145,20 @@ def main() -> int:
     parser.add_argument("--medium-time", type=int, default=360)
     parser.add_argument("--large-time", type=int, default=720)
     parser.add_argument(
-        "--small-variants", type=str, default="monolithic,basic,tuner,ml,full"
+        "--small-variants",
+        type=str,
+        default="monolithic,ALNS-B,ALNS-T,ALNS-ML,ALNS-F",
     )
-    parser.add_argument("--medium-variants", type=str, default="basic,tuner,ml,full")
-    parser.add_argument("--large-variants", type=str, default="basic,tuner,ml,full")
+    parser.add_argument(
+        "--medium-variants",
+        type=str,
+        default="ALNS-B,ALNS-T,ALNS-ML,ALNS-F",
+    )
+    parser.add_argument(
+        "--large-variants",
+        type=str,
+        default="ALNS-B,ALNS-T,ALNS-ML,ALNS-F",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",

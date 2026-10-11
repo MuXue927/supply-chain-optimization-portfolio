@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Prepare thesis-ready experiment summaries and plots.
+Prepare thesis-ready experiment tables and normalized run records.
 
 This script scans the experiment output tree, collects run metadata, rebuilds
 initial-solution baselines for ALNS runs when needed, and exports unified CSV
@@ -10,7 +10,6 @@ Outputs:
 - long-format run table
 - scale/variant summary table
 - instance-level comparison table
-- boxplots and performance profiles
 
 Usage example:
   python runExperiments/prepare_thesis_results.py \
@@ -36,6 +35,27 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_META_NAME = "run_metadata.json"
 SELECTED_ALL_NAME = "selected_instances_all.csv"
+
+
+def canonical_variant(value: Any) -> str:
+    aliases = {
+        "basic": "ALNS-B",
+        "alns-b": "ALNS-B",
+        "tuner": "ALNS-T",
+        "paramtuner": "ALNS-T",
+        "alns-t": "ALNS-T",
+        "ml": "ALNS-ML",
+        "mlo": "ALNS-ML",
+        "mlops": "ALNS-ML",
+        "mloperators": "ALNS-ML",
+        "alns-ml": "ALNS-ML",
+        "full": "ALNS-F",
+        "tuner+ml": "ALNS-F",
+        "full+ml": "ALNS-F",
+        "alns-f": "ALNS-F",
+    }
+    text = str(value).strip()
+    return aliases.get(text.lower(), text)
 
 
 def safe_float(value: Any) -> float:
@@ -435,195 +455,14 @@ def summarize_by_scale_variant(df: pd.DataFrame) -> pd.DataFrame:
             median_initial_obj=("initial_actual_objective", "median"),
             mean_improvement_pct=("improvement_pct", "mean"),
             median_improvement_pct=("improvement_pct", "median"),
+            std_improvement_pct=("improvement_pct", "std"),
             mean_gap_vs_milp_pct=("gap_vs_milp_pct", "mean"),
             median_gap_vs_milp_pct=("gap_vs_milp_pct", "median"),
+            std_gap_vs_milp_pct=("gap_vs_milp_pct", "std"),
         )
         .reset_index()
     )
     return grouped
-
-
-def summarize_performance_profile(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame()
-
-    rows: List[Dict[str, Any]] = []
-    for scale, scale_df in df.groupby("scale"):
-        pivot = scale_df.pivot_table(
-            index="dataset_name",
-            columns="variant",
-            values="best_actual_objective",
-            aggfunc="median",
-        )
-        if pivot.empty:
-            continue
-        best = pivot.min(axis=1)
-        ratios = pivot.div(best, axis=0)
-        for variant in ratios.columns:
-            series = ratios[variant].dropna()
-            for dataset_name, ratio in series.items():
-                rows.append(
-                    {
-                        "scale": scale,
-                        "dataset_name": dataset_name,
-                        "variant": variant,
-                        "performance_ratio": float(ratio),
-                    }
-                )
-    return pd.DataFrame(rows)
-
-
-def plot_boxplot(
-    df: pd.DataFrame, out_path: Path, value_col: str, title: str, ylabel: str
-):
-    import matplotlib.pyplot as plt
-
-    if df.empty or value_col not in df.columns:
-        return None
-
-    variants = [v for v in sorted(df["variant"].dropna().unique())]
-    if not variants:
-        return None
-
-    filtered_variants = []
-    filtered_data = []
-    for variant in variants:
-        series = (
-            pd.Series(df.loc[df["variant"] == variant, value_col]).dropna().to_list()
-        )
-        if not series:
-            continue
-        filtered_variants.append(variant)
-        filtered_data.append(series)
-
-    if not filtered_data:
-        return None
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.boxplot(filtered_data, tick_labels=filtered_variants, showmeans=True)
-    ax.set_title(title)
-    ax.set_xlabel("Variant")
-    ax.set_ylabel(ylabel)
-    ax.grid(axis="y", linestyle="--", alpha=0.35)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=180)
-    plt.close(fig)
-    return out_path
-
-
-def plot_bar_summary(
-    df: pd.DataFrame, out_path: Path, value_col: str, title: str, ylabel: str
-):
-    import matplotlib.pyplot as plt
-
-    if df.empty or value_col not in df.columns:
-        return None
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    pivot = df.pivot(index="variant", columns="scale", values=value_col)
-    pivot = pivot.sort_index()
-    pivot.plot(kind="bar", ax=ax, width=0.82)
-    ax.set_title(title)
-    ax.set_xlabel("Variant")
-    ax.set_ylabel(ylabel)
-    ax.grid(axis="y", linestyle="--", alpha=0.35)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=180)
-    plt.close(fig)
-    return out_path
-
-
-def plot_performance_profile(df: pd.DataFrame, out_path: Path, title: str):
-    import matplotlib.pyplot as plt
-
-    if df.empty:
-        return None
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    taus = np.linspace(1.0, 2.0, 200)
-    for variant, sub in df.groupby("variant"):
-        values = sub["performance_ratio"].dropna().to_numpy()
-        if values.size == 0:
-            continue
-        profile = [(values <= tau).mean() for tau in taus]
-        ax.plot(taus, profile, label=variant)
-
-    ax.set_title(title)
-    ax.set_xlabel("Performance ratio")
-    ax.set_ylabel("Share of instances")
-    ax.grid(axis="both", linestyle="--", alpha=0.35)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=180)
-    plt.close(fig)
-    return out_path
-
-
-def build_plots(df: pd.DataFrame, out_dir: Path) -> Dict[str, str]:
-    import matplotlib
-
-    matplotlib.use("Agg")
-
-    plot_paths: Dict[str, str] = {}
-    for scale in ["small", "medium", "large"]:
-        sub = df[df["scale"] == scale].copy()
-        if sub.empty:
-            continue
-
-        box = plot_boxplot(
-            sub,
-            out_dir / f"boxplot_final_objective_{scale}.png",
-            value_col="best_actual_objective",
-            title=f"Final objective distribution ({scale})",
-            ylabel="Final objective",
-        )
-        if box:
-            plot_paths[f"boxplot_final_objective_{scale}"] = str(box)
-
-        if sub["initial_actual_objective"].notna().any():
-            gap = plot_boxplot(
-                sub,
-                out_dir / f"boxplot_gap_vs_initial_{scale}.png",
-                value_col="gap_vs_initial_pct",
-                title=f"Gap vs initial solution ({scale})",
-                ylabel="Gap vs initial solution (%)",
-            )
-            if gap:
-                plot_paths[f"boxplot_gap_vs_initial_{scale}"] = str(gap)
-
-        perf = summarize_performance_profile(sub)
-        if not perf.empty:
-            perf_path = plot_performance_profile(
-                perf,
-                out_dir / f"performance_profile_{scale}.png",
-                title=f"Performance profile ({scale})",
-            )
-            if perf_path:
-                plot_paths[f"performance_profile_{scale}"] = str(perf_path)
-
-    summary_scale = summarize_by_scale_variant(df)
-    if not summary_scale.empty:
-        mean_obj = plot_bar_summary(
-            summary_scale,
-            out_dir / "mean_final_objective_by_scale.png",
-            value_col="mean_final_obj",
-            title="Mean final objective by scale and variant",
-            ylabel="Mean final objective",
-        )
-        if mean_obj:
-            plot_paths["mean_final_objective_by_scale"] = str(mean_obj)
-
-        mean_imp = plot_bar_summary(
-            summary_scale,
-            out_dir / "mean_improvement_by_scale.png",
-            value_col="mean_improvement_pct",
-            title="Mean improvement over initial solution",
-            ylabel="Mean improvement (%)",
-        )
-        if mean_imp:
-            plot_paths["mean_improvement_by_scale"] = str(mean_imp)
-
-    return plot_paths
 
 
 def write_outputs(df: pd.DataFrame, out_dir: Path):
@@ -640,15 +479,12 @@ def write_outputs(df: pd.DataFrame, out_dir: Path):
     long_table.to_csv(out_dir / "thesis_instance_long.csv", index=False)
     wide_table.to_csv(out_dir / "thesis_instance_wide.csv", index=False)
 
-    plot_paths = build_plots(df, out_dir)
-
     manifest = {
         "n_runs": int(df.shape[0]),
         "n_instances": int(df["dataset_name"].nunique())
         if "dataset_name" in df.columns
         else 0,
         "n_variants": int(df["variant"].nunique()) if "variant" in df.columns else 0,
-        "plots": plot_paths,
         "tables": {
             "long": str(long_csv),
             "summary": str(summary_csv),
@@ -664,7 +500,7 @@ def write_outputs(df: pd.DataFrame, out_dir: Path):
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Prepare thesis-ready experiment summaries and plots."
+        description="Prepare thesis-ready experiment tables and normalized run records."
     )
     parser.add_argument(
         "--results-root",
@@ -712,6 +548,9 @@ def main() -> int:
     if df.empty:
         print(f"No runs found under {results_root}")
         return 1
+
+    if "variant" in df.columns:
+        df["variant"] = df["variant"].map(canonical_variant)
 
     scales = [s.strip() for s in args.scales.split(",") if s.strip()]
     df = filter_scales(df, scales)

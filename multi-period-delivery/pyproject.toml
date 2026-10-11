@@ -1,7 +1,8 @@
 [project]
-name = "problem2"
+name = "multi-period-delivery"
 version = "0.1.0"
-description = "Multi-period product distribution optimization using ALNS, Column Generation, and Monolithic approaches"
+description = "Multi-period production-driven product distribution optimization using adaptive large neighborhood search and an ILP benchmark"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "alns>=1.0.0",
@@ -29,7 +30,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["ALNSCode*"]
-exclude = ["logs*", "images*", "datasets*", "others*", "outputs*", "CGcodeWrong*", "ALNS-Learn*", "alns-versionWrong*"]
+exclude = ["ALNSCode/test*"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

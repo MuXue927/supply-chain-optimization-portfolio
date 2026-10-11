@@ -1,5 +1,5 @@
 [project]
-name = "problem1"
+name = "single-period-delivery"
 version = "0.1.0"
 description = "Single-period Product Distribution Optimization Using Column Generation Algorithm and Two-Stage Heuristic"
 readme = "README.md"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build core thesis artifacts from prepared thesis_analysis outputs.
+Build thesis tables and figures from prepared thesis_analysis outputs.
 
 Required outputs:
 1) Table 1 (small): gap statistics vs MILP baseline
@@ -8,11 +8,11 @@ Required outputs:
 3) Figure 1 (small): gap boxplot
 4) Figure 2 (medium): improvement boxplot
 5) Figure 3 (large): improvement boxplot
-6) Figure 4 (representative instance): convergence curve (prefer time-axis source;
-   fallback to existing Objective.svg exported by run)
+6) Figures 4-6 (representative instances): convergence curves for the three
+   structural quadruples used in the thesis.
 
 Usage example:
-  python runExperiments/build_core_thesis_artifacts.py \
+  python runExperiments/build_thesis_tables_and_figures.py \
     --analysis-dir ExperimentsResults/thesis_analysis \
     --out-dir ExperimentsResults/thesis_analysis/core_artifacts
 """
@@ -67,6 +67,9 @@ def load_results_long(analysis_dir: Path) -> pd.DataFrame:
     for col in ["scale", "variant", "dataset_name", "status", "run_dir"]:
         if col in df.columns:
             df[col] = df[col].astype(str)
+
+    if "variant" in df.columns:
+        df["variant"] = df["variant"].map(_canonical_variant)
 
     if "status" in df.columns:
         df = df[df["status".strip()] == "success"].copy()
@@ -250,13 +253,7 @@ def plot_small_gap_boxplot(
         else FontProperties(family="Times New Roman")
     )
 
-    variant_order = ["basic", "full", "ml", "tuner"]
-    variant_labels = {
-        "basic": "ALNS-B",
-        "full": "ALNS-F",
-        "ml": "ALNS-ML",
-        "tuner": "ALNS-T",
-    }
+    variant_order = ["ALNS-B", "ALNS-F", "ALNS-ML", "ALNS-T"]
     warm_palette = ["#f6c1a5", "#f3d2a8", "#f7b7a3", "#f8d6b3"]
 
     values: List[List[float]] = []
@@ -269,7 +266,7 @@ def plot_small_gap_boxplot(
         if series.empty:
             continue
         values.append(series.to_list())
-        labels.append(variant_labels.get(variant, variant))
+        labels.append(variant)
         facecolors.append(warm_palette[idx % len(warm_palette)])
 
     if not values:
@@ -351,85 +348,153 @@ def plot_small_gap_boxplot(
     return out_path
 
 
-def _variant_priority(v: str) -> int:
-    order = {"full": 0, "ml": 1, "tuner": 2, "basic": 3}
-    return order.get(v, 99)
+def _canonical_variant(v: str) -> str:
+    value = str(v).strip().lower()
+    aliases = {
+        "alns-b": "ALNS-B",
+        "basic": "ALNS-B",
+        "alns-t": "ALNS-T",
+        "tuner": "ALNS-T",
+        "paramtuner": "ALNS-T",
+        "alns-ml": "ALNS-ML",
+        "ml": "ALNS-ML",
+        "mlo": "ALNS-ML",
+        "mlops": "ALNS-ML",
+        "mloperators": "ALNS-ML",
+        "alns-f": "ALNS-F",
+        "full": "ALNS-F",
+        "tuner+ml": "ALNS-F",
+        "full+ml": "ALNS-F",
+    }
+    return aliases.get(value, str(v))
 
 
-def find_representative_row(df: pd.DataFrame) -> Optional[pd.Series]:
-    # Prefer medium scale for a representative curve; fallback to large, then small.
-    candidates = df[~df["variant"].map(is_mono_variant)].copy()
+def parse_representative_quadruples(spec: str) -> List[Tuple[str, int, int, int, int]]:
+    parsed: List[Tuple[str, int, int, int, int]] = []
+    for entry in spec.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        scale, values = entry.split(":", 1)
+        nums = [int(x.strip()) for x in values.split(",")]
+        if len(nums) != 4:
+            raise ValueError(
+                f"Representative quadruple must contain four integers: {entry}"
+            )
+        parsed.append((scale.strip().lower(), nums[0], nums[1], nums[2], nums[3]))
+    return parsed
+
+
+def find_representative_runs(
+    df: pd.DataFrame,
+    quadruple: Tuple[str, int, int, int, int],
+) -> pd.DataFrame:
+    scale, plant_nums, dealer_nums, sku_nums, vehicle_type_nums = quadruple
+    required = [
+        "plant_nums",
+        "dealer_nums",
+        "sku_nums",
+        "vehicle_type_nums",
+    ]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(
+            "thesis_results_long.csv is missing representative-instance columns: "
+            + ", ".join(missing)
+        )
+
+    candidates = df[
+        (df["scale"].astype(str).str.lower() == scale)
+        & (pd.to_numeric(df["plant_nums"], errors="coerce") == plant_nums)
+        & (pd.to_numeric(df["dealer_nums"], errors="coerce") == dealer_nums)
+        & (pd.to_numeric(df["sku_nums"], errors="coerce") == sku_nums)
+        & (
+            pd.to_numeric(df["vehicle_type_nums"], errors="coerce")
+            == vehicle_type_nums
+        )
+        & (~df["variant"].map(is_mono_variant))
+    ].copy()
     if candidates.empty:
-        return None
+        return candidates
 
-    scales = ["medium", "large", "small"]
-    for scale in scales:
-        s = candidates[candidates["scale"] == scale].copy()
-        if s.empty:
-            continue
-
-        cover = (
-            s.groupby("dataset_name")["variant"].nunique().sort_values(ascending=False)
-        )
-        if cover.empty:
-            continue
-        best_dataset = str(cover.index[0])
-
-        dsub = s[s["dataset_name"] == best_dataset].copy()
-        dsub = dsub.sort_values(
-            by=["variant", "best_actual_objective"],
-            key=lambda col: col.map(_variant_priority)
-            if col.name == "variant"
-            else col,
-            na_position="last",
-        )
-        if not dsub.empty:
-            return dsub.iloc[0]
-    return None
+    candidates["canonical_variant"] = candidates["variant"].map(_canonical_variant)
+    candidates["_objective"] = pd.to_numeric(
+        candidates["best_actual_objective"], errors="coerce"
+    )
+    candidates = candidates.sort_values(
+        by=["canonical_variant", "_objective"],
+        na_position="last",
+    )
+    return candidates.drop_duplicates("canonical_variant", keep="first")
 
 
 def export_representative_convergence(
-    df: pd.DataFrame, out_dir: Path
-) -> Dict[str, Any]:
-    out: Dict[str, Any] = {
-        "source": None,
-        "output_svg": None,
-        "output_png": None,
-        "note": None,
-    }
-    row = find_representative_row(df)
-    if row is None:
-        out["note"] = "No representative run found."
-        return out
+    df: pd.DataFrame,
+    out_dir: Path,
+    representative_quadruples: List[Tuple[str, int, int, int, int]],
+) -> List[Dict[str, Any]]:
+    exports: List[Dict[str, Any]] = []
+    for quadruple in representative_quadruples:
+        scale, plant_nums, dealer_nums, sku_nums, vehicle_type_nums = quadruple
+        label = f"{scale}_{plant_nums}_{dealer_nums}_{sku_nums}_{vehicle_type_nums}"
+        target_dir = ensure_dir(out_dir / f"figures4_6_representative_{label}")
+        rows = find_representative_runs(df, quadruple)
+        outputs: List[Dict[str, str]] = []
+        missing_variants = {"ALNS-B", "ALNS-T", "ALNS-ML", "ALNS-F"}
 
-    run_dir = Path(str(row.get("run_dir", "")))
-    dataset_name = str(row.get("dataset_name", ""))
-    source_svg = run_dir / dataset_name / "images" / "Objective.svg"
+        for _, row in rows.iterrows():
+            variant = str(row["canonical_variant"])
+            missing_variants.discard(variant)
+            run_dir = Path(str(row.get("run_dir", "")))
+            dataset_name = str(row.get("dataset_name", ""))
+            source_svg = run_dir / dataset_name / "images" / "Objective.svg"
+            if not source_svg.exists():
+                outputs.append(
+                    {
+                        "variant": variant,
+                        "status": "missing",
+                        "source_svg": str(source_svg),
+                    }
+                )
+                continue
 
-    if not source_svg.exists():
-        out["note"] = f"Objective.svg not found for representative run: {run_dir}"
-        return out
+            target_svg = target_dir / f"{variant}_Objective.svg"
+            shutil.copy2(source_svg, target_svg)
+            record = {
+                "variant": variant,
+                "status": "copied",
+                "source_svg": str(source_svg),
+                "output_svg": str(target_svg),
+            }
+            try:
+                import cairosvg  # type: ignore
 
-    target_svg = out_dir / "figure4_representative_convergence.svg"
-    shutil.copy2(source_svg, target_svg)
+                target_png = target_svg.with_suffix(".png")
+                cairosvg.svg2png(
+                    url=str(target_svg),
+                    write_to=str(target_png),
+                    dpi=180,
+                )
+                record["output_png"] = str(target_png)
+            except Exception:
+                pass
+            outputs.append(record)
 
-    out["source"] = str(source_svg)
-    out["output_svg"] = str(target_svg)
-    out["note"] = (
-        "Used existing Objective.svg from representative run. "
-        "If tracker time-series CSV becomes available, this can be replaced by true time-axis redraw."
-    )
-
-    try:
-        import cairosvg  # type: ignore
-
-        target_png = out_dir / "figure4_representative_convergence.png"
-        cairosvg.svg2png(url=str(target_svg), write_to=str(target_png), dpi=180)
-        out["output_png"] = str(target_png)
-    except Exception:
-        pass
-
-    return out
+        exports.append(
+            {
+                "scale": scale,
+                "quadruple": (
+                    plant_nums,
+                    dealer_nums,
+                    sku_nums,
+                    vehicle_type_nums,
+                ),
+                "output_dir": str(target_dir),
+                "missing_variants": sorted(missing_variants),
+                "outputs": outputs,
+            }
+        )
+    return exports
 
 
 def write_csv(df: pd.DataFrame, path: Path) -> Optional[Path]:
@@ -441,7 +506,7 @@ def write_csv(df: pd.DataFrame, path: Path) -> Optional[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build core thesis tables/figures from thesis_analysis outputs."
+        description="Build thesis tables and figures from thesis_analysis outputs."
     )
     parser.add_argument(
         "--analysis-dir",
@@ -454,6 +519,15 @@ def main() -> int:
         type=str,
         default="",
         help="Output directory. Defaults to <analysis-dir>/core_artifacts",
+    )
+    parser.add_argument(
+        "--representative-quadruples",
+        type=str,
+        default="small:3,17,17,3;medium:4,46,54,4;large:6,70,93,3",
+        help=(
+            "Representative instances in scale:P,D,K,V form. "
+            "Defaults to the three structural quadruples used in the thesis."
+        ),
     )
     args = parser.parse_args()
 
@@ -510,7 +584,11 @@ def main() -> int:
         ylabel="Improvement over Initial Solution (%)",
     )
 
-    fig4 = export_representative_convergence(df, out_dir)
+    fig4 = export_representative_convergence(
+        df,
+        out_dir,
+        parse_representative_quadruples(args.representative_quadruples),
+    )
 
     manifest = {
         "inputs": {
@@ -525,13 +603,14 @@ def main() -> int:
             "figure1_small_gap_boxplot": str(fig1) if fig1 else None,
             "figure2_medium_improvement_boxplot": str(fig2) if fig2 else None,
             "figure3_large_improvement_boxplot": str(fig3) if fig3 else None,
-            "figure4_representative_convergence": fig4,
+            "figures4_6_representative_convergence": fig4,
         },
         "notes": [
             "Table 1 uses gap computed against per-instance monolithic objective in small scale.",
             "Table 2 uses improvement_pct from thesis_results_long.csv for medium/large.",
             "Figure 1 is exported as SVG with Chinese labels, SimSun for Chinese glyphs, and Times New Roman for English/math text.",
-            "Figure 4 currently reuses Objective.svg from representative run when no explicit tracker time-series CSV is available.",
+            "Figures 4-6 export one Objective.svg per ALNS variant for the three thesis quadruples.",
+            "restyle_selected_convergence_svgs.py can be applied afterwards for final thesis styling.",
         ],
     }
 
