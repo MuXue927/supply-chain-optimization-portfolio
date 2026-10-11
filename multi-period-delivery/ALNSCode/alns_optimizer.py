@@ -1350,7 +1350,9 @@ class ALNSOptimizer:
             )
 
             if is_cap_exceed.all():
-                self.log_printer.print("✓ 所有车辆的装载体积都满足容量约束")
+                self.log_printer.print(
+                    "[OK] All vehicle loading volumes satisfy capacity constraints"
+                )
             else:
                 self.log_printer.print(
                     "⚠️ 部分车辆的装载体积超出容量限制", color="yellow"

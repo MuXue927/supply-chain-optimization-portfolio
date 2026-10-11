@@ -303,7 +303,7 @@ class SolutionValidator:
         
         total_violations = 0
         for result in self.validation_results:
-            status = "✅ 通过" if result.is_satisfied else "❌ 违反"
+            status = "[PASS]" if result.is_satisfied else "[FAIL]"
             print(f"{result.constraint_name}: {status}")
             if not result.is_satisfied:
                 print(f"  违反数量: {result.total_violations}")

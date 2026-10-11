@@ -8,8 +8,8 @@ from gurobipy import GRB
 import gurobipy as gp
 from typing import Dict, Tuple, Set, Hashable
 from dataclasses import dataclass, field
-from masterModel import log_printer
-from InputDataCG import InputDataCG
+from .masterModel import log_printer
+from .InputDataCG import InputDataCG
 
 @dataclass
 class SubModel:

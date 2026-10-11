@@ -1,9 +1,9 @@
-# 定义Vehicle类，用于模型初始可行解的构造
+# 定义Vehicle类，用于模型可行解的构造
 # Vehicle类需要提供的功能包括
 # 1. 明确是哪个生产基地 i 为哪个经销商 j 使用哪种车型 f
 # 2. 需要能够计算车辆上装载的商品的体积
 # 3. 需要判断当前车辆是否满载
-from InputDataCG import InputDataCG
+from .InputDataHeuristic import InputDataHeuristic
 from dataclasses import dataclass, field
 from typing import Dict
 
@@ -17,7 +17,8 @@ class Vehicle:  # fact_id, dealer_id, type, data 都是需要在实例化Vehicle
     fact_id: str
     dealer_id: str
     type: str
-    data: InputDataCG
+    data: InputDataHeuristic
+    # Vehicle类的id，便于区分不同的车辆
     id = 0
 
     # dataclasses.field(*, default=MISSING, default_factory=MISSING, init=True, repr=True,

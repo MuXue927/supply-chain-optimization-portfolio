@@ -7,11 +7,11 @@ import time
 import random
 from gurobipy import GRB
 import gurobipy as gp
-from vehicle import Vehicle
+from .vehicle import Vehicle
 from typing import Dict, Tuple, Set
 from dataclasses import dataclass, field
-from optutility import LogPrinter, POSITIVEEPS
-from InputDataCG import InputDataCG
+from .optutility import LogPrinter, POSITIVEEPS
+from .InputDataCG import InputDataCG
 
 # 创建LogPrinter的实例
 log_printer = LogPrinter(time.time())

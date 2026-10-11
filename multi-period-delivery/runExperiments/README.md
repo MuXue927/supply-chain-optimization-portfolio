@@ -6,11 +6,11 @@ comparison of the integer linear programming (ILP) benchmark with four ALNS
 variants:
 
 | Thesis name | Parameter tuner | Machine-learning operator selection |
-|---|---:|---:|
-| `ALNS-B` | No | No |
-| `ALNS-T` | Yes | No |
-| `ALNS-ML` | No | Yes |
-| `ALNS-F` | Yes | Yes |
+| ----------- | --------------: | ----------------------------------: |
+| `ALNS-B`  |              No |                                  No |
+| `ALNS-T`  |             Yes |                                  No |
+| `ALNS-ML` |              No |                                 Yes |
+| `ALNS-F`  |             Yes |                                 Yes |
 
 The legacy names `basic`, `tuner`, `ml`, and `full` are still accepted as
 aliases, but new experiments should use the thesis names above.
@@ -19,11 +19,11 @@ aliases, but new experiments should use the thesis names above.
 
 The thesis uses a stratified design with three scales:
 
-| Scale | Plants | Dealers | SKUs | Vehicle types | Periods |
-|---|---:|---:|---:|---:|---:|
-| Small | 2-3 | 2-30 | 10-40 | 2-3 | 5 |
-| Medium | 3-4 | 30-50 | 40-60 | 2-4 | 5 |
-| Large | 4-6 | 50-90 | 60-100 | 2-4 | 5 |
+| Scale  | Plants | Dealers |   SKUs | Vehicle types | Periods |
+| ------ | -----: | ------: | -----: | ------------: | ------: |
+| Small  |    2-3 |    2-30 |  10-40 |           2-3 |       5 |
+| Medium |    3-4 |   30-50 |  40-60 |           2-4 |       5 |
+| Large  |    4-6 |   50-90 | 60-100 |           2-4 |       5 |
 
 For each scale, 30 candidate instances are generated and 20 instances are
 sampled with a fixed random seed for the formal experiments. The sampling

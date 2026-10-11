@@ -36,9 +36,10 @@ portfolio of optimization, Python, and experiment-engineering work.
 ```text
 .
 ├── single-period-delivery/
-│   ├── column-generation/
-│   ├── heuristic/
-│   ├── monolithic/
+│   ├── src/single_period_delivery/
+│   │   ├── column_generation/
+│   │   ├── heuristic/
+│   │   └── monolithic/
 │   └── datasets/single-period/small/dataset_9/
 └── multi-period-delivery/
     ├── ALNSCode/
@@ -53,11 +54,12 @@ excluded.
 
 ## Reproducing
 
-Each subproject has its own `pyproject.toml` and README with commands.
-The multi-period project requires Python 3.10+, while the single-period
-environment was locked with Python 3.13. A valid Gurobi installation is needed
-for the mathematical-programming components. The ALNS code also uses the
-public `alns` package.
+Each subproject has its own `pyproject.toml` and installable package entry
+point. The project-level READMEs explain every installation and run command:
+The multi-period project requires Python 3.10+, and the single-period project
+requires Python 3.11+. A valid Gurobi installation is needed for the
+mathematical-programming components. The ALNS code also uses the public `alns`
+package.
 
 Start with the project-level README:
 

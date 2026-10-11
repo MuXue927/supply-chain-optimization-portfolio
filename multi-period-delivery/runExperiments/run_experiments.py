@@ -72,7 +72,7 @@ def is_valid_instance(path_str: str):
 
     校验项（best-effort）：
      - 若是文件：标记为invalid
-     - 若是dataset_*目录：检查order.csv是否存在 ✓ 接受
+     - 若是dataset_*目录：检查order.csv是否存在；存在则接受
      - 若是其他目录：不接受（容器目录需逐个指定dataset_*）
     """
     p = Path(path_str)

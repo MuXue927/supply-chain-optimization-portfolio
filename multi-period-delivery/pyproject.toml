@@ -18,6 +18,9 @@ dependencies = [
     "rich>=10.0.0",
 ]
 
+[project.scripts]
+multi-period-delivery = "ALNSCode.cli:main"
+
 [project.optional-dependencies]
 # Development dependencies used for testing, profiling and linting.
 dev = [

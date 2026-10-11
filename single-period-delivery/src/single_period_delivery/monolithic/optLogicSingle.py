@@ -7,20 +7,21 @@ import datetime
 import pandas as pd
 from gurobipy import GRB
 
-from MonolithicModelSingle import MonolithicModelSingle, log_printer
-from InputDataSingle import InputDataSingle
+from .MonolithicModelSingle import MonolithicModelSingle, log_printer
+from .InputDataSingle import InputDataSingle
 
 data: InputDataSingle
 
-# 获取当前.py文件所在的目录，这样可以确保路径正确，即使文件被移动到其他位置也不会影响
-current_dir = os.path.dirname(__file__)
-# 当前.py文件所在目录的上一级目录
-par_path = os.path.dirname(current_dir)
-input_loc = os.path.join(par_path, 'datasets', 'single-period', 'large')
-output_loc = os.path.join(par_path, 'OutPut', 'single-period', 'large')
+project_root = os.getcwd()
+input_loc = os.path.join(project_root, 'datasets', 'single-period', 'large')
+output_loc = os.path.join(project_root, 'OutPut', 'single-period', 'large')
 
-def run_model(input_file_loc = input_loc, output_file_loc = output_loc):
-    medium_path = 'dataset_1'
+def run_model(
+    input_file_loc=input_loc,
+    output_file_loc=output_loc,
+    dataset_name='dataset_1',
+):
+    medium_path = dataset_name
     output_file_loc = os.path.join(output_file_loc, medium_path)
     global data
 

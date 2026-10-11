@@ -49,3 +49,13 @@ try:
     __all__.append("ALNSConfig")
 except Exception:
     pass
+
+
+def run_model(*args, **kwargs):
+    """Run the multi-period optimizer via a lazy package-level import."""
+    from .main import run_model as _run_model
+
+    return _run_model(*args, **kwargs)
+
+
+__all__.append("run_model")

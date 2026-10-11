@@ -9,8 +9,8 @@ from gurobipy import GRB
 import gurobipy as gp
 from typing import Dict, Tuple, Set, List
 from dataclasses import dataclass, field
-from InputDataSingle import InputDataSingle
-from optutility import LogPrinter
+from .InputDataSingle import InputDataSingle
+from .optutility import LogPrinter
 
 # 创建LogPrinter的实例
 log_printer = LogPrinter(time.time())
