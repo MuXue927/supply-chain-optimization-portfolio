@@ -5,8 +5,8 @@ from pathlib import Path
 from numpy import random as rnd
 
 # Use package-internal modules via relative imports. This file must be run
-# as a module (python -m ALNSCode.main) or the package must be installed
-# (pip install -e .). Running the file directly (python ALNSCode/main.py)
+# as a module (python -m multi_period_delivery.main) or the package must be installed
+# (pip install -e .). Running the file directly (python multi_period_delivery/main.py)
 # will raise a clear error below.
 
 from .alns_config import default_config as ALNSConfig
@@ -75,17 +75,17 @@ def run_model(input_file_loc=None, output_file_loc=None):
 
 if __name__ == "__main__":
     # Prefer running this file as a module or install the package.
-    # Running the file directly (python ALNSCode/main.py) can break relative imports.
+    # Running the file directly (python multi_period_delivery/main.py) can break relative imports.
     msg = (
         "Please run this module as a package or install the project first.\n"
         "Development options:\n"
-        "  1) Run as a module: python -m ALNSCode.main\n"
-        "  2) Install editable: pip install -e . (then python -m ALNSCode.main)\n"
+        "  1) Run as a module: python -m multi_period_delivery.main\n"
+        "  2) Install editable: pip install -e . (then python -m multi_period_delivery)\n"
         "If you intended to run this as a script, change imports to absolute ones or run via -m."
     )
     print(msg)
     # Optionally attempt to run when executed as package (works when invoked via -m)
-    # If running via `python -m ALNSCode.main`, __package__ is set and run_model will work.
+    # If running via `python -m multi_period_delivery.main`, __package__ is set and run_model will work.
     if __package__:
         run_model()
     else:

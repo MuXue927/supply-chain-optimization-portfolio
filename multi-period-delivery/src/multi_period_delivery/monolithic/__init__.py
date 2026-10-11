@@ -8,7 +8,7 @@ This file is safe to extend later if you want to expose more symbols at package 
 
 __all__ = ["InputDataMultiple", "MonolithicModelMultiple", "optLogicMultiple"]
 
-# Lazy, best-effort imports to allow `from monolithic import InputDataMultiple` without
+# Lazy, best-effort imports to allow `from multi_period_delivery.monolithic import InputDataMultiple` without
 # forcing heavy import-time side effects. Fail silently to keep import robust.
 try:
     from .InputDataMultiple import InputDataMultiple  # type: ignore

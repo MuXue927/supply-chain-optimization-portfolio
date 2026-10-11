@@ -256,7 +256,7 @@ class ParamAutoTuner:
     def _init_default_operators(self):
         """
         注册一组默认 destroy / repair 类算子的初始参数与合法范围。
-        优先从集中配置模块 ALNSCode.alns_config.default_config 获取 OPERATOR_DEFAULTS，
+        优先从集中配置模块 multi_period_delivery.alns_config.default_config 获取 OPERATOR_DEFAULTS，
         若获取失败则回退到内嵌的硬编码默认值（保证向后兼容）。
         ranges 为空表示该算子当前不做参数扰动 (保持接口一致性)。
         """

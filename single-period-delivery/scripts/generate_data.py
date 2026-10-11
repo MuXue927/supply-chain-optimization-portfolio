@@ -6,7 +6,7 @@
 # 运行一次程序可以生成的数据集的数量 -- dataset_nums 默认值为1
 # 上述这些参数，要求可以在通过命令行调用py文件时，跟随在脚本文件名称的后面
 # 使用命令示例如下：
-# python GeneratingData.py 1 0 3
+# python scripts/generate_data.py 1 0 3
 # 上述命令表示，生成3个单周期的小规模数据集
 
 # 对于单周期的问题，需要生成的csv文件包括：
@@ -47,6 +47,10 @@ import string
 import numpy as np
 import pandas as pd
 from collections import defaultdict
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 
 parser = argparse.ArgumentParser(description="The arguments needed to generate dataset")
 # 规划周期
@@ -56,6 +60,12 @@ parser.add_argument("dataset_size", type=int, choices=[0, 1, 2], help="The size 
 # 生成数据集的数量
 parser.add_argument("dataset_nums", type=int, default=1,
                     help="The quantities of different datasets needed to be generated")
+parser.add_argument(
+    "--output-dir",
+    type=str,
+    default=None,
+    help="Optional output directory. Defaults to <project-root>/datasets.",
+)
 args = parser.parse_args()
 
 # 将传递的命令行参数保存到文件中，便于程序的调试
@@ -71,27 +81,31 @@ def generate_dataset():
     dataset_size = args.dataset_size
     dataset_nums = args.dataset_nums
 
-    base_file_loc = os.path.join("datasets")
+    base_file_loc = (
+        Path(args.output_dir).resolve()
+        if args.output_dir
+        else PROJECT_ROOT / "datasets"
+    )
     if horizons == 1:
         print("Generating datasets for single period.")
-        base_file_loc = os.path.join(base_file_loc, "single-period")
+        base_file_loc = base_file_loc / "single-period"
     else:
         print("Generating datasets for multiple periods.")
-        base_file_loc = os.path.join(base_file_loc, "multiple-periods")
+        base_file_loc = base_file_loc / "multiple-periods"
 
     if dataset_size == 0:
-        base_file_loc = os.path.join(base_file_loc, "small")
+        base_file_loc = base_file_loc / "small"
         # base_file_loc = os.path.join(base_file_loc, "small-test")
     elif dataset_size == 1:
-        base_file_loc = os.path.join(base_file_loc, "medium")
+        base_file_loc = base_file_loc / "medium"
     else:
-        base_file_loc = os.path.join(base_file_loc, "large")
+        base_file_loc = base_file_loc / "large"
 
     # 创建一个列表来存储每个数据集的统计信息
     dataset_statistics = []
 
     for i in range(1, dataset_nums + 1):
-        output_file_loc = os.path.join(base_file_loc, f"dataset_{i}")
+        output_file_loc = base_file_loc / f"dataset_{i}"
         # 创建数据集的保存路径
         if not os.path.exists(output_file_loc):
             os.makedirs(output_file_loc)

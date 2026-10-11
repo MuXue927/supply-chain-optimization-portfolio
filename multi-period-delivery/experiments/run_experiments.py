@@ -4,13 +4,13 @@
 
 功能:
 - 接受实例列表、算法变体、seeds、time_limit、并行度、输出目录等参数
-- 对每个 (instance, variant, seed) 组合创建独立输出目录并运行 ALNSCode 优化器
-- 在每次运行前通过 ALNSCode.alns_config.default_config.update_from_dict 临时设置 ENABLE_PARAM_TUNER / ENABLE_ML_OPERATORS / SEED / MAX_RUNTIME / LOG_DIR
+- 对每个 (instance, variant, seed) 组合创建独立输出目录并运行 multi_period_delivery 优化器
+- 在每次运行前通过 multi_period_delivery.alns_config.default_config.update_from_dict 临时设置 ENABLE_PARAM_TUNER / ENABLE_ML_OPERATORS / SEED / MAX_RUNTIME / LOG_DIR
 - 每次运行结束写入 run_metadata.json（包含元数据与运行状态），便于后续 prepare_thesis_results.py 汇总
 
 说明:
 - 在 Windows 上建议使用 --parallel 以 1 为默认值（Gurobi/第三方库可能对并行有限制）。
-- 本脚本假定 ALNSCode.alns_optimizer.ALNSOptimizer 的签名为:
+- 本脚本假定 multi_period_delivery.alns_optimizer.ALNSOptimizer 的签名为:
     ALNSOptimizer(input_file_loc, output_file_loc)
   并提供方法 run_optimization(dataset_name) -> bool
 - 若项目中具体接口略有不同，请根据本脚本结构做小范围适配。
@@ -208,7 +208,7 @@ def make_variant_flags(variant: str):
 
 def run_single(args_tuple):
     """
-    Worker 函数，在新的进程/线程中导入 ALNSCode 并执行一次运行。
+    Worker 函数，在新的进程/线程中导入 multi_period_delivery 并执行一次运行。
     args_tuple: (instance_path, variant, seed, time_limit, out_base_dir)
     """
     if len(args_tuple) >= 6:
@@ -256,8 +256,8 @@ def run_single(args_tuple):
 
     # Import inside worker to avoid pickling/import issues
     try:
-        from ALNSCode.alns_config import default_config as ALNSConfig
-        from ALNSCode.alns_optimizer import ALNSOptimizer
+        from multi_period_delivery.alns_config import default_config as ALNSConfig
+        from multi_period_delivery.alns_optimizer import ALNSOptimizer
     except Exception as e:
         meta = {
             "instance": instance_path,
@@ -320,7 +320,9 @@ def run_single(args_tuple):
 
                 if v in ("monolithic", "gurobi", "mono"):
                     # Monolithic / Gurobi baseline path
-                    from monolithic.optLogicMultiple import run_model_from_paths
+                    from multi_period_delivery.monolithic.optLogicMultiple import (
+                        run_model_from_paths,
+                    )
 
                     mono_meta = run_model_from_paths(
                         input_file_loc=input_loc,

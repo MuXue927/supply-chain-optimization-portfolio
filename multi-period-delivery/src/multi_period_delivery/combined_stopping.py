@@ -37,7 +37,11 @@ combined_stopping
 
     2) 逻辑表达式：(MaxIterations AND NoImprovement) OR MaxRuntime
         from alns.stop import MaxIterations, NoImprovement, MaxRuntime
-        from ALNSCode.combined_stopping import CombinedStoppingCriterion, AND, OR
+        from multi_period_delivery.combined_stopping import (
+            CombinedStoppingCriterion,
+            AND,
+            OR,
+        )
 
         A = MaxIterations(500)
         B = NoImprovement(120)

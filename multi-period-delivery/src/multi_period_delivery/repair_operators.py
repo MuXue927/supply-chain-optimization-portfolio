@@ -4,7 +4,7 @@ repair_operators.py
 模块说明（中文详解）
 - 本模块实现并暴露一组 ALNS 修复算子（repair operators），供主流程注册使用。
 - 设计原则：
-  1. 不修改 ALNSCode 其他模块的行为（只读依赖），尽量复用 ALNSCode 中已有的工具函数。
+  1. 不修改 multi_period_delivery 其他模块的行为（只读依赖），尽量复用 multi_period_delivery 中已有的工具函数。
   2. 保持兼容性：保留对外算子名称与签名，避免主流程导入失败。
   3. 将复杂/模拟行为通过 state.copy() 在副本上执行，以避免修改核心状态或要求修改 alnsopt 接口。
   4. 对可能有较高开销的模拟（例如 regret 算子）进行显式注释并提出优化建议。
@@ -36,7 +36,7 @@ from numpy import random as rnd
 import logging
 
 # -------------------------
-# 包内模块导入（以相对导入保证与 ALNSCode 包兼容）
+# 包内模块导入（以相对导入保证与 multi_period_delivery 包兼容）
 # -------------------------
 from .alnsopt import SolutionState
 from .vehicle import Vehicle
@@ -621,7 +621,7 @@ def inventory_balance_repair(
 def infeasible_repair(partial: SolutionState, rng: rnd.Generator) -> SolutionState:
     """
     不可行解快速修复的兼容 wrapper:
-    - 直接调用 ALNSCode.destroy_operators.infeasible_removal, 外部已实现的移除/修复算子
+    - 直接调用 multi_period_delivery.destroy_operators.infeasible_removal, 外部已实现的移除/修复算子
     - 本 wrapper 在入口与返回处增加 OPLOG 日志，便于跟踪修复流程
     """
     t0 = time.time()

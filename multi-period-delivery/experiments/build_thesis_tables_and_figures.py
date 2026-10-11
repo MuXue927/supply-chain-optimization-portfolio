@@ -12,7 +12,7 @@ Required outputs:
    structural quadruples used in the thesis.
 
 Usage example:
-  python runExperiments/build_thesis_tables_and_figures.py \
+  python experiments/build_thesis_tables_and_figures.py \
     --analysis-dir ExperimentsResults/thesis_analysis \
     --out-dir ExperimentsResults/thesis_analysis/core_artifacts
 """

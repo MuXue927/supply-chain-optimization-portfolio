@@ -13,6 +13,12 @@ dependencies = [
     "seaborn>=0.13.2",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.6.0",
+]
+
 [project.scripts]
 single-period-delivery = "single_period_delivery.cli:main"
 

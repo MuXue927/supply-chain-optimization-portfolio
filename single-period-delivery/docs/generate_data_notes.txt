@@ -6,9 +6,9 @@
 # 运行一次程序可以生成的数据集的数量 -- dataset_nums 默认值为1
 # 上述这些参数，要求可以在通过命令行调用py文件时，跟随在脚本文件名称的后面
 # 使用命令示例如下：
-# python GeneratingData.py -h
+# python scripts/generate_data.py -h
 # 上述命令可以显示帮助信息
-# python GeneratingData.py 1 0 3
+# python scripts/generate_data.py 1 0 3
 # 上述命令表示，生成3个单周期的小规模数据集
 
 # 对于单周期的问题，需要生成的csv文件包括：

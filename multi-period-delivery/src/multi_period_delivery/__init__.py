@@ -1,9 +1,9 @@
 """
-ALNSCode 包初始化
+multi_period_delivery 包初始化
 
 模块定位
-    - 使 ALNSCode 成为可导入的 Python 包
-    - 提供常用对象的便捷导出（re-export），便于调用方 from ALNSCode import X
+    - 使 multi_period_delivery 成为可导入的 Python 包
+    - 提供常用对象的便捷导出（re-export），便于调用方 from multi_period_delivery import X
     - 保持轻量与健壮：使用惰性/容错导入，避免导入时因可选依赖缺失导致失败
 
 使用说明

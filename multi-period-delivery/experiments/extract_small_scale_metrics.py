@@ -79,7 +79,7 @@ def load_and_filter_small(input_csv: Path) -> pd.DataFrame:
 
     small = df[df["scale"].astype(str).str.lower() == "small"].copy()
 
-    # Build MILP baseline per dataset from monolithic/gurobi rows.
+    # Build the MILP baseline per dataset from monolithic/Gurobi rows.
     mono_mask = (
         small["variant"].astype(str).str.lower().isin(["monolithic", "gurobi", "mono"])
     )

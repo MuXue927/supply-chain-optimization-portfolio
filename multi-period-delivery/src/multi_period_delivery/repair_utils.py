@@ -1,7 +1,7 @@
 """
 repair_utils.py
 
-提取自 ALNSCode/repair_operators.py 的辅助/工具函数模块。
+提取自 multi_period_delivery/repair_operators.py 的辅助/工具函数模块。
 供 repair_operators.py 中的算子调用，保持原实现与文档注释。
 """
 
@@ -272,7 +272,7 @@ def veh_loading(
     skip_compute_inventory: bool = True,
 ) -> bool:
     """
-    Wrapper that delegates to ALNSCode.alnsopt.veh_loading.
+    Wrapper that delegates to multi_period_delivery.alnsopt.veh_loading.
 
     新增参数:
       skip_compute_inventory: 当 commit=True 时，若为 True 则临时抑制 state.compute_inventory 的调用，
@@ -286,7 +286,9 @@ def veh_loading(
     try:
         from . import alnsopt as _alnsopt
     except Exception:
-        raise RuntimeError("无法导入 ALNSCode.alnsopt, veh_loading wrapper 无法工作。")
+        raise RuntimeError(
+            "无法导入 multi_period_delivery.alnsopt, veh_loading wrapper 无法工作。"
+        )
 
     if not commit:
         # 在副本上模拟，不触及真实 state

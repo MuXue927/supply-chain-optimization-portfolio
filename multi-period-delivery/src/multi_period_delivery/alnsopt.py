@@ -667,7 +667,7 @@ class SolutionState:
         全表库存重算: 优先尝试数组化/Numba 加速实现 (若可用)，在失败时回退到 Python 实现。
         目的：无缝替换以获得加速，同时保持原有行为与语义。
         """
-        # Try fast path using ALNSCode.inventory_numba.compute_inventory_fast if available.
+        # Try fast path using multi_period_delivery.inventory_numba.compute_inventory_fast if available.
         try:
             try:
                 from . import inventory_numba

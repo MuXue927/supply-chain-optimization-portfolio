@@ -5,22 +5,25 @@ in-warehouse inventory, scheduled-production inventory, and cross-period
 inventory flow. The resulting inventory balance has a staircase structure and
 couples delivery and loading decisions across periods.
 
-The project is installable as the `ALNSCode` Python package:
+The project is installable as the `multi_period_delivery` Python package:
 
 ```text
 multi-period-delivery/
-├── ALNSCode/
-├── monolithic/
-├── runExperiments/
+├── src/multi_period_delivery/
+│   └── monolithic/
+├── experiments/
+├── scripts/
+│   ├── generate_data.py
+│   └── write_config.py
 ├── datasets/multiple-periods/small/dataset_1/
 └── pyproject.toml
 ```
 
 The main methods are:
 
-- `ALNSCode`: adaptive large neighborhood search.
+- `multi_period_delivery`: adaptive large neighborhood search.
 - `monolithic`: integer-programming benchmark solved by Gurobi.
-- `runExperiments`: reproducible thesis experiment pipeline.
+- `experiments`: reproducible thesis experiment pipeline.
 
 The ALNS implementation includes 10 destroy operators, 8 repair operators,
 adaptive operator weights, parameter tuning, feasibility repair, and
@@ -49,7 +52,8 @@ What each command does:
 - `& .\.venv\Scripts\Activate.ps1` activates it in the current PowerShell.
 - `python -m pip install --upgrade pip` updates pip.
 - `python -m pip install -e .` installs the project in editable mode. The
-  `ALNSCode` package becomes importable and the `multi-period-delivery`
+  `multi_period_delivery` package becomes importable and the
+  `multi-period-delivery`
   command becomes available.
 
 If script activation is blocked in PowerShell:
@@ -63,22 +67,33 @@ This changes the execution policy only for the current PowerShell session.
 ## Verify the Installation
 
 ```powershell
-python -c "import ALNSCode; print(ALNSCode.__all__)"
+python -c "import multi_period_delivery as mpd; print(mpd.__all__)"
 multi-period-delivery --help
-python -m ALNSCode --help
+python -m multi_period_delivery --help
 ```
 
 Explanation:
 
 - The first command imports the installed package and prints its public API.
 - The second command calls the console entry point created by `pip`.
-- The third command runs the package through `ALNSCode/__main__.py`.
+- The third command runs the package through
+  `src/multi_period_delivery/__main__.py`.
 
 Recommended public imports:
 
 ```python
-from ALNSCode import ALNSConfig, DataALNS, run_model
+from multi_period_delivery import ALNSConfig, DataALNS, run_model
 ```
+
+Run the package smoke tests:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+The first command installs development dependencies and the second command
+checks the command-line parser.
 
 ## Run the included sample
 
@@ -116,12 +131,12 @@ OutPut-ALNS/multiple-periods/small/dataset_1
 
 The thesis compares four variants:
 
-| Variant | Parameter tuner | ML operator selection | Command flags |
-|---|---:|---:|---|
-| `ALNS-B` | No | No | none |
-| `ALNS-T` | Yes | No | `--enable-param-tuner` |
-| `ALNS-ML` | No | Yes | `--enable-ml-operators` |
-| `ALNS-F` | Yes | Yes | both flags |
+| Variant     | Parameter tuner | ML operator selection | Command flags             |
+| ----------- | --------------: | --------------------: | ------------------------- |
+| `ALNS-B`  |              No |                    No | none                      |
+| `ALNS-T`  |             Yes |                    No | `--enable-param-tuner`  |
+| `ALNS-ML` |              No |                   Yes | `--enable-ml-operators` |
+| `ALNS-F`  |             Yes |                   Yes | both flags                |
 
 Examples:
 
@@ -163,7 +178,7 @@ Explanation:
 Configure the package before the first optimizer import:
 
 ```python
-from ALNSCode import ALNSConfig, run_model
+from multi_period_delivery import ALNSConfig, run_model
 
 ALNSConfig.update_from_dict(
     {
@@ -196,7 +211,7 @@ automatically.
 The thesis batch experiments, metric definitions, table construction, and
 figure generation are documented in:
 
-[`runExperiments/README.md`](runExperiments/README.md)
+[`experiments/README.md`](experiments/README.md)
 
 The pipeline covers:
 
@@ -206,9 +221,24 @@ The pipeline covers:
 - medium- and large-scale improvement metrics;
 - thesis summary tables and representative convergence figures.
 
+## Development Utilities
+
+```powershell
+python scripts/generate_data.py 5 0 3
+python scripts/write_config.py --scale small
+```
+
+Explanation:
+
+- `scripts/generate_data.py 5 0 3` creates three small multi-period instances
+  with a five-period planning horizon. The scale codes are `0=small`,
+  `1=medium`, and `2=large`.
+- `scripts/write_config.py --scale small` writes `model_config.json` and
+  `model_config_alns.json` into `datasets/multiple-periods/small`.
+
 ## Common Problems
 
-`ModuleNotFoundError: No module named 'ALNSCode'`
+`ModuleNotFoundError: No module named 'multi_period_delivery'`
 
 - Activate the correct virtual environment.
 - Run `python -m pip install -e .` from `multi-period-delivery`.

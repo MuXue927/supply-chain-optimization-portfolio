@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-multi-period-delivery = "ALNSCode.cli:main"
+multi-period-delivery = "multi_period_delivery.cli:main"
 
 [project.optional-dependencies]
 # Development dependencies used for testing, profiling and linting.
@@ -29,11 +29,15 @@ dev = [
     "pyinstrument>=5.1.1",
     "black>=23.0.0",
     "mypy>=1.8.0",
+    "ruff>=0.6.0",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-include = ["ALNSCode*"]
-exclude = ["ALNSCode/test*"]
+where = ["src"]
+include = ["multi_period_delivery*"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

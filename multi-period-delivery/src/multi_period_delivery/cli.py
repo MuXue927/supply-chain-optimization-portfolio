@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
 
-    # Import after updating the shared config. ALNSCode.alns_optimizer reads
+    # Import after updating the shared config. multi_period_delivery.alns_optimizer reads
     # selected configuration values at import time.
     from .main import run_model
 

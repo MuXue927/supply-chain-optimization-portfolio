@@ -12,9 +12,10 @@ single-period-delivery/
 │   ├── monolithic/
 │   ├── heuristic/
 │   └── column_generation/
+├── scripts/
+│   ├── generate_data.py
+│   └── write_config.py
 ├── datasets/single-period/small/dataset_9/
-├── GeneratingData.py
-├── params_config.py
 └── pyproject.toml
 ```
 
@@ -85,6 +86,16 @@ python -c "import gurobipy; print(gurobipy.gurobi.version())"
 
 If this command imports successfully but solving later reports a license
 error, configure an academic or commercial Gurobi license.
+
+Run the package smoke tests:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+The first command installs the development extras, including pytest and Ruff.
+The second command checks the package entry point.
 
 ## Run the included sample
 
@@ -184,19 +195,21 @@ the package itself does not immediately import Gurobi.
 
 ## Development Utilities
 
-The source tree also contains scripts used to generate instances and write
-solver configuration:
+The `scripts/` directory contains development utilities:
 
 ```powershell
-python GeneratingData.py --help
-python params_config.py
+python scripts/generate_data.py 1 0 3
+python scripts/write_config.py --scale small
 ```
 
 Explanation:
 
-- `GeneratingData.py` creates synthetic instances for the configured scale.
-- `params_config.py` writes a model configuration JSON file into the selected
-  dataset directory.
+- `scripts/generate_data.py 1 0 3` creates three small single-period
+  instances. The first number is the planning horizon, the second selects the
+  scale (`0=small`, `1=medium`, `2=large`), and the third is the number of
+  instances.
+- `scripts/write_config.py --scale small` writes `model_config.json` and
+  `model_config_cg.json` into `datasets/single-period/small`.
 
 These are development utilities and are not required for importing or using
 the installed package.

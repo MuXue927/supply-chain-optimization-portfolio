@@ -6,7 +6,7 @@
 # 运行一次程序可以生成的数据集的数量 -- dataset_nums 默认值为1
 # 上述这些参数, 要求可以在通过命令行调用py文件时, 跟随在脚本文件名称的后面
 # 使用命令示例如下：
-# python GeneratingData.py 1 0 3
+# python scripts/generate_data.py 1 0 3
 # 上述命令表示, 生成3个单周期的小规模数据集
 
 # 对于单周期的问题, 需要生成的csv文件包括：
@@ -54,6 +54,7 @@ from pathlib import Path
 
 # 确定脚本所在目录 (无论从何处运行, 基于脚本位置构建默认输出)
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 
 parser = argparse.ArgumentParser(description="The arguments needed to generate dataset")
 # 规划周期
@@ -82,7 +83,7 @@ def generate_dataset():
         # 将用户提供的路径解析为绝对路径, 确保无论脚本被移动到何处, 输出仍写入期望位置
         base_file_loc = Path(args.output_dir).resolve()
     else:
-        base_file_loc = SCRIPT_DIR / "datasets"
+        base_file_loc = PROJECT_ROOT / "datasets"
 
     if horizons == 1:
         print("Generating datasets for single period.")

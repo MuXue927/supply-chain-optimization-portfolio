@@ -5,6 +5,13 @@ production-driven delivery problem in the thesis. The scripts reproduce the
 comparison of the integer linear programming (ILP) benchmark with four ALNS
 variants:
 
+Install the project in editable mode from the `multi-period-delivery`
+directory before running these scripts:
+
+```powershell
+python -m pip install -e .
+```
+
 | Thesis name | Parameter tuner | Machine-learning operator selection |
 | ----------- | --------------: | ----------------------------------: |
 | `ALNS-B`  |              No |                                  No |
@@ -76,7 +83,7 @@ manifest, and calls `run_experiments.py` with the scale-specific variants and
 time budgets.
 
 ```powershell
-python runExperiments/sample_and_run_experiments.py `
+python experiments/sample_and_run_experiments.py `
   --sample-size 20 `
   --selection-seed 20260408
 ```
@@ -88,7 +95,7 @@ directory per run. Each run contains metadata, status, objective values, and a
 log for traceability.
 
 ```powershell
-python runExperiments/run_experiments.py `
+python experiments/run_experiments.py `
   --instances datasets/multiple-periods/medium `
   --variants ALNS-B,ALNS-T,ALNS-ML,ALNS-F `
   --seeds 1,2,3 `
@@ -111,7 +118,7 @@ This script performs data preparation only. Tables and thesis figures are built
 by the scripts below.
 
 ```powershell
-python runExperiments/prepare_thesis_results.py `
+python experiments/prepare_thesis_results.py `
   --results-root ExperimentsResults `
   --out-dir ExperimentsResults/thesis_analysis
 ```
@@ -122,7 +129,7 @@ Extracts small-scale run-level metrics and reports the thesis statistics:
 count, mean, median, and standard deviation.
 
 ```powershell
-python runExperiments/extract_small_scale_metrics.py `
+python experiments/extract_small_scale_metrics.py `
   --input-csv ExperimentsResults/thesis_analysis/thesis_results_long.csv `
   --out-dir ExperimentsResults/thesis_analysis/small_scale_analysis
 ```
@@ -158,7 +165,7 @@ Builds the final thesis-oriented tables and figures from
   - large: `(6,70,93,3)`
 
 ```powershell
-python runExperiments/build_thesis_tables_and_figures.py `
+python experiments/build_thesis_tables_and_figures.py `
   --analysis-dir ExperimentsResults/thesis_analysis `
   --out-dir ExperimentsResults/thesis_analysis/core_artifacts
 ```

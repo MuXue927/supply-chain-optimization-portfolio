@@ -40,11 +40,15 @@ portfolio of optimization, Python, and experiment-engineering work.
 │   │   ├── column_generation/
 │   │   ├── heuristic/
 │   │   └── monolithic/
+│   ├── scripts/
+│   ├── tests/
 │   └── datasets/single-period/small/dataset_9/
 └── multi-period-delivery/
-    ├── ALNSCode/
-    ├── monolithic/
-    ├── runExperiments/
+    ├── src/multi_period_delivery/
+    │   └── monolithic/
+    ├── experiments/
+    ├── scripts/
+    ├── tests/
     └── datasets/multiple-periods/small/dataset_1/
 ```
 

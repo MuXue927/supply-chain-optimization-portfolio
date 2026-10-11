@@ -5,11 +5,11 @@ Sample a fixed number of dataset_* instances per scale and run experiments.
 Features:
 - Randomly sample N instances from each scale directory (small/medium/large)
 - Persist selection manifests (CSV + JSON) for reproducibility
-- Run runExperiments/run_experiments.py per scale with scale-specific variants/time-limits
+- Run experiments/run_experiments.py per scale with scale-specific variants/time-limits
 - Continue running remaining scales even if one scale fails
 
 Typical usage (PowerShell with venv already activated):
-python runExperiments/sample_and_run_experiments.py --sample-size 20 --selection-seed 20260408
+python experiments/sample_and_run_experiments.py --sample-size 20 --selection-seed 20260408
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Dict, List, Tuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RUN_EXPERIMENTS = PROJECT_ROOT / "runExperiments" / "run_experiments.py"
+RUN_EXPERIMENTS = PROJECT_ROOT / "experiments" / "run_experiments.py"
 
 
 def utc_now_iso_z() -> str:
@@ -261,7 +261,7 @@ def main() -> int:
         if args.dry_run:
             cmd_preview = [
                 args.python_exe,
-                "runExperiments/run_experiments.py",
+                "experiments/run_experiments.py",
                 "--instances",
             ] + [
                 str(p.relative_to(PROJECT_ROOT)).replace("\\", "/") for p in selected
