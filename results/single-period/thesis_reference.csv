@@ -1,0 +1,6 @@
+scale,dataset_name,approach,thesis_objective,thesis_gap_pct,thesis_time_limit_s,note
+small,dataset_1,gurobi,233.14,24.4059,900,thesis Gurobi monolithic incumbent
+small,dataset_3,gurobi,15.36,11.0677,900,thesis Gurobi monolithic incumbent
+medium,dataset_1,gurobi,671.60,51.3163,3600,thesis Gurobi monolithic incumbent
+medium,dataset_3,gurobi,505.66,51.7007,3600,thesis Gurobi monolithic incumbent
+large,dataset_1,gurobi,,,6000,thesis did not record an incumbent

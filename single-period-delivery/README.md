@@ -11,7 +11,10 @@ single-period-delivery/
 ├── src/single_period_delivery/
 │   ├── monolithic/
 │   ├── heuristic/
-│   └── column_generation/
+│   ├── column_generation/
+│   ├── cplex_api_monolithic/
+│   ├── cplex_api_column_generation/
+│   └── cplex_api_support.py
 ├── scripts/
 │   └── write_config.py
 ├── datasets/single-period/small/dataset_9/
@@ -37,10 +40,59 @@ The static code review and heuristic result checks are documented in:
 
 ## Requirements
 
-- Python 3.11 or newer.
-- A valid Gurobi installation and license for the monolithic and
+- Python 3.10 or newer. Python 3.10 is the recommended interpreter when
+  using the official CPLEX Python API because the matching CPLEX wheel is
+  available for Python 3.10.
+- A valid Gurobi installation and license for the original monolithic and
   column-generation algorithms.
 - PowerShell on Windows, or an equivalent terminal on Linux/macOS.
+- The CPLEX Python API is the supported CPLEX route for this project. Install
+  it with `uv pip install --python ..\.venv ".[cplex]"`.
+  The extra pins `cplex==22.1.2.0` and `docplex==2.32.264`. The PyPI wheel
+  ships the Community Edition, which refuses models beyond roughly 1,000
+  variables or constraints (CPLEX error `1016`). Run
+  `..\.venv\Scripts\docplex.exe config --upgrade "C:\Program Files\IBM\ILOG\CPLEX_Studio2212"`
+  once to copy in the size-unlimited Studio runtime. See
+  [`../docs/uv_environment.md`](../docs/uv_environment.md).
+
+## CPLEX Python API
+
+`cplex_api_monolithic/` and `cplex_api_column_generation/` are the
+Python-API versions of the same models. They use `import cplex`,
+`cplex.Cplex`, and `SparsePair` directly instead of writing an LP file.
+
+```powershell
+python -m single_period_delivery.cplex_api_monolithic `
+  --data-dir datasets/single-period/small `
+  --dataset-name dataset_9 `
+  --output-dir OutPut-CPLEX-API/single-period/small/dataset_9 `
+  --time-limit 180 `
+  --mip-gap 0 `
+  --seed 1
+```
+
+```powershell
+python -m single_period_delivery.cplex_api_column_generation `
+  --data-dir datasets/single-period/small `
+  --dataset-name dataset_9 `
+  --output-dir OutPut-CPLEX-API-CG/single-period/small/dataset_9 `
+  --max-iterations 20 `
+  --final-time-limit 60 `
+  --seed 20260408
+```
+
+The complete shared `uv` environment setup, including the CPLEX
+Community-to-Full runtime upgrade, is documented in the portfolio-level
+[`docs/uv_environment.md`](../docs/uv_environment.md).
+
+The API models are exposed through lazy package-level functions:
+
+```python
+from single_period_delivery import (
+    run_cplex_api_column_generation,
+    run_cplex_api_monolithic,
+)
+```
 
 ## Install With pip
 
@@ -242,3 +294,18 @@ the installed package.
 - Check that `--dataset-name` matches the actual folder name.
 
 Generated output, virtual environments, and caches are excluded from Git.
+
+## Experiments and Results
+
+The portfolio experiment pipeline runs the two-stage heuristic and the CPLEX
+Python API monolithic model on the curated five-instance set:
+
+```powershell
+python experiments/run_portfolio_experiments.py `
+  --results-dir ../results/single-period --workers 3
+python experiments/build_portfolio_report.py
+```
+
+The summary table and figure are committed under
+[`../results/single-period`](../results/single-period). Raw per-run
+directories are written to `results/single-period/raw/` and are not committed.

@@ -246,8 +246,6 @@ def build_wide(detail: pd.DataFrame) -> pd.DataFrame:
     if detail.empty:
         return pd.DataFrame()
 
-    method_order = ["ALNS-B", "ALNS-F", "ALNS-ML", "ALNS-T"]
-
     per_dataset = (
         detail.groupby(["scale", "dataset_name", "variant"], as_index=False)[
             "improvement_pct"

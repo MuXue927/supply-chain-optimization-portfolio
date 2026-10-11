@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .alns_config import default_config as ALNSConfig
+from .alns.alns_config import default_config as ALNSConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,9 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
 
-    # Import after updating the shared config. multi_period_delivery.alns_optimizer reads
-    # selected configuration values at import time.
-    from .main import run_model
+    # Import after updating the shared config. The ALNS optimizer reads selected
+    # configuration values at import time.
+    from .alns.main import run_model
 
     run_model(str(data_dir), str(output_dir))
     return 0

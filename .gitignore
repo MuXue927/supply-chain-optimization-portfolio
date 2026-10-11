@@ -28,6 +28,19 @@ logs*/
 *.out
 *.tmp
 
+# Local-only material: kept on disk for the author's reference, never published.
+# This holds the CPLEX command-line verification variants and any scratch data
+# that are intentionally excluded from the public portfolio.
+local-only/
+
+# Raw experiment run outputs. The curated summary tables and figures under
+# results/ are committed; the raw per-run directories and logs are not.
+results/*/raw/
+results/**/raw/
+
+# Ad-hoc CPLEX scratch directories
+tmp_cplex_debug/
+
 # Secrets and private data
 .env
 .env.*

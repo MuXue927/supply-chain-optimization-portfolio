@@ -160,11 +160,11 @@ period, while ending inventory links adjacent periods.
 
 ## Code Relationship
 
-- `src/multi_period_delivery/alns_optimizer.py` coordinates the ALNS search.
-- `src/multi_period_delivery/destroy_operators.py` and
-  `src/multi_period_delivery/repair_operators.py` define the search
+- `src/multi_period_delivery/alns/alns_optimizer.py` coordinates the ALNS search.
+- `src/multi_period_delivery/alns/destroy_operators.py` and
+  `src/multi_period_delivery/alns/repair_operators.py` define the search
   neighborhood.
-- `src/multi_period_delivery/inventory_utils.py` and related inventory modules
+- `src/multi_period_delivery/alns/inventory_utils.py` and related inventory modules
   maintain cross-period inventory balance.
 - `src/multi_period_delivery/monolithic/` implements the ILP benchmark.
 - `experiments/` contains the thesis experiment and reporting pipeline.

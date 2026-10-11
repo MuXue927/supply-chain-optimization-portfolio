@@ -141,7 +141,7 @@ def load_selection_table(selection_dir: Optional[Path]) -> pd.DataFrame:
 
 @contextmanager
 def temporary_config(updates: Dict[str, Any]):
-    from multi_period_delivery.alns_config import default_config as ALNSConfig
+    from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 
     old_values = {k: copy.deepcopy(getattr(ALNSConfig, k, None)) for k in updates}
     ALNSConfig.update_from_dict(updates)
@@ -162,7 +162,7 @@ def compute_initial_baseline(
     if cache_key in cache:
         return cache[cache_key]
 
-    from multi_period_delivery.alns_optimizer import ALNSOptimizer
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
 
     variant_map = {
         "basic": (False, False),

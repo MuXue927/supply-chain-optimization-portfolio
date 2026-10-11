@@ -10,6 +10,8 @@ The project is installable as the `multi_period_delivery` Python package:
 ```text
 multi-period-delivery/
 ├── src/multi_period_delivery/
+│   ├── alns/
+│   ├── cplex_api_monolithic/
 │   └── monolithic/
 ├── experiments/
 ├── scripts/
@@ -20,11 +22,14 @@ multi-period-delivery/
 
 The main methods are:
 
-- `multi_period_delivery`: adaptive large neighborhood search.
+- `multi_period_delivery.alns`: adaptive large neighborhood search.
 - `monolithic`: integer-programming benchmark solved by Gurobi.
+- `cplex_api_monolithic`: CPLEX Python API implementation of the monolithic
+  benchmark.
 - `experiments`: reproducible thesis experiment pipeline.
 
-The ALNS implementation includes 10 destroy operators, 8 repair operators,
+The ALNS implementation includes 10 destroy operators, 9 repair operators,
+plus a minimum-load fill post-processing pass,
 adaptive operator weights, parameter tuning, feasibility repair, and
 machine-learning-based operator selection.
 
@@ -40,11 +45,62 @@ in:
 
 [`docs/dataset_1_validation.md`](docs/dataset_1_validation.md)
 
+The CPLEX-versus-ALNS objective reconciliation and over-delivery analysis are
+documented in:
+
+[`docs/objective_analysis.md`](docs/objective_analysis.md)
+
+The full ALNS implementation review, root causes, fixes, and regression
+results are documented in:
+
+[`docs/alns_review.md`](docs/alns_review.md)
+
+How this implementation relates to the thesis code, what was inherited, what
+was changed, and why the revised ALNS performs better than the thesis baseline
+is documented in:
+
+[`docs/thesis_relationship.md`](docs/thesis_relationship.md)
+
 ## Requirements
 
 - Python 3.10 or newer.
-- A valid Gurobi installation and license for the monolithic benchmark.
+- A valid Gurobi installation and license for the original monolithic
+  benchmark.
 - PowerShell on Windows, or an equivalent terminal on Linux/macOS.
+- The CPLEX Python API is the supported CPLEX route for this project. Install
+  it with `uv pip install --python ..\.venv ".[cplex]"`.
+  The extra pins `cplex==22.1.2.0` and `docplex==2.32.264`. The PyPI wheel
+  ships the Community Edition, which refuses models beyond roughly 1,000
+  variables or constraints (CPLEX error `1016`). Run
+  `..\.venv\Scripts\docplex.exe config --upgrade "C:\Program Files\IBM\ILOG\CPLEX_Studio2212"`
+  once to copy in the size-unlimited Studio runtime. See
+  [`../docs/uv_environment.md`](../docs/uv_environment.md).
+
+## CPLEX Python API
+
+The `cplex_api_monolithic/` module is the Python-API version of the
+multi-period monolithic model. It uses `import cplex`, `cplex.Cplex`, and
+`SparsePair` directly.
+
+```powershell
+python -m multi_period_delivery.cplex_api_monolithic `
+  --data-dir datasets/multiple-periods/small `
+  --dataset-name dataset_1 `
+  --output-dir OutPut-CPLEX-API/multiple-periods/small/dataset_1 `
+  --time-limit 120 `
+  --mip-gap 0 `
+  --seed 1
+```
+
+The shared `uv` environment setup, including the CPLEX Community-to-Full runtime
+upgrade, is documented in
+[`../docs/uv_environment.md`](../docs/uv_environment.md).
+
+The API model is exposed through a lazy package-level function:
+
+```python
+from multi_period_delivery import run_cplex_api_monolithic
+```
 
 ## Install With pip
 
@@ -257,7 +313,8 @@ Explanation:
 `FileNotFoundError` for `dataset_*`
 
 - Check `--data-dir`, `--scale`, and `--dataset-id`.
-- The sample repository includes only the small `dataset_1` instance.
+- The repository ships a curated instance set: two small, two medium, and one
+  large instance.
 
 Gurobi error
 
@@ -266,3 +323,19 @@ Gurobi error
 
 Generated outputs, logs, full datasets, and local virtual environments are
 excluded from Git.
+
+## Experiments and Results
+
+The portfolio experiment pipeline runs four ALNS variants on the curated
+five-instance set and compares them with the archived thesis results on the
+identical instances:
+
+```powershell
+python experiments/run_portfolio_experiments.py `
+  --results-dir ../results/multi-period --workers 6
+python experiments/build_portfolio_report.py
+```
+
+The summary tables and figures are committed under
+[`../results/multi-period`](../results/multi-period). Raw per-run directories
+are written to `results/multi-period/raw/` and are not committed.

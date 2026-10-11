@@ -1,0 +1,13 @@
+scale,variant,run_count,mean_final_objective,mean_improvement_pct,median_improvement_pct
+small,basic,2,98.52,66.9092,66.9092
+small,tuner,2,105.095,64.9425,64.9425
+small,ml,2,97.555,67.8733,67.8733
+small,full,2,106.31,64.3298,64.3298
+medium,basic,2,939.77,26.6025,26.6025
+medium,tuner,2,921.275,27.9971,27.9971
+medium,ml,2,945.725,26.188,26.188
+medium,full,2,927.315,27.7975,27.7975
+large,basic,1,2650.59,21.7171,21.7171
+large,tuner,1,2636.89,22.3883,22.3883
+large,ml,1,2647.61,22.3074,22.3074
+large,full,1,2643.85,22.5708,22.5708

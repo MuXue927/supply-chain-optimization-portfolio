@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "alns>=1.0.0",
     "numpy>=1.21.0",
+    "numba>=0.59.0",
     "matplotlib>=3.5.0",
     "scikit-learn>=1.0.0",
     "gurobipy>=10.0.0",
@@ -22,6 +23,13 @@ dependencies = [
 multi-period-delivery = "multi_period_delivery.cli:main"
 
 [project.optional-dependencies]
+# CPLEX Python API ("cplex") plus the "docplex" helper whose `config --upgrade`
+# command upgrades the bundled Community Edition runtime to the size-unlimited
+# CPLEX Studio runtime. See docs/uv_environment.md.
+cplex = [
+    "cplex==22.1.2.0",
+    "docplex==2.32.264",
+]
 # Development dependencies used for testing, profiling and linting.
 dev = [
     "pytest>=7.0",

@@ -1,98 +1,149 @@
-# Supply Chain Optimization Thesis Code
+# Supply-Chain Distribution Optimization Portfolio
 
-Research code for two related optimization problems in retail supply-chain
-distribution. The repository is organized as two standalone Python projects:
+Two standalone, reproducible Python projects for a retail supply-chain
+distribution problem: shipping products from production plants to dealers with
+heterogeneous vehicles, limited plant inventory, and minimum shipment
+quantities.
 
-- `single-period-delivery`: single-period, multi-plant, multi-dealer,
-  multi-SKU delivery optimization with heterogeneous vehicles and minimum
-  shipment quantities.
-- `multi-period-delivery`: production-driven, multi-period delivery
-  optimization with in-warehouse and scheduled-production inventory.
+- `single-period-delivery` - single-period, multi-plant, multi-dealer,
+  multi-SKU delivery planning.
+- `multi-period-delivery` - the production-driven extension with in-warehouse
+  and scheduled-production inventory across a planning horizon.
 
-The projects implement exact optimization models, decomposition algorithms,
-and metaheuristics. They are intended as reproducible research code and as a
-portfolio of optimization, Python, and experiment-engineering work.
+Each project ships an installable package, an exact mixed-integer programming
+model, an alternative algorithm, and a reproducible experiment pipeline. The
+portfolio demonstrates optimization modelling, algorithm implementation,
+experiment engineering, and Python packaging practice.
 
-## Technical Highlights
+## What Each Project Contains
 
 ### Single-period delivery
 
-- Integer-programming formulation for multi-plant, multi-dealer delivery.
-- Column generation with master and pricing subproblems.
-- Two-stage heuristic for fast response scenarios.
-- Monolithic Gurobi benchmark and sensitivity analysis.
+- Monolithic integer-programming model (Gurobi).
+- Column generation with explicit master and pricing subproblems.
+- Fast two-stage constructive heuristic.
+- CPLEX Python API implementations of both the monolithic and
+  column-generation models.
 
 ### Multi-period delivery
 
-- Multi-period model with in-warehouse inventory, production inventory, and
-  cross-period inventory balance.
-- Adaptive large neighborhood search with 10 destroy and 8 repair operators.
-- Two-level adaptive parameter tuning and feasibility-repair callbacks.
-- Ridge-regression and random-forest operator selectors.
-- Experiment runners for small-, medium-, and large-scale instances.
+- Production-driven multi-period model with in-warehouse inventory,
+  production inventory, and cross-period inventory balance.
+- Adaptive large neighborhood search (ALNS) with 10 destroy and 9 repair
+  operators, a minimum-load fill post-processing pass, and a cross-period
+  consolidation neighborhood.
+- Online parameter tuning and machine-learning operator selection.
+- CPLEX Python API implementation of the multi-period monolithic benchmark.
+
+## Results
+
+The curated experiment results are committed under [`results/`](results):
+five instances per project across three scales, with summary tables and
+figures. See [`results/README.md`](results/README.md) for the design and the
+per-project READMEs for the headline numbers.
 
 ## Repository Layout
 
 ```text
 .
+├── docs/
+│   └── uv_environment.md            # shared environment + CPLEX runtime notes
+├── results/                          # committed summary tables and figures
+├── tools/
+│   └── generate_data.py              # shared data generator
 ├── single-period-delivery/
 │   ├── src/single_period_delivery/
-│   │   ├── column_generation/
-│   │   ├── heuristic/
-│   │   └── monolithic/
-│   ├── scripts/
+│   │   ├── monolithic/               # Gurobi integer-programming model
+│   │   ├── column_generation/        # Gurobi column generation
+│   │   ├── heuristic/                # two-stage constructive heuristic
+│   │   ├── cplex_api_monolithic/     # CPLEX Python API monolithic model
+│   │   └── cplex_api_column_generation/
+│   ├── experiments/                  # experiment runner + report builder
 │   ├── tests/
-│   └── datasets/single-period/small/dataset_9/
+│   └── datasets/single-period/{small,medium,large}/
 └── multi-period-delivery/
     ├── src/multi_period_delivery/
-    │   └── monolithic/
-    ├── experiments/
-    ├── scripts/
+    │   ├── alns/                      # ALNS search implementation
+    │   ├── monolithic/                # Gurobi multi-period model
+    │   └── cplex_api_monolithic/      # CPLEX Python API benchmark
+    ├── experiments/                   # experiment runner + report builder
     ├── tests/
-    └── datasets/multiple-periods/small/dataset_1/
+    └── datasets/multiple-periods/{small,medium,large}/
 ```
 
-Shared, cross-project development tools live at the repository root:
-
-```text
-tools/
-└── generate_data.py
-```
-
-Detailed problem definitions are kept inside each project:
-
-- `single-period-delivery/docs/problem_description.md`
-- `multi-period-delivery/docs/problem_description.md`
-
-Only small sample datasets are included in this portfolio repository. The
-full experimental instances and generated output folders are intentionally
-excluded.
-
-## Reproducing
-
-Each subproject has its own `pyproject.toml` and installable package entry
-point. The project-level READMEs explain every installation and run command:
-The multi-period project requires Python 3.10+, and the single-period project
-requires Python 3.11+. A valid Gurobi installation is needed for the
-mathematical-programming components. The ALNS code also uses the public `alns`
-package.
-
-Start with the project-level README:
+The two project READMEs document the algorithms, the module map, and every
+run command:
 
 - [`single-period-delivery/README.md`](single-period-delivery/README.md)
 - [`multi-period-delivery/README.md`](multi-period-delivery/README.md)
 
+## Environment
+
+Both projects share one `uv`-managed virtual environment at the repository
+root. Full setup, including the CPLEX Community-to-Full runtime upgrade and
+the solver-version matching rules, is documented in
+[`docs/uv_environment.md`](docs/uv_environment.md).
+
+```powershell
+# create the shared environment and install both projects in editable mode
+uv venv --python 3.10 .venv
+uv pip install --python .venv `
+  numpy numba pandas matplotlib seaborn rich `
+  alns scikit-learn openpyxl networkx plotly vrplib `
+  pytest ruff setuptools wheel
+uv pip install --python .venv --no-build-isolation --no-deps `
+  -e single-period-delivery -e multi-period-delivery
+
+# optional: CPLEX Python API (see docs/uv_environment.md)
+uv pip install --python .venv cplex==22.1.2.0 docplex==2.32.264
+.\.venv\Scripts\docplex.exe config --upgrade "C:\Program Files\IBM\ILOG\CPLEX_Studio2212"
+```
+
+Gurobi requires a valid license; the ALNS, the heuristic, and the CPLEX Python
+API paths do not.
+
+## Reproducing the Experiments
+
+```powershell
+# multi-period: 4 ALNS variants x 5 instances -> results/multi-period
+.\.venv\Scripts\python.exe multi-period-delivery\experiments\run_portfolio_experiments.py `
+  --results-dir results\multi-period --workers 6
+.\.venv\Scripts\python.exe multi-period-delivery\experiments\build_portfolio_report.py
+
+# single-period: heuristic + CPLEX Python API -> results/single-period
+.\.venv\Scripts\python.exe single-period-delivery\experiments\run_portfolio_experiments.py `
+  --results-dir results\single-period --workers 3
+.\.venv\Scripts\python.exe single-period-delivery\experiments\build_portfolio_report.py
+```
+
+The shared data generator, used to create new instances in the same format, is
+documented in [`tools/README.md`](tools/README.md).
+
+## Data and Reproducibility
+
+- The committed datasets are the five curated instances per project used by
+  the experiment pipelines, plus the original sample instances.
+- Raw per-run directories and console logs are written under
+  `results/*/raw/` and are intentionally not committed.
+- Generated output folders (`OutPut*/`, `outputs/`, `ExperimentsResults/`),
+  virtual environments, and build artifacts are excluded from version control.
+
 ## Research Context
 
-The single-period project was developed for a study of two-level inventory
-systems and product distribution. The multi-period project extends the model
-with production-driven inventory dynamics and adaptive ALNS search. A version
-of the single-period work was accepted for the LESCDT 2026 international
-conference.
+The single-period problem was developed for a study of two-level inventory
+systems and product distribution; a version was accepted for the LESCDT 2026
+international conference. The multi-period project extends the model with
+production-driven inventory dynamics and adaptive ALNS search.
+
+This repository is a reorganized and revised version of the original thesis
+codebase. It keeps the thesis model, data schema, initial-solution procedure,
+and operator families, and fixes the implementation defects and missing
+neighborhoods described in
+[`multi-period-delivery/docs/thesis_relationship.md`](multi-period-delivery/docs/thesis_relationship.md).
 
 ## Notes
 
 - Do not commit credentials, cookies, private databases, virtual
   environments, or generated result folders.
-- The repository intentionally contains code and small sample data rather
-  than a copy of every local experiment artifact.
+- The repository ships code, small datasets, and curated result summaries
+  rather than a copy of every local experiment artifact.

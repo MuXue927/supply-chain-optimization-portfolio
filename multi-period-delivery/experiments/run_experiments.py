@@ -257,8 +257,8 @@ def run_single(args_tuple):
 
     # Import inside worker to avoid pickling/import issues
     try:
-        from multi_period_delivery.alns_config import default_config as ALNSConfig
-        from multi_period_delivery.alns_optimizer import ALNSOptimizer
+        from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
+        from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
     except Exception as e:
         meta = {
             "instance": instance_path,

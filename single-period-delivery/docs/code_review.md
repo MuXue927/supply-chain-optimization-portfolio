@@ -67,17 +67,20 @@ programming level, but one important modeling risk remains:
 - the pricing objective subtracts `p_f` directly rather than the thesis's
   minimum-load penalty.
 
-Therefore, the current column-generation implementation may not be exactly
-equivalent to the monolithic objective when a used vehicle is below its minimum
-load.
-
-This is a model-equivalence risk, not only an implementation detail. It should
-be resolved and tested against the monolithic model on small instances once a
-valid Gurobi environment is available.
+The CPLEX Python API reimplementation in `cplex_api_column_generation` now
+uses the same `alpha * vehicle cost` minimum-load penalty in the master
+pattern cost and in the pricing subproblem. The seeded validation in
+[`cplex_validation.md`](cplex_validation.md) recomputes the objective from
+the result CSV and matches the CPLEX objective exactly. The original Gurobi
+column-generation code is left unchanged and retains the historical behavior
+described above.
 
 ## Current Conclusion
 
 - Heuristic results are internally feasible and the objective is corrected.
 - The monolithic implementation matches the reviewed thesis formulation.
-- The column-generation model still requires an objective-equivalence fix and
-  numerical validation.
+- The original Gurobi column-generation code remains historically unchanged.
+- The CPLEX Python API column-generation implementation
+  (`cplex_api_column_generation`) uses the corrected objective and has passed
+  the seeded feasibility and objective-accounting checks documented in
+  `cplex_validation.md`.

@@ -1,0 +1,8 @@
+{
+    "solver_id": "GUROBI",
+    "alpha": 2,
+    "BIG_NUM": 99999,
+    "gap_limit": 0,
+    "time_limit": 60,
+    "output_flag": 1
+}

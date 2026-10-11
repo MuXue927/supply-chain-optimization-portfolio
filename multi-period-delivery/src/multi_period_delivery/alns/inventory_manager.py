@@ -1,0 +1,91 @@
+"""
+inventory_manager.py
+
+A minimal unified inventory manager used by callbacks/repair paths.
+It centralizes inventory rebuild, negative-inventory scanning, and
+basic resource-pool snapshot generation.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any, Dict, List, Tuple
+
+
+class UnifiedInventoryManager:
+    """Lightweight inventory facade for SolutionState."""
+
+    def __init__(self, eps: float = 1e-6):
+        self.eps = float(eps)
+
+    def rebuild_inventory(self, state: Any) -> bool:
+        """Rebuild inventory baseline from vehicles and production."""
+        try:
+            return bool(state.compute_inventory())
+        except Exception:
+            return False
+
+    def scan_negative_inventory(
+        self, state: Any
+    ) -> List[Tuple[Tuple[str, str, int], float]]:
+        """Return all (index, value) entries with negative inventory."""
+        negatives: List[Tuple[Tuple[str, str, int], float]] = []
+        try:
+            for k, v in state.s_ikt.items():
+                if float(v) < -self.eps:
+                    negatives.append((k, float(v)))
+        except Exception:
+            return []
+        return negatives
+
+    def auto_repair_inventory_inconsistency(
+        self, state: Any, context: str = ""
+    ) -> bool:
+        """
+        Attempt a conservative repair by rebuilding inventory once.
+        Returns True only if no negative inventory remains after rebuild.
+        """
+        ok = self.rebuild_inventory(state)
+        if not ok:
+            return False
+        return len(self.scan_negative_inventory(state)) == 0
+
+    def build_resource_pool(self, state: Any) -> Dict[Tuple[str, str, int], int]:
+        """
+        Return the available inventory pool for periods 1..H.
+
+        This mirrors the repair-path ``build_resource_pool`` semantics:
+        available(plant, sku, day) =
+            max(0, ending_inventory(day-1) + production(day) - same-day usage).
+        Day 0 is an opening balance used only for the recursion, not an
+        allocatable period in the pool.
+        """
+        pool: Dict[Tuple[str, str, int], int] = {}
+        try:
+            data = state.data
+            if not getattr(state, "s_initialized", False):
+                state.compute_inventory()
+
+            usage: Dict[Tuple[str, int, str], int] = defaultdict(int)
+            for veh in getattr(state, "vehicles", []):
+                for (sku, cargo_day), qty in veh.cargo.items():
+                    if cargo_day != veh.day:
+                        continue
+                    usage[(veh.fact_id, veh.day, sku)] += int(qty)
+
+            for plant in data.plants:
+                for sku in data.skus_plant.get(plant, ()):
+                    for day in range(1, data.horizons + 1):
+                        prev_inv = int(
+                            state.s_ikt.get((plant, sku, day - 1), 0)
+                        )
+                        production = int(
+                            data.sku_prod_each_day.get((plant, sku, day), 0)
+                        )
+                        used = int(usage.get((plant, day, sku), 0))
+                        pool[(plant, sku, day)] = max(
+                            0, prev_inv + production - used
+                        )
+        except Exception:
+            return {}
+        return pool

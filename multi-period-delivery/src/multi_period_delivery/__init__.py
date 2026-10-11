@@ -21,28 +21,33 @@ __all__ = []
 
 # Lightweight, commonly used data I/O classes.
 try:
-    from .InputDataALNS import DataALNS
+    from .alns.InputDataALNS import DataALNS as DataALNS
     __all__.append("DataALNS")
 except Exception:
     # Skip the export if an optional dependency is missing or the module fails.
     pass
 
 try:
-    from .OutputDataALNS import OutPutData
+    from .alns.OutputDataALNS import OutPutData as OutPutData
     __all__.append("OutPutData")
 except Exception:
     pass
 
 # Combined stopping criteria and AND/OR expression helpers.
 try:
-    from .combined_stopping import CombinedStoppingCriterion, AND, OR, create_standard_combined_criterion
+    from .alns.combined_stopping import (
+        AND,
+        OR,
+        CombinedStoppingCriterion,
+        create_standard_combined_criterion,
+    )
     __all__ += ["CombinedStoppingCriterion", "AND", "OR", "create_standard_combined_criterion"]
 except Exception:
     pass
 
 # Solution consistency-check entry point.
 try:
-    from .check_solution import check_solution
+    from .alns.check_solution import check_solution as check_solution
     __all__.append("check_solution")
 except Exception:
     pass
@@ -51,7 +56,9 @@ except Exception:
 try:
     # Export ALNSConfig for backward compatibility while referencing the
     # module-level default_config instance.
-    from .alns_config import default_config as ALNSConfig
+    from .alns.alns_config import default_config
+
+    ALNSConfig = default_config
     __all__.append("ALNSConfig")
 except Exception:
     pass
@@ -59,9 +66,21 @@ except Exception:
 
 def run_model(*args, **kwargs):
     """Run the multi-period optimizer via a lazy package-level import."""
-    from .main import run_model as _run_model
+    from .alns.main import run_model as _run_model
 
     return _run_model(*args, **kwargs)
 
 
 __all__.append("run_model")
+
+
+def run_cplex_api_monolithic(*args, **kwargs):
+    """Run the multi-period CPLEX Python API monolithic model."""
+    from .cplex_api_monolithic.runner import (
+        run_cplex_api_monolithic as _run,
+    )
+
+    return _run(*args, **kwargs)
+
+
+__all__.append("run_cplex_api_monolithic")

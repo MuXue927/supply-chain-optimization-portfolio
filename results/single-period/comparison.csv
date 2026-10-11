@@ -1,0 +1,6 @@
+scale,dataset_name,heuristic_objective,heuristic_seconds,cplex_objective,cplex_best_bound,cplex_mip_gap_pct,cplex_seconds,thesis_objective,heuristic_gap_vs_bound_pct
+large,dataset_1,1763.0800000000047,3.72,,,,428.28,,
+medium,dataset_1,844.76,2.53,,72.65045379842937,,626.31,671.6,1062.77
+medium,dataset_3,632.4800000000014,3.85,,38.302554304556345,,623.83,505.66,1551.27
+small,dataset_1,310.6,2.33,227.05999999999997,172.65472941176478,23.9607,608.26,233.14,79.9
+small,dataset_3,39.92,2.32,15.36,13.54,11.849,604.63,15.36,194.83
