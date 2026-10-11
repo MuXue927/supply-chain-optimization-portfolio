@@ -5,6 +5,7 @@
 # storage capacity at the production plants.
 # It supports multiple production plants, dealers, vehicle types, and SKUs.
 # Production plants may supply overlapping SKU sets.
+import os
 import time
 import random
 from gurobipy import GRB
@@ -316,12 +317,20 @@ class MasterModel:
     def run(self):
         # log_printer.print("Optimizing master model...")
         self.model.optimize()
-        self.model.write("MasterModel.lp")
+        # Dump the LP into this run's output directory rather than the current
+        # working directory, so generated model files never land next to the
+        # source (see .gitignore: *.lp / *.ilp).
+        os.makedirs(self.data.output_file_loc, exist_ok=True)
+        self.model.write(os.path.join(self.data.output_file_loc, "MasterModel.lp"))
 
         if self.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
             log_printer.print("Exception: Master Model Is Infeasible or Unbounded!")
             self.model.computeIIS()
-            self.model.write("Infeasible_MasterModel.ilp")
+            self.model.write(
+                os.path.join(
+                    self.data.output_file_loc, "Infeasible_MasterModel.ilp"
+                )
+            )
 
             if self.model.IISMinimal:  # Check whether computeIIS() returned a minimal irreducible infeasible subsystem.
                 log_printer.print('IIS is minimal \n')

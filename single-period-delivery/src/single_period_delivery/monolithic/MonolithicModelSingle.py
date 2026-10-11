@@ -249,11 +249,21 @@ class MonolithicModelSingle:
 
     def run(self):
         self.model.optimize()
-        self.model.write("MonolithicModelSingle.lp")
+        # Dump the LP into this run's output directory rather than the current
+        # working directory, so generated model files never land next to the
+        # source (see .gitignore: *.lp / *.ilp).
+        os.makedirs(self.data.output_file_loc, exist_ok=True)
+        self.model.write(
+            os.path.join(self.data.output_file_loc, "MonolithicModelSingle.lp")
+        )
 
         if self.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
             self.model.computeIIS()
-            self.model.write("Infeasible_MonolithicModelSingle.ilp")
+            self.model.write(
+                os.path.join(
+                    self.data.output_file_loc, "Infeasible_MonolithicModelSingle.ilp"
+                )
+            )
 
             if self.model.IISMinimal:  # Check whether computeIIS() returned a minimal irreducible inconsistent subsystem.
                 log_printer.print('IIS is minimal \n')

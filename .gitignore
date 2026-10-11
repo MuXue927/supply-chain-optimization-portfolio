@@ -28,6 +28,14 @@ logs*/
 *.out
 *.tmp
 
+# Solver model dumps. Gurobi and CPLEX write these next to the run output as
+# LP / IIS reference files; they are regenerated on every solve and are never
+# read back by the code, so they must not be committed.
+*.lp
+*.ilp
+*.mps
+*.sav
+
 # Local-only material: kept on disk for the author's reference, never published.
 # This holds the CPLEX command-line verification variants and any scratch data
 # that are intentionally excluded from the public portfolio.

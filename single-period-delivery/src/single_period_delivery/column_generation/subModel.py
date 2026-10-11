@@ -6,6 +6,7 @@
 # It supports multiple production plants, dealers, vehicle types, and SKUs.
 # Production plants may supply overlapping SKU sets.
 import math
+import os
 from gurobipy import GRB
 import gurobipy as gp
 from typing import Dict, Tuple, Set, Hashable
@@ -136,7 +137,11 @@ class SubModel:
         self.model.setObjective(self.obj, sense=GRB.MAXIMIZE)
         self.model.Params.FeasibilityTol = 1e-9
         self.model.optimize()
-        self.model.write("SubModel.lp")
+        # Dump the LP into this run's output directory rather than the current
+        # working directory, so generated model files never land next to the
+        # source (see .gitignore: *.lp / *.ilp).
+        os.makedirs(self.data.output_file_loc, exist_ok=True)
+        self.model.write(os.path.join(self.data.output_file_loc, "SubModel.lp"))
 
         if self.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
             return False

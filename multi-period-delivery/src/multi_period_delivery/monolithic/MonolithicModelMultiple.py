@@ -536,11 +536,21 @@ class MonolithicModelMultiple:
                 log_printer.print(f"Failed to export feasible solution JSON: {e}")
 
         self.model.optimize()
-        self.model.write("MonolithicModelMultiple.lp")
+        # Dump the LP into this run's output directory rather than the current
+        # working directory, so generated model files never land next to the
+        # source (see .gitignore: *.lp / *.ilp).
+        os.makedirs(self.data.output_file_loc, exist_ok=True)
+        self.model.write(
+            os.path.join(self.data.output_file_loc, "MonolithicModelMultiple.lp")
+        )
 
         if self.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
             self.model.computeIIS()
-            self.model.write("Infeasible_MonolithicModelMultiple.ilp")
+            self.model.write(
+                os.path.join(
+                    self.data.output_file_loc, "Infeasible_MonolithicModelMultiple.ilp"
+                )
+            )
 
             if (
                 self.model.IISMinimal
