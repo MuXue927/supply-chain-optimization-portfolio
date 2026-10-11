@@ -289,7 +289,7 @@ class ALNSConfig:
             "cross_period_dealer_removal_degree": 0.45,
             "period_range_removal_degree": 0.35,
             "period_range_removal_window_ratio": 0.30,
-            "inventory_level_destruction_degree": 0.25,  # P1：库存水平破坏
+            "inventory_level_destruction_degree": 0.25,  # P1: inventory-level destruction
         }
     )
 
@@ -299,13 +299,14 @@ class ALNSConfig:
             "local_search_repair": {"max_iter": 10},
             "smart_batch_repair": {"max_iter": 10, "batch_size": 10, "timeout": None},
             "regret_based_repair": {"k": 2, "topN": 6, "time_limit": 10.0},
-            "sequential_repair": {},  # P0：顺序修复
+            "sequential_repair": {},  # P0: sequential repair
             "lookahead_repair": {"lookahead_horizon": 2},
             "fleet_consolidation_repair": {},
         }
     )
 
-    # lookahead 修复中对“延后交付天数”的惩罚系数（越大越偏好当期修复）
+    # Penalty for deferred delivery days in lookahead repair.
+    # Larger values favor fulfillment in the current period.
     LOOKAHEAD_REPAIR_DELAY_PENALTY: float = 0.5
 
     # --------------------------

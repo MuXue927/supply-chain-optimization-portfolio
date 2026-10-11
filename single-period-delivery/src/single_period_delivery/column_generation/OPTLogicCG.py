@@ -1,5 +1,5 @@
-# 定义列生成算法的执行逻辑
-# 并将求解结果保存到csv文件
+# Execution logic for the column-generation algorithm.
+# Solved results are saved to CSV files.
 import os
 import csv
 import time
@@ -18,7 +18,7 @@ from .vehicle import Vehicle
 from .optutility import POSITIVEEPS
 
 data: InputDataCG
-# fact_id
+# Plant identifier.
 masterM: MasterModel
 # (fact_id, dealer_id, vehicle_type)
 subM: Dict[Tuple[str, str, str], SubModel] = field(default_factory=dict)
@@ -47,21 +47,21 @@ def run_model(
     clear_output_file(output_file_loc)
     # =========================================================
     for day_id in range(1, data.horizons + 1):
-        # 初始化主模型
+        # Initialize the master model.
         masterM = MasterModel(data)
-        # 初始化子模型
+        # Initialize the subproblems.
         subM = {}
         triple_plant_dealer_veh = find_triple_plant_dealer_veh(masterM)
         for (plant, dealer, veh_type) in triple_plant_dealer_veh:
             subM[plant, dealer, veh_type] = SubModel(plant, dealer, veh_type, data)
 
-        # 执行优化过程
+        # Run the optimization process.
         log_printer.print(f"Start Solving! Day {day_id} / Now {datetime.datetime.now()}")
-        # 使用列生成算法，获取主模型松弛问题的可行解
+        # Use column generation to obtain a feasible solution to the master model's LP relaxation.
         return_value = opt_master_model(model=masterM)
         if not return_value:
             return False
-        # 更改主模型的决策变量类型，重新优化，拿到主模型的整数解
+        # Change the master model's decision variable types and reoptimize for an integer solution.
         return_value = construct_int_solution(model=masterM)
         if not return_value:
             return False
@@ -93,7 +93,7 @@ def opt_master_model(model: MasterModel):
         PIs_2 = {key: model.cons_sku_supply[key].Pi for key in model.cons_sku_supply}
         PIs_3 = {key: model.cons_fact_sku_inv[key].Pi for key in model.cons_fact_sku_inv}
 
-        # 主模型中存在的装载模式的总数量
+        # Total number of load patterns in the master model.
         num_patterns = 0
 
         triple_plant_dealer_veh = find_triple_plant_dealer_veh(model)
@@ -104,7 +104,7 @@ def opt_master_model(model: MasterModel):
             pis1 = gp.tupledict({sku: PIs_1[dealer, sku] for sku in sub_model.require_skus})
             pis2 = gp.tupledict({sku: PIs_2[sku] for sku in sub_model.require_skus})
             pis3 = gp.tupledict({sku: PIs_3[plant, sku] for sku in sub_model.require_skus})
-            # 子模型的目标函数
+            # Subproblem objective.
             sub_model.obj =  (sub_model.d_xs.prod(pis1) + sub_model.d_xs.prod(pis2) + sub_model.d_xs.prod(pis3) -
                               data.veh_type_cost[veh_type] - sub_model.p_f)
             if not sub_model.run():
@@ -129,7 +129,7 @@ def opt_master_model(model: MasterModel):
 def construct_int_solution(model: MasterModel):
     global data, subM
     log_printer.print("Initializing Feasible Solution...")
-    # 关闭主模型中的人工变量 alpha
+    # Deactivate the alpha artificial variables in the master model.
     model.deactivate_alpha()
 
     complete_pattern(model)
@@ -138,17 +138,18 @@ def construct_int_solution(model: MasterModel):
     model.model.Params.OutputFlag = 1
     model.run()
 
-    # 更改主模型中决策变量的类型，拿到整数解
+    # Change the master model's decision variable types and obtain an integer solution.
     model.change_var_type()
     model.run()
     if model.model.Status in (GRB.INF_OR_UNBD, GRB.INFEASIBLE, GRB.UNBOUNDED):
         log_printer.print("Exception: Master Model Is Infeasible or Unbounded!")
         return False
 
-    # 如果模型中还存在人工变量，需要通过查看取值非0的人工变量，判断哪些约束不能被满足，进一步诊断原因
+    # If artificial variables remain, inspect those with nonzero values to identify which constraints
+    # cannot be satisfied and to diagnose the cause.
     if model.get_beta_size() != 0 or model.get_gamma_size() != 0:
         log_printer.print("Artificial variables exists in master model.")
-        # 查看人工变量的取值
+        # Inspect artificial variable values.
         for sku_id, var in model.d_beta.items():
             if var.X > 0:
                 log_printer.print(f"d_beta{[sku_id]} = {var.X}")
@@ -157,7 +158,7 @@ def construct_int_solution(model: MasterModel):
                 log_printer.print(f"d_gamma{[plant, sku_id]} = {var.X}")
 
     update_inv_order(rmp=model)
-    # 保存计算结果
+    # Save the solved results.
     output_result(model)
     result_state(r_data=data)
     return True
@@ -166,13 +167,13 @@ def complete_pattern(model: MasterModel):
     global data, subM
     return_value = 0
     for (plant, dealer) in data.construct_supply_chain():
-        # 某个生产基地可以提供的SKU集合
+        # SKUs available from a production plant.
         sku_set1 = {sku_id for sku_id in data.skus_plant[plant]}
-        # 某个经销商需要的SKU集合
+        # SKUs requested by a dealer.
         sku_set2 = {sku_id for sku_id in data.skus_dealer[dealer]}
         sku_set = sku_set1 & sku_set2
 
-        # 在主模型中存在向特定经销商供货的约束，但是约束条件左侧没有决策变量的sku集合，称为没有决策变量支撑的sku
+        # A SKU is unsupported when its supply constraint for a dealer has no decision variable on the left-hand side.
         complement_sku = {}
         for sku in sku_set:
             cons = model.cons_dealer_demands[dealer, sku]
@@ -182,7 +183,7 @@ def complete_pattern(model: MasterModel):
             complement_sku[sku] = data.demands[dealer, sku]
 
         if len(complement_sku) > 0:
-            # 取得最大容量的车型
+            # Select the vehicle type with the largest capacity.
             max_veh_type = max(data.all_veh_types, key=float)
             selected_vehicle = Vehicle(plant, dealer, max_veh_type, data)
 
@@ -204,7 +205,7 @@ def complete_pattern(model: MasterModel):
     return return_value
 
 def clear_output_file(output_file_loc=output_loc):
-    """清理输出文件，在每个数据集的文件夹中创建新的结果文件"""
+    """Clear output files and create a new result file in each dataset directory."""
     if not os.path.exists(output_file_loc):
         os.makedirs(output_file_loc)
     output_file_name = 'opt_result.csv'
@@ -214,11 +215,11 @@ def clear_output_file(output_file_loc=output_loc):
         writer.writerow(header)
 
 def output_result(model: MasterModel):
-    """在对应数据集的文件夹中保存结果"""
+    """Save results to the corresponding dataset directory."""
     output_file = os.path.join(data.output_file_loc, 'opt_result.csv')
 
     df_result = create_dataframe(model)
-    # header=False表示不将dataframe的列名写入文件
+    # header=False prevents DataFrame column names from being written to the file.
     df_result.to_csv(output_file, mode='a', header=False)
 
 def update_inv_order(rmp:MasterModel):
@@ -231,13 +232,15 @@ def update_inv_order(rmp:MasterModel):
                 data.sku_inv[plant, sku_id] -= round(var1.X * qty)
                 data.demands[dealer, sku_id] -= round(var1.X * qty)
 
-    # extra_fulfill是超额满足的经销商需求，qty=0表示恰好满足经销商需求
-    # 为了便于在文件中查找，所以保留qty=0的那些行
+    # extra_fulfill records demand satisfied in excess of the dealer's request.
+    # A qty value of 0 means the demand was satisfied exactly.
+    # Rows with qty=0 are retained to make file lookup easier.
     extra_fulfill = {(dealer, sku_id): -qty for (dealer, sku_id), qty in data.demands.items() if qty <= 0}
     data.demands = {(dealer, sku_id): qty for (dealer, sku_id), qty in data.demands.items() if qty > 0}
 
-    # sku_inv_left是生产基地中剩余的库存，qty=0表示没有剩余库存
-    # 为了便于在文件中查找，所以保留qty=0的那些行
+    # sku_inv_left records remaining inventory at production plants.
+    # A qty value of 0 means no inventory remains.
+    # Rows with qty=0 are retained to make file lookup easier.
     sku_inv_left = {(plant, sku_id): qty for (plant, sku_id), qty in data.sku_inv.items() if qty >= 0}
     data.sku_inv = {(plant, sku_id): qty for (plant, sku_id), qty in data.sku_inv.items() if qty > 0}
 
@@ -263,7 +266,7 @@ def update_inv_order(rmp:MasterModel):
 
 def create_dataframe(rmp: MasterModel):
     rows = []
-    # 构建每一种装载模式对应的车辆编号
+    # Create the vehicle identifiers associated with each load pattern.
     pattern_veh_id_map = create_pt_veh_id_map(rmp)
     for (plant, dealer, veh_type, pattern_id), var1 in rmp.d_xs.items():
         if var1.X > 0:
@@ -285,31 +288,32 @@ def create_dataframe(rmp: MasterModel):
 
 def create_pt_veh_id_map(rmp: MasterModel):
     """
-    创建每一种装载模式对应的车辆编号的字典
-    :param rmp: 主模型
+    Create a mapping from each load pattern to its vehicle identifiers.
+
+    :param rmp: Restricted master problem.
     """
-    # pattern_nums用于记录每一种装载模式的使用数量
+    # pattern_nums records the number of times each load pattern is used.
     pattern_nums = {}
     for key, var in rmp.d_xs.items():
         if var.X > 0:
             pattern_nums[var.VarName] = var.X
 
-    # 主模型计算出的使用的车辆总数
+    # Total number of vehicles used according to the master model.
     num_veh_used = sum(var.X for key, var in rmp.d_xs.items() if var.X > 0)
-    # 根据车辆总数，构建车辆编号列表
+    # Build the vehicle identifier list from the total number of vehicles used.
     veh_ids = [veh_id for veh_id in range(1, round(num_veh_used) + 1)]
 
-    cur_veh_idx = 0  # 车辆编号在veh_ids中的索引
-    # 为所有装载模式初始化一个空的车辆编号集合
+    cur_veh_idx = 0  # Index of the next vehicle identifier in veh_ids.
+    # Initialize an empty vehicle identifier set for each load pattern.
     pt_veh_id_map = {pt: set() for pt in pattern_nums.keys()}
 
     for pt, pt_num in pattern_nums.items():
-        # 当前装载模式对应的车辆编号集合
+        # Vehicle identifiers assigned to the current load pattern.
         pt_vehicles = set()
         if cur_veh_idx < len(veh_ids):
             pt_num = int(pt_num)
             for _ in range(pt_num):
-                # 优先使用较小的车辆编号
+                # Prefer smaller vehicle identifiers.
                 veh_id = veh_ids[cur_veh_idx]
                 pt_vehicles.add(veh_id)
                 cur_veh_idx += 1
@@ -318,7 +322,7 @@ def create_pt_veh_id_map(rmp: MasterModel):
 
 
 def result_state(r_data: InputDataCG):
-    """处理并保存统计结果到对应的数据集文件夹"""
+    """Process and save summary statistics to the corresponding dataset directory."""
     dataset = r_data.dataset_name
     output_location = r_data.output_file_loc
     input_location = os.path.join(r_data.input_file_loc, dataset)
@@ -352,9 +356,9 @@ def result_state(r_data: InputDataCG):
     df_tmp.to_csv(os.path.join(output_location, 'opt_summary.csv'))
 
     df_tmp = df_tmp.reset_index()
-    # 判断是否所有车辆中装载的SKU体积满足车辆容量约束
+    # Check whether the loaded SKU volume satisfies the vehicle capacity constraint for every vehicle.
     is_cap_exceed = pd.Series(df_tmp['occupied_size'] <= df_tmp['carry_standard_size'])
-    if is_cap_exceed.all():  # 所有值都为True，则返回True
+    if is_cap_exceed.all():  # True when all entries are True.
         log_printer.print("Congratulations! "
                           "The volume of SKUs loaded in each vehicle is equal or smaller than vehicle's capacity.")
     else:

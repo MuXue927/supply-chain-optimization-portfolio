@@ -1,4 +1,4 @@
-# 用于执行多周期优化模型的代码
+# Entry point for the multi-period monolithic optimization model.
 from .optLogicMultiple import *
 
 if __name__ == "__main__":

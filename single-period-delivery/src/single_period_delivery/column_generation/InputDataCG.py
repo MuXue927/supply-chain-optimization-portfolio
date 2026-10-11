@@ -1,6 +1,6 @@
-# 定义列生成模型的数据接口
-# 整理保存在datasets//single-period文件夹中的数据
-# 将每个数据集中提供的数据，按照需要的方式呈现
+# Data interface for the column-generation model.
+# Normalize the data stored in the datasets/single-period directory.
+# Present each dataset in the structure required by the optimization model.
 import os
 import json
 import pandas as pd
@@ -15,72 +15,72 @@ class InputDataCG:
     # specify which dataset to load
     dataset_name: str
 
-    # 对于单周期问题，默认规划周期长度为 1
+    # Single-period problems use a one-day planning horizon by default.
     horizons = 1
-    # 默认从第一天开始规划
+    # Planning starts on day 1 by default.
     day = 1
 
-    # 设定环境参数
-    # 主模型中对第一类人工变量的惩罚系数
+    # Environment parameters.
+    # Penalty coefficient for the first class of artificial variables in the master model.
     param_pun_factor1: int = field(init=False)
-    # 主模型中对第二类人工变量的惩罚系数
+    # Penalty coefficient for the second class of artificial variables in the master model.
     param_pun_factor2: int = field(init=False)
-    # 主模型中对第三类人工变量的惩罚系数
+    # Penalty coefficient for the third class of artificial variables in the master model.
     param_pun_factor3: int = field(init=False)
-    # 列生成算法中，每次减少多少个装载模式
+    # Number of load patterns removed per shrink operation in column generation.
     param_pattern_batch: int = field(init=False)
-    # 列生成算法中，要保留的装载模式数量
+    # Number of load patterns to retain in column generation.
     param_pattern_num_shrink_to: int = field(init=False)
-    # 列生成算法中，要保留的装载模式的最大数量上限，当超过这个上限时，开始删除多余的列
+    # Maximum number of load patterns to retain before excess columns are removed.
     param_trigger_shrink_level: int = field(init=False)
 
-    # MIP模型的求解gap，当达到设定的gap后，模型停止，默认值为0
+    # MIP gap tolerance. Optimization stops once the configured gap is reached; the default is 0.
     param_gap_limit: float = field(init=False)
-    # MIP模型求解的时间限制，默认值为60
+    # MIP time limit in seconds; the default is 60.
     param_time_limit: float = field(init=False)
-    # 是否输出gurobi的求解日志
+    # Whether to print the Gurobi solver log.
     param_output_flag: int = field(init=False)
 
-    # 定义需要的数据接口，看数学模型中的符号定义
-    # 生产基地的集合
+    # Data interfaces corresponding to the symbols in the mathematical model.
+    # Set of production plants.
     plants: Set[str] = field(init=False)
-    # 经销商的集合
+    # Set of dealers.
     dealers: Set[str] = field(init=False)
-    # 所有SKU的集合
+    # Set of all SKUs.
     all_skus: Set[str] = field(init=False)
-    # 所有车辆类型集合
+    # Set of all vehicle types.
     all_veh_types: Set[str] = field(init=False)
 
-    # 每种SKU的体积量化数值 {sku: size}
+    # Volume per unit for each SKU: {sku: size}.
     sku_sizes: Dict[str, float] = field(init=False)
-    # 生产基地中SKU的当前库存 {(plant, sku): qty}
+    # Current SKU inventory at production plants: {(plant, sku): qty}.
     sku_inv: Dict[Tuple[str, str], int] = field(init=False)
-    # 某种SKU的总库存数量 {sku: total_qty}
+    # Total inventory of each SKU: {sku: total_qty}.
     sku_total_inv: Dict[str, int] = field(init=False)
-    # 生产基地可以提供的SKU集合
+    # SKU set that each production plant can supply.
     skus_plant: Dict[str, Set[str]] = field(init=False)
-    # 经销商对SKU的需求 {(dealer, sku): qty}
+    # Dealer demand by SKU: {(dealer, sku): qty}.
     demands: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商需要的SKU集合
+    # SKU set requested by each dealer.
     skus_dealer: Dict[str, Set[str]] = field(init=False)
 
-    # 每一种车辆类型的使用成本 {v_type: cost}
+    # Usage cost for each vehicle type: {v_type: cost}.
     veh_type_cost: Dict[str, float] = field(init=False)
-    # 每一种车辆类型的容量上限 {v_type: capacity}
+    # Capacity limit for each vehicle type: {v_type: capacity}.
     veh_type_cap: Dict[str, int] = field(init=False)
-    # 每一种车辆类型的最小起运量 {v_type: min_load}
+    # Minimum shipment quantity for each vehicle type: {v_type: min_load}.
     veh_type_min_load: Dict[str, int] = field(init=False)
 
     df_order: pd.DataFrame = field(default_factory=pd.DataFrame)
     df_sku_inv: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    # 到这里，列生成模型需要的所有数据接口，已经定义完毕
-    # 接下来，要做的事情是读取并整理数据
+    # All data interfaces required by the column-generation model are declared above.
+    # The next step is to load and normalize the input data.
 
-    # 开头带双下划线，用于对象的数据封装，以此命名的属性或者方法为类的私有属性或者私有方法，用于隐藏数据
-    # 但这种机制并不是很严格，类中所有以双下划线开头的名称都会自动变为"_类名__name"的新名称
-    # 这种机制可以阻止继承类重新定义或者更改方法的实现
-    # 这个函数用于给dataframe中每一列重新命名
+    # A leading double underscore provides lightweight data encapsulation.
+    # Such names are rewritten as "_ClassName__name" to hide implementation details,
+    # which makes it harder for subclasses to redefine or alter the implementation.
+    # Rename the columns of a DataFrame.
     def __reorganize_dataframe(self, df_input: pd.DataFrame, title_map):
         ordered_cols = list(title_map.values())
         df_input.rename(columns=title_map, inplace=True)
@@ -111,29 +111,29 @@ class InputDataCG:
         input_file3 = os.path.join(input_file_loc, "vehicle.csv")
         input_file4 = os.path.join(input_file_loc, "warehouse_storage.csv")
 
-        # 经销商对SKU的需求信息
+        # Demand requested by dealers by SKU.
         self.df_order = pd.read_csv(input_file1, header=0)
-        # SKU的体积信息
+        # SKU volume information.
         df_sku_size = pd.read_csv(input_file2, header=0)
-        # 所有车辆类型信息，包括车辆容量、最小起运量、使用成本
+        # Vehicle type information, including capacity, minimum shipment quantity, and usage cost.
         df_all_veh = pd.read_csv(input_file3, header=0)
-        # 生产基地中SKU的库存信息
+        # SKU inventory information for production plants.
         self.df_sku_inv = pd.read_csv(input_file4, header=0)
 
-        # 整理order.csv里面的数据
+        # Normalize the data in order.csv.
         title_map = {'client_code': 'dealer_id', 'product_code': 'sku_id', 'volume': 'order_qty'}
         self.__reorganize_dataframe(self.df_order, title_map)
         self.df_order['dealer_id'] = self.df_order['dealer_id'].astype(str)
         self.df_order['sku_id'] = self.df_order['sku_id'].astype(str)
         self.df_order['order_qty'] = self.df_order['order_qty'].astype(int)
 
-        # 整理product_size.csv里面的数据
+        # Normalize the data in product_size.csv.
         title_map = {'product_code': 'sku_id', 'standard_size': 'size'}
         self.__reorganize_dataframe(df_sku_size, title_map)
         df_sku_size['sku_id'] = df_sku_size['sku_id'].astype(str)
         df_sku_size['size'] = df_sku_size['size'].astype(float)
 
-        # 整理vehicle.csv里面的数据
+        # Normalize the data in vehicle.csv.
         title_map = {
             'vehicle_type': 'vehicle_type', 'carry_standard_size': 'capacity',
             'min_standard_size': 'min_load', 'cost_to_use': 'cost'
@@ -144,14 +144,14 @@ class InputDataCG:
         df_all_veh['min_load'] = df_all_veh['min_load'].astype(int)
         df_all_veh['cost'] = df_all_veh['cost'].astype(float)
 
-        # 整理warehouse_storage.csv里面的数据
+        # Normalize the data in warehouse_storage.csv.
         title_map = {'plant_code': 'fact_id', 'product_code': 'sku_id', 'volume': 'inv'}
         self.__reorganize_dataframe(self.df_sku_inv, title_map)
         self.df_sku_inv['fact_id'] = self.df_sku_inv['fact_id'].astype(str)
         self.df_sku_inv['sku_id'] = self.df_sku_inv['sku_id'].astype(str)
         self.df_sku_inv['inv'] = self.df_sku_inv['inv'].astype(int)
 
-        # 在整理好数据之后，接下来需要计算出之前定义好的数据接口
+        # After normalization, derive the data interfaces declared above.
         plants = list(self.df_sku_inv['fact_id'].unique())
         self.plants = {plant for plant in plants}
 

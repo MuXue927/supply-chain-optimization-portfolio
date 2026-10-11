@@ -1,6 +1,6 @@
-# 定义启发式算法的数据接口
-# 整理保存在datasets//single-period文件夹中的数据
-# 将每个数据集中提供的数据，按照你需要的方式呈现
+# Data interface for the heuristic algorithm.
+# Loads and normalizes the data stored in datasets/single-period.
+# Exposes each dataset in the representation required by the heuristic.
 import os
 import pandas as pd
 from collections import defaultdict
@@ -15,46 +15,46 @@ class InputDataHeuristic:
     # specify which dataset to load
     dataset_name: str
     
-    # 对于单周期问题，默认规划周期长度为 1
+    # The single-period problem uses a planning horizon of one period.
     horizons = 1
-    # 默认从第一天开始规划
+    # Planning starts on the first day by default.
     day = 1
     
-    # 定义需要的数据接口
-    # 生产基地的集合
+    # Required data interfaces.
+    # Set of production plants.
     plants: Set[str] = field(init=False)
-    # 经销商的集合
+    # Set of dealers.
     dealers: Set[str] = field(init=False)
-    # 所有SKU的集合
+    # Set of all SKUs.
     all_skus: Set[str] = field(init=False)
-    # 所有车辆类型集合
+    # Set of all vehicle types.
     all_veh_types: Set[str] = field(init=False)
     
-    # 每种SKU的体积量化数值 {sku: size}
+    # Unit volume of each SKU: {sku: size}.
     sku_sizes: Dict[str, float] = field(init=False)  
     
-    # 生产基地中SKU的当前库存 {(plant, sku): qty}
+    # Current SKU inventory at each production plant: {(plant, sku): qty}.
     sku_inv: Dict[Tuple[str, str], int] = field(init=False)
-    # 生产基地可以提供的SKU集合
+    # SKUs that can be supplied by each production plant.
     skus_plant: Dict[str, Set[str]] = field(init=False)
     
-    # 经销商对SKU的需求 {(dealer, sku): qty}
+    # Dealer demand for each SKU: {(dealer, sku): qty}.
     demands: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商需要的SKU集合
+    # SKUs required by each dealer.
     skus_dealer: Dict[str, Set[str]] = field(init=False)
     
-    # 每一种车辆类型的使用成本 {v_type: cost}
+    # Usage cost of each vehicle type: {v_type: cost}.
     veh_type_cost: Dict[str, float] = field(init=False)
-    # 每一种车辆类型的容量上限 {v_type: capacity}
+    # Capacity of each vehicle type: {v_type: capacity}.
     veh_type_cap: Dict[str, int] = field(init=False)
-    # 每一种车辆类型的最小起运量 {v_type: min_load}
+    # Minimum load of each vehicle type: {v_type: min_load}.
     veh_type_min_load: Dict[str, int] = field(init=False)
     
     df_order: pd.DataFrame = field(default_factory=pd.DataFrame)
     df_sku_inv: pd.DataFrame = field(default_factory=pd.DataFrame)
     
     
-    # 读取并整理数据
+    # Load and normalize the input data.
     def __reorganize_dataframe(self, df_input: pd.DataFrame, title_map):
         ordered_cols = list(title_map.values())
         df_input.rename(columns=title_map, inplace=True)
@@ -70,29 +70,29 @@ class InputDataHeuristic:
         input_file3 = os.path.join(input_file_loc, "vehicle.csv")
         input_file4 = os.path.join(input_file_loc, "warehouse_storage.csv")
         
-        # 经销商对SKU的需求信息
+        # Dealer demand for SKUs.
         self.df_order = pd.read_csv(input_file1, header=0)
-        # SKU的体积信息
+        # SKU volume information.
         df_sku_size = pd.read_csv(input_file2, header=0)
-        # 所有车辆类型信息，包括车辆容量、最小起运量、使用成本
+        # Vehicle type information, including capacity, minimum load, and usage cost.
         df_all_veh = pd.read_csv(input_file3, header=0)
-        # 生产基地中SKU的库存信息
+        # SKU inventory at production plants.
         self.df_sku_inv = pd.read_csv(input_file4, header=0)
         
-        # 整理order.csv里面的数据
+        # Normalize the data in order.csv.
         title_map = {'client_code': 'dealer_id', 'product_code': 'sku_id', 'volume': 'order_qty'}
         self.__reorganize_dataframe(self.df_order, title_map)
         self.df_order['dealer_id'] = self.df_order['dealer_id'].astype(str)
         self.df_order['sku_id'] = self.df_order['sku_id'].astype(str)
         self.df_order['order_qty'] = self.df_order['order_qty'].astype(int)
         
-        # 整理product_size.csv里面的数据
+        # Normalize the data in product_size.csv.
         title_map = {'product_code': 'sku_id', 'standard_size': 'size'}
         self.__reorganize_dataframe(df_sku_size, title_map)
         df_sku_size['sku_id'] = df_sku_size['sku_id'].astype(str)
         df_sku_size['size'] = df_sku_size['size'].astype(float)
         
-        # 整理vehicle.csv里面的数据
+        # Normalize the data in vehicle.csv.
         title_map = {
             'vehicle_type': 'vehicle_type', 'carry_standard_size': 'capacity',
             'min_standard_size': 'min_load', 'cost_to_use': 'cost'
@@ -103,14 +103,14 @@ class InputDataHeuristic:
         df_all_veh['min_load'] = df_all_veh['min_load'].astype(int)
         df_all_veh['cost'] = df_all_veh['cost'].astype(float)
         
-        # 整理warehouse_storage.csv里面的数据
+        # Normalize the data in warehouse_storage.csv.
         title_map = {'plant_code': 'fact_id', 'product_code': 'sku_id', 'volume': 'inv'}
         self.__reorganize_dataframe(self.df_sku_inv, title_map)
         self.df_sku_inv['fact_id'] = self.df_sku_inv['fact_id'].astype(str)
         self.df_sku_inv['sku_id'] = self.df_sku_inv['sku_id'].astype(str)
         self.df_sku_inv['inv'] = self.df_sku_inv['inv'].astype(int)
         
-        # 在整理好数据之后，接下来需要计算出之前定义好的数据接口
+        # After normalization, derive the data interfaces declared above.
         plants = list(self.df_sku_inv['fact_id'].unique())
         self.plants = {plant for plant in plants}
 
@@ -192,5 +192,4 @@ class InputDataHeuristic:
                         supply_chain[plant, dealer].add(sku)
         supply_chain = dict(supply_chain)
         return supply_chain
-    
-    
+

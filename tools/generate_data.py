@@ -4,36 +4,36 @@
 #   python tools/generate_data.py --problem single --scale small --count 3
 #   python tools/generate_data.py --problem multi --periods 5 --scale small --count 3
 
-# 对于单周期的问题, 需要生成的csv文件包括：
-# 1)order.csv文件
-# 该文件包含三列, 分别是client_code、product_code、volume
-# 2)product_size.csv文件
-# 该文件包含两列, 分别是product_code、standard_size
-# 3)vehicle.csv文件
-# 该文件需要包含四列, 分别是vehicle_type、carry_standard_size、min_standard_size、cost_to_use
-# 4)warehouse_storage.csv文件
-# 该文件需要包含三列, 分别是plant_code、product_code、volume
-# 注意, 需要让每家生产基地可以提供相同的SKU
+# Single-period datasets contain the following CSV files:
+# 1) order.csv
+#    Columns: client_code, product_code, and volume.
+# 2) product_size.csv
+#    Columns: product_code and standard_size.
+# 3) vehicle.csv
+#    Columns: vehicle_type, carry_standard_size, min_standard_size, and cost_to_use.
+# 4) warehouse_storage.csv
+#    Columns: plant_code, product_code, and volume.
+# Each plant is allowed to supply the same set of SKUs.
 
-# 对于多周期的问题, 需要生成的csv文件包括：
-# 1)order.csv文件
-# 该文件包含三列, 分别是client_code、product_code、volume
-# 2)product_size.csv文件
-# 该文件包含两列, 分别是product_code、standard_size
-# 3)vehicle.csv文件
-# 该文件需要包含四列, 分别是vehicle_type、carry_standard_size、min_standard_size、cost_to_use
-# 4)warehouse_storage.csv文件
-# 该文件需要包含三列, 分别是plant_code、product_code、volume
-# 注意, 需要让每家生产基地可以提供相同的SKU
-# 5)plant_size_upper_limit.csv文件
-# 该文件包含两列, 分别是plant_code、max_volume
-# 6)warehouse_production.csv文件
-# 该文件包含四列, 分别是plant_code、product_code、produce_date、volume
-# 同理, 在该文件中, 也需要让每家生产基地可以提供相同的SKU
+# Multi-period datasets contain the following CSV files:
+# 1) order.csv
+#    Columns: client_code, product_code, and volume.
+# 2) product_size.csv
+#    Columns: product_code and standard_size.
+# 3) vehicle.csv
+#    Columns: vehicle_type, carry_standard_size, min_standard_size, and cost_to_use.
+# 4) warehouse_storage.csv
+#    Columns: plant_code, product_code, and volume.
+# Each plant is allowed to supply the same set of SKUs.
+# 5) plant_size_upper_limit.csv
+#    Columns: plant_code and max_volume.
+# 6) warehouse_production.csv
+#    Columns: plant_code, product_code, produce_date, and volume.
+# Each plant is also allowed to supply the same set of SKUs in this file.
 
-# 另外, 还需要生成一个instance_statistics.csv文件
-# 用于统计每个数据集的规模大小, 需要记录的信息包括：
-# 生产基地数量、经销商数量、SKU数量、车辆类型数量、规划周期
+# The generator also writes instance_statistics.csv, which records the size of
+# each dataset: plant count, dealer count, SKU count, vehicle type count, and
+# planning horizon.
 
 import os
 import json
@@ -47,7 +47,7 @@ import pandas as pd
 from collections import defaultdict
 from pathlib import Path
 
-# 确定脚本所在目录 (无论从何处运行, 基于脚本位置构建默认输出)
+# Resolve the script directory so default outputs work from any current directory.
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
@@ -92,7 +92,7 @@ args = parser.parse_args()
 HORIZONS = 1 if args.problem == "single" else args.periods
 DATASET_SIZE = {"small": 0, "medium": 1, "large": 2}[args.scale]
 DATASET_NUMS = args.count
-# 设置日志
+# Configure logging.
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -131,17 +131,17 @@ def generate_dataset():
     else:
         base_file_loc = base_file_loc / "large"
 
-    # 创建一个列表来存储每个数据集的统计信息
+    # Store summary statistics for every generated dataset.
     dataset_statistics = []
 
     for i in range(1, dataset_nums + 1):
         output_file_loc = base_file_loc / f"dataset_{i}"
-        # 创建数据集的保存路径 (使用 Path.mkdir, exist_ok=True)
+        # Create the dataset output directory if it does not already exist.
         output_file_loc.mkdir(parents=True, exist_ok=True)
         logger.info(f"Preparing dataset {i}/{dataset_nums} at {output_file_loc}")
         start_time = time.time()
 
-        if dataset_size == 0:  # 小规模
+        if dataset_size == 0:  # Small scale
             plant_nums = random.randint(2, 3)
             dealer_nums = random.randint(2, 30)
             sku_nums = random.randint(10, 40)
@@ -150,18 +150,18 @@ def generate_dataset():
             # dealer_nums = 2
             # sku_nums = 5
             # veh_type_nums = 1
-        elif dataset_size == 1:  # 中规模
+        elif dataset_size == 1:  # Medium scale
             plant_nums = random.randint(3, 4)
             dealer_nums = random.randint(30, 50)
             sku_nums = random.randint(40, 60)
             veh_type_nums = random.randint(2, 4)
-        else:  # 大规模
+        else:  # Large scale
             plant_nums = random.randint(4, 6)
             dealer_nums = random.randint(50, 90)
             sku_nums = random.randint(60, 100)
             veh_type_nums = random.randint(2, 4)
 
-        # 生成 生产基地、经销商、SKU、车辆类型的编号
+        # Generate identifiers for plants, dealers, SKUs, and vehicle types.
         plant_ids = generate_ids(length=4, nums=plant_nums, id_type='factory')
         dealer_ids = generate_ids(length=8, nums=dealer_nums, id_type='dealer')
         sku_ids = generate_ids(length=11, nums=sku_nums, id_type='sku')
@@ -169,15 +169,16 @@ def generate_dataset():
         logger.info(f"Generated ids: plants={len(plant_ids)}, dealers={len(dealer_ids)}, skus={len(sku_ids)}, veh_types={len(veh_types)}")
 
         # ==============================================================================
-        # 下面这些是单周期和多周期问题共有的文件
-        # 生成订单信息 {(dealer, sku): qty}
+        # The following files are shared by the single- and multi-period problems.
+        # Generate order data as {(dealer, sku): qty}.
         orders = generate_order(dealer_ids, sku_ids)
-        # 生成每种SKU的体积信息 {sku: size}
+        # Generate the volume of each SKU as {sku: size}.
         sku_sizes = generate_sku_size(sku_ids)
-        # 生成每种车型的信息 {v_type: capacity}  {v_type: min_load}  {v_type: cost}
+        # Generate vehicle data:
+        # {v_type: capacity}, {v_type: min_load}, and {v_type: cost}.
         veh_cap, veh_min_load, veh_cost = generate_vehicle(veh_types)
 
-        # 将上述计算得到的所有信息保存到指定的csv文件
+        # Write the generated data to the corresponding CSV files.
         order_to_csv(orders, file_loc=output_file_loc)
         logger.info(f"Saved order.csv to {output_file_loc / 'order.csv'}")
         sku_size_to_csv(sku_sizes, file_loc=output_file_loc)
@@ -186,41 +187,45 @@ def generate_dataset():
         logger.info(f"Saved vehicle.csv to {output_file_loc / 'vehicle.csv'}")
         # ==============================================================================
 
-        if horizons == 1:  # 单周期
-            # 单独计算生成SKU的库存信息 {plant: {sku: qty}}
+        if horizons == 1:  # Single period
+            # Generate SKU inventory data as {plant: {sku: qty}}.
             storage = generate_storage(plant_ids, sku_ids, orders)
             storage_to_csv(storage, file_loc=output_file_loc)
-        else:  # 多周期
-            # 在每个周期内, 每种SKU的总需求量
+        else:  # Multiple periods
+            # Total demand for each SKU across all dealers and periods.
             sku_demands = aggregate_order(orders)
             
-            # 计算所有SKU的总需求量
-            total_sku_qty = sum(sku_demands.values())  # 所有经销商的总需求
-            # 为确保基地有足够的空间, 可以增加10%的余量
+            # Compute total demand across all SKUs.
+            total_sku_qty = sum(sku_demands.values())  # Total demand from all dealers
+            # Add a 10% allowance so plants have sufficient capacity.
             total_sku_qty = int(total_sku_qty * 1.1)
-            # 每个生产基地的库存容量上限  {plant: capacity}
-            # 使用更合理的计算方法：将总需求按生产基地分配 (允许一定不均衡), 
-            # 并只加入较小的缓冲 (5%~25%), 确保总容量不会被设置得过于宽松。
-            # 同时考虑规划期 (horizons), 以估计单周期/峰值生产带来的库存压力。
+            # Inventory capacity limit for each plant as {plant: capacity}.
+            # Allocate total demand across plants with limited imbalance and a
+            # small 5%-25% buffer so total capacity is not overly loose.
+            # The planning horizon also accounts for peak production pressure.
             plant_capacity = generate_plant_inv_limit(plant_ids, total_sku_qty, horizons)
             plant_capacity_to_csv(plant_capacity, file_loc=output_file_loc)
             
-            # SKU的库存信息和计划生产信息  {plant: {sku: qty}}  {plant: {(sku, day): qty}}
+            # SKU inventory and scheduled production:
+            # {plant: {sku: qty}} and {plant: {(sku, day): qty}}.
             storage, production = generate_storage_and_production(plant_ids, sku_ids, orders, plant_capacity, horizons)
             storage_to_csv(storage, file_loc=output_file_loc)
             production_to_csv(production, file_loc=output_file_loc)
-        # 收集数据集的统计信息 (包括供需汇总, 用于后续诊断)
-        # 计算总需求 (所有经销商对所有SKU在所有周期内的需求总和)
+        # Collect dataset statistics, including supply-demand aggregates for
+        # later diagnostics. Total demand sums all dealer demand for all SKUs
+        # across all periods.
         sku_demands = aggregate_order(orders)
         total_demand_qty = int(sum(sku_demands.values())) if sku_demands else 0
 
-        # 计算期初库存总和和生产总和 (多周期场景下 production 存在)
+        # Compute total initial inventory and total production. The production
+        # dictionary exists only for multi-period datasets.
         total_initial_inv = 0
         total_production_qty = 0
-        # 单周期：storage 是 {plant: {sku: qty}}
-        # 多周期：storage 同样存在, production 为 {plant: {(sku, day): qty}}
+        # Single period: storage is {plant: {sku: qty}}.
+        # Multi-period: storage has the same shape, while production is
+        # {plant: {(sku, day): qty}}.
         try:
-            # storage 在单/多周期均会被创建
+            # storage is created for both single- and multi-period datasets.
             for plant, sku_map in storage.items():
                 for sku, qty in sku_map.items():
                     total_initial_inv += int(qty)
@@ -252,17 +257,17 @@ def generate_dataset():
         })
         elapsed = time.time() - start_time
         logger.info(f"Finished dataset {i}/{dataset_nums} in {elapsed:.2f}s")
-    # 在所有数据集都生成完毕后, 保存统计信息
+    # Save summary statistics after all datasets have been generated.
     save_dataset_statistics(dataset_statistics, file_loc=base_file_loc)
     print(f"All datasets have been saved in the location {base_file_loc}")
     print("Success!")
 
 def save_dataset_statistics(dataset_statistics, file_loc):
     """
-    统计每个数据集的规模大小
+    Save size statistics for each generated dataset.
 
-    :param dataset_statistics: 包含所有数据集统计信息的列表
-    :param file_loc: 文件的保存位置
+    :param dataset_statistics: list containing statistics for all datasets
+    :param file_loc: output directory
     :return: None
     """
     df_statistics = pd.DataFrame(dataset_statistics)
@@ -272,10 +277,10 @@ def save_dataset_statistics(dataset_statistics, file_loc):
 
 def order_to_csv(orders, file_loc):
     """
-    将订单信息保存到指定的csv文件
+    Write order data to a CSV file.
 
-    :param orders: 订单信息
-    :param file_loc: 文件保存位置
+    :param orders: order data
+    :param file_loc: output directory
     :return: None
     """
     rows = []
@@ -286,7 +291,7 @@ def order_to_csv(orders, file_loc):
                 'product_code': sku,
                 'volume': qty
             })
-    else:  # 多周期, 这里记录的是经销商对 SKU k 在所有周期内的总需求
+    else:  # Multi-period: total demand for each SKU across all periods.
         for (dealer, sku), qty in orders.items():
             rows.append({
                 'client_code': dealer,
@@ -296,14 +301,14 @@ def order_to_csv(orders, file_loc):
     df_order = pd.DataFrame(rows)
     file_loc = Path(file_loc)
     file = file_loc / "order.csv"
-    df_order.to_csv(file, index=False)  # 不保存索引
+    df_order.to_csv(file, index=False)  # Do not write the DataFrame index.
 
 def sku_size_to_csv(sku_sizes, file_loc):
     """
-    将SKU体积信息保存到指定的csv文件
+    Write SKU volume data to a CSV file.
 
-    :param sku_sizes: 每种SKU的体积
-    :param file_loc: 文件的保存位置
+    :param sku_sizes: volume of each SKU
+    :param file_loc: output directory
     :return: None
     """
     rows = []
@@ -319,12 +324,12 @@ def sku_size_to_csv(sku_sizes, file_loc):
 
 def vehicle_to_csv(veh_cap, veh_min_load, veh_cost, file_loc):
     """
-    将车辆类型信息保存到指定的csv文件
+    Write vehicle type data to a CSV file.
 
-    :param veh_cap: 车型容量
-    :param veh_min_load: 车型最小起运量
-    :param veh_cost: 车型使用成本
-    :param file_loc: 文件的保存位置
+    :param veh_cap: vehicle capacity by type
+    :param veh_min_load: minimum shipment quantity by vehicle type
+    :param veh_cost: vehicle usage cost by type
+    :param file_loc: output directory
     :return: None
     """
     if set(veh_cap.keys()) != set(veh_min_load.keys()) or set(veh_cap.keys()) != set(veh_cost.keys()):
@@ -343,10 +348,10 @@ def vehicle_to_csv(veh_cap, veh_min_load, veh_cost, file_loc):
 
 def storage_to_csv(storage, file_loc):
     """
-    将SKU的库存信息保存到指定的csv文件
+    Write SKU inventory data to a CSV file.
 
-    :param storage: SKU的库存信息
-    :param file_loc: 文件的保存位置
+    :param storage: SKU inventory data
+    :param file_loc: output directory
     :return: None
     """
     rows = []
@@ -358,10 +363,10 @@ def storage_to_csv(storage, file_loc):
                 'volume': qty
             })
     df_storage = pd.DataFrame(rows)
-    # 对于大型的dataframe, 可以使用布尔索引, 方便地删除多行数据
-    # 指定要检查的列名
+    # Boolean indexing efficiently removes rows from a large DataFrame.
+    # Specify the column to filter.
     col_name = 'volume'
-    # 删除volume这一列取值为0对应的行, 并且使得删除后的dataframe的索引连续
+    # Drop rows whose volume is zero and reset the DataFrame index.
     df_storage = df_storage[df_storage[col_name] != 0].reset_index(drop=True)
     file_loc = Path(file_loc)
     file = file_loc / "warehouse_storage.csv"
@@ -369,10 +374,10 @@ def storage_to_csv(storage, file_loc):
 
 def plant_capacity_to_csv(plant_capacity, file_loc):
     """
-    将生产基地的库存容量上限信息保存到指定的csv文件
+    Write plant inventory capacity limits to a CSV file.
 
-    :param plant_capacity: 生产基地的库存容量上限
-    :param file_loc: 文件的保存位置
+    :param plant_capacity: inventory capacity limit for each plant
+    :param file_loc: output directory
     :return: None
     """
     rows = []
@@ -389,10 +394,10 @@ def plant_capacity_to_csv(plant_capacity, file_loc):
 
 def production_to_csv(production, file_loc):
     """
-    将SKU的计划生产数量信息保存到指定的csv文件
+    Write scheduled SKU production quantities to a CSV file.
 
-    :param production: SKU的计划生产数量
-    :param file_loc: 文件的保存位置
+    :param production: scheduled production quantity for each SKU
+    :param file_loc: output directory
     :return: None
     """
     rows = []
@@ -413,14 +418,14 @@ def production_to_csv(production, file_loc):
 
 def generate_ids(length, nums, id_type='default'):
     """
-    生成指定长度和数量的编号
+    Generate the requested number of identifiers with a fixed length.
 
-    :param length: 编号的固定长度
-    :param nums: 需要生成的编号数量
-    :param id_type: 编号类型, 可选值：'factory', 'vehicle', 'dealer', 'sku'
-    :return: 生成的编号列表
+    :param length: fixed identifier length
+    :param nums: number of identifiers to generate
+    :param id_type: identifier type: 'factory', 'vehicle', 'dealer', or 'sku'
+    :return: list of generated identifiers
     """
-    ids = set()  # 使用集合去重
+    ids = set()  # Deduplicate identifiers with a set.
 
     for _ in range(nums):
         if id_type == 'factory':
@@ -446,17 +451,17 @@ def generate_ids(length, nums, id_type='default'):
 
 def generate_order(dealers, skus):
     """
-    生成订单信息
+    Generate order data.
 
-    :param dealers: 经销商的编号
-    :param skus: SKU的编号
-    :return: 生成订单信息的字典
+    :param dealers: dealer identifiers
+    :param skus: SKU identifiers
+    :return: dictionary containing order data
     """
-    # 每个经销商需要的SKU集合
+    # SKUs required by each dealer.
     dealer_sku_map = {dealer: set() for dealer in dealers}
     sku_dealer_map = {sku: set() for sku in skus}
     
-    # 确保每个经销商至少对一种SKU有需求
+    # Ensure that every dealer demands at least one SKU.
     for dealer in dealers:
         nums = random.randint(1, len(skus))
         selected_skus = random.sample(skus, nums)
@@ -464,9 +469,9 @@ def generate_order(dealers, skus):
             dealer_sku_map[dealer].add(sku)
             sku_dealer_map[sku].add(dealer)
 
-    # 确保每种SKU至少被一个经销商需求
+    # Ensure that every SKU is demanded by at least one dealer.
     for sku in skus:
-        if not sku_dealer_map[sku]:  # 如果没有经销商对该SKU有需求
+        if not sku_dealer_map[sku]:  # No dealer currently demands this SKU.
             dealer = random.choice(dealers)
             dealer_sku_map[dealer].add(sku)
             sku_dealer_map[sku].add(dealer)
@@ -477,7 +482,7 @@ def generate_order(dealers, skus):
             for sku in skus_need:
                 orders[dealer, sku] = int(round(random.uniform(5, 40)))
     
-    else:  # 多周期, 这里记录的是经销商对 SKU k 在所有周期内的总需求
+    else:  # Multi-period: total demand for each SKU across all periods.
         for dealer, skus_need in dealer_sku_map.items():
             for sku in skus_need:
                 orders[dealer, sku] = int(round(random.uniform(5, 40)))
@@ -485,20 +490,20 @@ def generate_order(dealers, skus):
 
 def generate_float_num(lb, ub, precision=1):
     """
-    生成指定精度的浮点数
+    Generate a floating-point number with the requested precision.
 
-    :param lb: 生成浮点数的下限
-    :param ub: 生成浮点数的上限
-    :param precision: 浮点数的保留位数
+    :param lb: lower bound
+    :param ub: upper bound
+    :param precision: number of decimal places
     """
     return round(random.uniform(lb, ub), precision)
 
 def generate_sku_size(skus):
     """
-    生成每种SKU的体积信息
+    Generate volume data for every SKU.
 
-    :param skus: SKU的编号
-    :return: 生成SKU体积的字典
+    :param skus: SKU identifiers
+    :return: dictionary mapping each SKU to its volume
     """
     sku_sizes = dict.fromkeys(skus)
     for sku in skus:
@@ -507,33 +512,33 @@ def generate_sku_size(skus):
 
 def generate_vehicle(veh_types):
     """
-    生成每种类型车辆的容量信息、最小起运量信息、使用成本信息
+    Generate capacity, minimum shipment quantity, and usage cost by vehicle type.
 
-    :param veh_types: 车辆类型
-    :return: 生成车型容量的字典、车型最小起运量的字典、使用成本的字典
+    :param veh_types: vehicle types
+    :return: dictionaries for vehicle capacity, minimum shipment quantity, and cost
     """
     veh_cap = {}
     veh_min_load = {}
     veh_cost = {}
-    # 首先需要对所有车型进行排序, 按照升序排列
+    # Sort vehicle types in ascending order.
     sorted_veh_types = sorted(veh_types, key=float)
     for i, v_type in enumerate(sorted_veh_types):
         type_value = float(v_type)
-        # 根据车型大小计算基础容量
+        # Compute base capacity from the vehicle type value.
         base_cap = int(10 * type_value)
-        # 在基础容量的80%到120%之间随机选择实际容量
+        # Randomize actual capacity between 80% and 120% of the base value.
         lb = round(base_cap * 0.8)
         ub = round(base_cap * 1.2)
         if i == 0:
             veh_cap[v_type] = random.randint(lb, ub)
         else:
-            # 上一种车辆类型
+            # Previous vehicle type.
             pre_type = sorted_veh_types[i - 1]
             pre_type_value = float(pre_type)
-            # 上一种车型的容量
+            # Capacity of the previous vehicle type.
             pre_veh_cap = veh_cap[pre_type]
-            if type_value - pre_type_value <= 1:  # 两种车型相近
-                # 确保当前车型的容量不会小于上一种车型容量
+            if type_value - pre_type_value <= 1:  # The two vehicle types are close.
+                # Ensure that the current capacity is not smaller than the previous one.
                 lb = pre_veh_cap + random.randint(1, 5)
                 ub = pre_veh_cap + random.randint(6, 10)
                 veh_cap[v_type] = random.randint(lb, ub)
@@ -541,25 +546,25 @@ def generate_vehicle(veh_types):
                 lb = pre_veh_cap + random.randint(10, 30)
                 ub = pre_veh_cap + random.randint(40, 60)
                 veh_cap[v_type] = random.randint(lb, ub)
-        # 当前车型的容量
+        # Capacity of the current vehicle type.
         capacity = veh_cap[v_type]
-        # 最小起运量在 30%~50% 车型容量之间
+        # Set the minimum shipment quantity to 30%-50% of vehicle capacity.
         lb = round(0.3 * capacity)
         ub = round(0.5 * capacity)
         veh_min_load[v_type] = random.randint(lb, ub)
-        # 每一种车型的使用成本
-        # 大车的成本一定大于小车
-        # 由于规模经济效应, 使用一辆大车的成本一定小于2辆小车
+        # Cost of each vehicle type. Larger vehicles must cost more than
+        # smaller vehicles, while economies of scale keep one large vehicle
+        # cheaper than two small vehicles.
         min_cost = 1
         if i == 0:
             veh_cost[v_type] = min_cost
         else:
-            # 上一种车辆类型
+            # Previous vehicle type.
             pre_type = sorted_veh_types[i - 1]
-            # 上一种车型的使用成本
+            # Usage cost of the previous vehicle type.
             pre_veh_cost = veh_cost[pre_type]
-            # 车型的使用成本与容量成正比关系, 但系数较小
-            # 两种车型的容量差异
+            # Vehicle cost grows with capacity, but with a small coefficient.
+            # Difference in capacity between the two vehicle types.
             cap_diff = veh_cap[v_type] - veh_cap[pre_type]
             cost_increase = round(cap_diff * 0.8) / veh_cap[pre_type]
             cost_increase = round(cost_increase, 2)
@@ -569,33 +574,33 @@ def generate_vehicle(veh_types):
 
 def aggregate_order(orders):
     """
-    汇总经销商对某种SKU的需求
+    Aggregate dealer demand by SKU.
 
-    :param orders: 经销商对SKU的需求信息
-    :return: 生成SKU需求数量的字典
+    :param orders: dealer demand by SKU
+    :return: dictionary containing demand quantities by SKU
     """
     sku_demands = defaultdict(int)
     if args.problem == "single":
         for (dealer_id, sku_id), qty in orders.items():
             sku_demands[sku_id] += qty
-    else:  # 多周期
+    else:  # Multi-period
         for (dealer_id, sku_id), qty in orders.items():
             sku_demands[sku_id] += qty
     return dict(sku_demands)
 
 def create_plant_sku_mapping(plants, skus):
     """
-    创建映射关系, 表示每个生产基地可以提供的SKU集合
+    Create a mapping from each plant to the SKUs it can supply.
 
-    :param plants: 生产基地编号
-    :param skus: SKU编号
-    :return: 生成表示生产基地可以提供的SKU集合的字典
+    :param plants: plant identifiers
+    :param skus: SKU identifiers
+    :return: dictionary mapping each plant to its supplyable SKU set
     """
-    # 每家生产基地可以提供的SKU集合
+    # SKUs that each plant can supply.
     plant_sku_map = {plant: set() for plant in plants}
     sku_plant_map = {sku: set() for sku in skus}
     
-    # 确保每个生产基地至少提供一种SKU
+    # Ensure that every plant supplies at least one SKU.
     for plant in plants:
         nums = random.randint(1, len(skus))
         selected_skus = random.sample(skus, nums)
@@ -603,9 +608,9 @@ def create_plant_sku_mapping(plants, skus):
             plant_sku_map[plant].add(sku)
             sku_plant_map[sku].add(plant)
     
-    # 确保每种SKU至少被一个生产基地提供
+    # Ensure that every SKU is supplied by at least one plant.
     for sku in skus:
-        if not sku_plant_map[sku]:  # 如果没有生产基地提供这种SKU
+        if not sku_plant_map[sku]:  # No plant currently supplies this SKU.
             plant = random.choice(plants)
             plant_sku_map[plant].add(sku)
             sku_plant_map[sku].add(plant)
@@ -614,33 +619,34 @@ def create_plant_sku_mapping(plants, skus):
 
 def generate_storage(plants, skus, orders):
     """
-    对于单周期问题, 生成SKU的库存信息, 确保每种SKU的库存总量 > 所有经销商对这种SKU的需求
+    Generate the single-period inventory data and ensure that total inventory
+    for each SKU exceeds total dealer demand for that SKU.
 
-    :param plants: 生产基地的编号
-    :param skus: SKU的编号
-    :param orders: 经销商对SKU的需求信息
-    :return: 生成SKU库存的字典
+    :param plants: plant identifiers
+    :param skus: SKU identifiers
+    :param orders: dealer demand by SKU
+    :return: dictionary containing SKU inventory data
     """
     plant_sku_map = create_plant_sku_mapping(plants, skus)
-    storage = {}  # 嵌套字典 {plant: {sku: qty}}
+    storage = {}  # Nested dictionary: {plant: {sku: qty}}.
     for plant, skus_supply in plant_sku_map.items():
         storage[plant] = {}
         for sku in skus_supply:
-            # 先设置库存数量为 1
+            # Initialize inventory quantity to 1.
             storage[plant][sku] = 1
 
-    # 每种SKU的总需求量
+    # Total demand for each SKU.
     sku_demands = aggregate_order(orders)
     for sku, demand in sku_demands.items():
-        # SKU的已有库存
+        # Existing inventory for the SKU.
         total_inv = sum(storage[plant].get(sku, 0) for plant in plant_sku_map)
-        # 要确保SKU的库存量 > 需求量, 可以提前加上一个不为0的随机正整数
+        # Add a random positive buffer so inventory exceeds demand.
         demand += random.randint(10, 50)
         remaining_demand = int(demand - total_inv)
         if remaining_demand > 0:
-            # 找出可以提供这种SKU的所有生产基地
+            # Find all plants that can supply this SKU.
             available_plants = [plant for plant in plant_sku_map if sku in plant_sku_map[plant]]
-            # 在这些生产基地中分配剩余的需求量
+            # Allocate the remaining demand across these plants.
             while remaining_demand >0 and available_plants:
                 plant = random.choice(available_plants)
                 allocation = random.randint(1, remaining_demand)
@@ -648,10 +654,10 @@ def generate_storage(plants, skus, orders):
                 remaining_demand -= allocation
                 if remaining_demand == 0:
                     break
-                # 如果这个基地分配完毕, 就从可用的基地列表中移除
+                # Remove the plant from the available list after its allocation.
                 available_plants.remove(plant)
 
-            # 如果还有剩余需求, 就平均分配到所有可用基地
+            # Distribute any remaining demand across all available plants.
             if remaining_demand > 0:
                 available_plants = [plant for plant in plant_sku_map if sku in plant_sku_map[plant]]
                 per_plant_qty = remaining_demand // len(available_plants) + 1
@@ -664,11 +670,11 @@ def generate_storage(plants, skus, orders):
 
 def total_production(production, sku):
     """
-    计算在每个周期内, 所有生产基地生产某种SKU的总产量
+    Compute total production of an SKU across all plants and periods.
 
-    :param production: 在每个生产基地中, SKU在每个周期的计划生产数量
-    :param sku: 某种特定的SKU
-    :return: SKU在某个生产基地中在所有周期内的总产量
+    :param production: scheduled SKU production by plant and period
+    :param sku: target SKU
+    :return: total production of the SKU across all plants and periods
     """
     sku_production = defaultdict(int)
     for plant in production:
@@ -679,12 +685,12 @@ def total_production(production, sku):
 
 def weighted_choice(available_plants, weights):
     """
-    使用加权法选择生产基地
+    Select a plant with weighted random sampling.
 
-    :param available_plants: 需要选择的生产基地
-    :param weights: 权重
+    :param available_plants: candidate plants
+    :param weights: sampling weights
     """
-    # print(f"DEBUG: weights = {weights}, sum(weights) = {np.sum(weights)}")  # 调试信息
+    # print(f"DEBUG: weights = {weights}, sum(weights) = {np.sum(weights)}")  # Debug output.
     weights = [abs(w) for w in weights]
     if sum(weights) != 0:
         normalized_weights = np.array(weights) / sum(weights)
@@ -694,48 +700,49 @@ def weighted_choice(available_plants, weights):
 
 def generate_plant_inv_limit(plants, total_sku_qty, horizons=1):
     """
-    计算每个生产基地的库存容量上限 (改进版)
+    Compute an inventory capacity limit for each plant.
 
-    思路：
-    - 将总需求按生产基地分配为基础份额, 但允许小幅不均衡 (随机因子)以模拟不同厂的规模差异；
-    - 在每个厂的基础份额上只加入较小的缓冲 (5%~25%), 避免将容量设置得过于宽松；
-    - 考虑规划期 (horizons)用于估计单周期/峰值库存压力, 至少保证容量能容纳某一周期内的生产峰值；
-    - 若分配后总容量仍小于总需求, 则按比例放大以保证可行性 (总容量 >= 总需求)。
+    The method:
+    - allocates total demand across plants as base shares, with a random
+      imbalance factor to represent plant-size differences;
+    - adds only a small 5%-25% buffer so capacities are not overly loose;
+    - uses the planning horizon to estimate peak production pressure; and
+    - scales capacities proportionally when total capacity is below total demand.
 
-    :param plants: 生产基地的编号 (list)
-    :param total_sku_qty: 所有SKU的总量 (整型)
-    :param horizons: 规划期 (用于估计单周期生产带来的峰值)
-    :return: 生成每个生产基地库存容量的字典
+    :param plants: plant identifiers (list)
+    :param total_sku_qty: total quantity across all SKUs (integer)
+    :param horizons: planning horizon used to estimate peak production
+    :return: dictionary mapping each plant to its inventory capacity
     """
     if not plants:
         return {}
 
     n_plants = len(plants)
-    # 基础份额：将总量均分到每个工厂 (浮点数)
+    # Base share: distribute the total evenly across plants.
     avg_share = float(total_sku_qty) / n_plants if n_plants > 0 else float(total_sku_qty)
 
     plant_inv_limit = {}
     for plant in plants:
-        # 引入不均衡因子, 模拟工厂间规模差异 (0.6 ~ 1.4)
+        # Apply an imbalance factor to represent plant-size differences (0.6-1.4).
         imbalance = random.uniform(0.6, 1.4)
         base = max(1, int(avg_share * imbalance))
 
-        # 估计每厂在单周期内可能产生或需要容纳的产量峰值
-        # 保守估计：将总需求按horizons分摊, 再按厂数分配为单周期预期
+        # Estimate the single-period peak production each plant may need.
+        # Conservatively divide total demand by the horizon and plant count.
         per_period_expected = max(1, int(round(total_sku_qty / max(1, horizons) / n_plants)))
 
-        # 缓冲比例较小 (5%~25%), 避免容量过于宽松
+        # Use a small 5%-25% buffer to avoid excessively loose capacity.
         buffer = random.uniform(0.05, 0.25)
 
-        # 最终容量至少为 base * (1 + buffer), 并保证能容纳一定的单周期峰值
+        # Keep capacity above the buffered base and reserve for a single-period peak.
         cap = int(max(base * (1.0 + buffer), per_period_expected * 2))
         plant_inv_limit[plant] = cap
 
-    # 若总容量小于总需求, 则按比例放大每个厂的容量以保证可行性
+    # Scale capacities proportionally when total capacity is below total demand.
     total_cap = sum(plant_inv_limit.values())
     if total_cap < total_sku_qty:
         if total_cap == 0:
-            # 极端保护, 平均分配
+            # Fallback protection: distribute evenly.
             for plant in plant_inv_limit:
                 plant_inv_limit[plant] = max(1, int(total_sku_qty // n_plants))
         else:
@@ -747,19 +754,19 @@ def generate_plant_inv_limit(plants, total_sku_qty, horizons=1):
 
 def distribute_prod(prod, selected_periods):
     """
-    将生产数量prod分配到selected_periods指定的周期中
+    Distribute a production quantity across the selected periods.
 
-    :param prod: 要分配的总生产数量
-    :param selected_periods: 要分配到的周期列表
-    :return: 每个周期分配到的数量的字典
+    :param prod: total production quantity to distribute
+    :param selected_periods: periods that receive production
+    :return: dictionary mapping each period to its allocated quantity
     """
     if not selected_periods:
         return {}
 
     n = len(selected_periods)
-    # 计算每个周期至少分配到的基础数量
+    # Compute the base quantity for each period.
     base_amount = prod // n
-    # 计算剩余需要分配的数量
+    # Compute the number of units left after the base allocation.
     remaining = prod % n
     distribution = {}
     for i, period in enumerate(selected_periods):
@@ -771,21 +778,23 @@ def distribute_prod(prod, selected_periods):
 
 def generate_storage_and_production(plants, skus, orders, plant_capacity, horizons):
     """
-    对于多周期问题, 确保在所有周期内, SKU的总供给量 > 所有经销商对这种SKU的需求
-    只需要确保在所有周期内, 所有生产基地生产SKU的总量 + 所有生产基地的期初库存 > 所有经销商对这种SKU的需求
+    Generate inventory and scheduled production for the multi-period problem.
+    For each SKU, total supply across all periods, consisting of production
+    plus initial inventory, must exceed total dealer demand.
 
-    :param plants: 生产基地的编号
-    :param skus: SKU的编号
-    :param orders: 经销商对SKU的需求信息
-    :param plant_capacity: 每个生产基地的容量上限
-    :param horizons: 规划周期
-    :return: 生成SKU库存的字典、SKU在每个周期内计划生产数量的字典
+    :param plants: plant identifiers
+    :param skus: SKU identifiers
+    :param orders: dealer demand by SKU
+    :param plant_capacity: capacity limit for each plant
+    :param horizons: planning horizon
+    :return: SKU inventory dictionary and scheduled production dictionary
     """
-    # 1. 统计每个SKU的总需求, 加10~50的余量
+    # 1. Compute total demand per SKU and add a buffer of 10-50 units.
     sku_demands = aggregate_order(orders)
     sku_total_supply = {sku: int(np.ceil(sku_demands.get(sku, 0) + random.randint(10, 50))) for sku in skus}
 
-    # --- 新增保护：确保全局供给不超过 plant 总容量，同时保证每个 SKU 的供给 >= demand ---
+    # Protection: keep global supply within total plant capacity while
+    # ensuring that each SKU supply is at least its demand.
     plant_remain_cap = plant_capacity.copy()
     try:
         total_supply_desired = sum(int(v) for v in sku_total_supply.values())
@@ -797,15 +806,15 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
         total_demand = sum(sku_demands.values()) if sku_demands else 0
 
     if total_cap <= 0:
-        # 无有效产能约束，记录警告但保持原有分配逻辑
+        # No valid capacity constraint; log a warning and keep the allocation logic.
         logger.warning("Total plant capacity is zero or undefined; generated per-SKU supply may exceed capacity.")
     else:
-        # 允许分配到 extras 的总额（capacity - minimum total demand）
+        # Extra supply allowed above minimum total demand: capacity - demand.
         allowed_extra = max(0, total_cap - total_demand)
         current_extra = max(0, total_supply_desired - total_demand)
 
         if current_extra > 0 and current_extra > allowed_extra:
-            # 需要缩放每个 SKU 的额外部分（仅缩放 demand 以上的部分），按比例降到 allowed_extra
+            # Scale down only the portion above demand so total capacity is respected.
             scale = allowed_extra / float(current_extra)
             for sku in list(sku_total_supply.keys()):
                 base = int(sku_demands.get(sku, 0))
@@ -820,17 +829,20 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
     plant_sku_supply = {plant: {sku: 0 for sku in skus} for plant in plants}
     for sku in skus:
         remaining = sku_total_supply[sku]
-        # 使用向量化分配以避免逐单位循环带来的性能问题和潜在无限循环
+        # Allocate with vectorized operations to avoid slow unit loops and
+        # potential infinite loops.
         n_plants = len(plants)
         plant_indices = list(range(n_plants))
-        # 构造 numpy 数组表示每个厂的剩余容量 (整数)
+        # Build a NumPy array of remaining capacity for each plant.
         plant_remain_arr = np.array([int(plant_remain_cap.get(p, 0)) for p in plants], dtype=np.int64)
 
         total_cap = int(plant_remain_arr.sum())
         if total_cap <= 0:
-            # 无可用容量：为了保证每种 SKU 的供给 >= 需求，强制在所有工厂上平均分配（忽略当前剩余容量）
+            # No available capacity: distribute evenly across all plants to
+            # ensure that SKU supply remains at least demand.
             logger.warning(f"No remaining capacity detected when allocating SKU {sku}; forcing equal distribution to guarantee supply >= demand.")
-            # 将剩余量平分到所有工厂（至少分配 1 到部分工厂以覆盖 remainder）
+            # Split the remainder across plants, assigning one extra unit to
+            # the first plants when needed.
             n_plants = len(plants) if plants else 0
             if n_plants > 0:
                 per = remaining // n_plants
@@ -839,32 +851,33 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
                     add = per + (1 if idx < extra else 0)
                     if add > 0:
                         plant_sku_supply[plant][sku] += int(add)
-                        # 尽管 plant_remain_cap 可能为0，也更新 plant_remain_arr 以反映分配
+                        # Update plant_remain_arr even if plant_remain_cap was zero.
                         plant_remain_arr[idx] = max(0, plant_remain_arr[idx] - int(add))
-                # 写回剩余容量（虽然可能为负，这里保持为0下限）
+                # Write back remaining capacity with a lower bound of zero.
                 for idx, plant in enumerate(plants):
                     plant_remain_cap[plant] = int(max(0, plant_remain_arr[idx]))
-                # 已经强制分配完成，跳过后续按比例分配逻辑
+                # Forced allocation is complete; skip proportional allocation.
                 continue
             else:
                 logger.warning(f"No plants available to force-distribute SKU {sku!s}; leaving unassigned.")
                 continue
 
-        # 按容量比例初次分配 (向下取整)
+        # Initial allocation proportional to remaining capacity, rounded down.
         alloc = (remaining * plant_remain_arr) // total_cap
-        # 不超过各自的剩余容量
+        # Do not exceed each plant's remaining capacity.
         alloc = np.minimum(alloc, plant_remain_arr).astype(np.int64)
 
-        # 应用初次分配
+        # Apply the initial allocation.
         for idx, plant in enumerate(plants):
             qty = int(alloc[idx])
             plant_sku_supply[plant][sku] = qty
             plant_remain_arr[idx] -= qty
         remaining_after_alloc = int(remaining - int(alloc.sum()))
 
-        # 如果仍有剩余, 通过一次贪婪填充 (按剩余容量从大到小填满)
+        # Greedily fill any remaining units, starting with the largest
+        # remaining capacities.
         if remaining_after_alloc > 0:
-            # 找到按剩余容量从大到小排序的索引
+            # Sort plant indices by remaining capacity in descending order.
             order = np.argsort(-plant_remain_arr)
             rem = remaining_after_alloc
             for idx in order:
@@ -879,7 +892,8 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
                 plant_remain_arr[idx] -= int(take)
                 rem -= int(take)
             if rem > 0:
-                # 强制填充剩余需求到可用工厂, 忽略当前 plant_remain_cap (保证供给 >= 需求)
+                # Force the remaining demand into available plants, ignoring
+                # current plant_remain_cap to guarantee supply >= demand.
                 available_plants = [plant for plant in plants if sku in plant_sku_supply[plant]]
                 if available_plants:
                     per = rem // len(available_plants)
@@ -891,14 +905,14 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
                             rem -= int(add)
                         if extra > 0:
                             extra -= 1
-                    # 若仍有残留, 追加到第一个可用工厂
+                    # Assign any residual units to the first available plant.
                     if rem > 0:
                         plant_sku_supply[available_plants[0]][sku] += int(rem)
                         rem = 0
                     logger.warning(f"Forced fill: assigned remaining units of SKU {sku!s} to plants to guarantee supply >= demand.")
                 else:
                     logger.warning(f"No available plants to force-fill SKU {sku!s}; {rem} units remain unassigned.")
-        # 将更新后的剩余容量写回 plant_remain_cap 字典
+        # Write updated remaining capacity back to plant_remain_cap.
         for idx, plant in enumerate(plants):
             plant_remain_cap[plant] = int(plant_remain_arr[idx])
 
@@ -909,11 +923,11 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
             total = plant_sku_supply[plant][sku]
             if total == 0:
                 continue
-            # 期初库存分配10%~30%, 其余分配到生产
+            # Assign 10%-30% to initial inventory and the rest to production.
             inv = max(1, int(total * random.uniform(0.1, 0.3)))
             prod_total = int(max(0, total - inv))
             storage[plant][sku] = inv
-            # 将生产总量按周期分配, 确保生产总和等于 prod_total
+            # Distribute production across periods so the total equals prod_total.
             days = list(range(1, horizons + 1))
             prod_dist = distribute_prod(prod_total, days)
             for day in days:
@@ -921,6 +935,6 @@ def generate_storage_and_production(plants, skus, orders, plant_capacity, horizo
 
     return storage, production
 
-# 调用生成数据集的函数
+# Run the dataset generator when this file is executed directly.
 if __name__ == '__main__':
     generate_dataset()

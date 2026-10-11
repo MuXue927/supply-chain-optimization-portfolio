@@ -1,13 +1,14 @@
 """
 OutputDataALNS
 
-模块定位
-    读取 ALNS 输出 CSV（opt_result/opt_details/opt_summary/non_fulfill/sku_inv_left），
-    统一重命名列、类型转换，构建用于快速查询的字典索引，并提供数据一致性校验与汇总统计。
+Purpose
+    Read ALNS output CSVs (opt_result, opt_details, opt_summary, non_fulfill,
+    and sku_inv_left), normalize column names and types, build lookup indexes,
+    and provide consistency validation and aggregate statistics.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import os
 import logging
@@ -15,32 +16,32 @@ from dataclasses import dataclass, field
 from typing import Dict, Tuple, Optional
 
 # =========================
-# 第三方库
+# Third-party libraries
 # =========================
 import pandas as pd
 
-# 设置日志（建议在主程序统一配置 logging，这里仅获取模块级 logger）
+# Configure logging in the main program. This module only obtains a logger.
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class OutPutData:
-    """输出结果数据访问与校验封装：
-    - 通过 load() 读取并标准化各 CSV
-    - 通过 _generate_indexes() 生成字典索引以便快速查询
-    - 通过 _validate_data() 做基础一致性检查
-    - 提供 get_summary_stats() 输出摘要统计
+    """Output result access and validation wrapper:
+    - load() reads and normalizes output CSVs.
+    - _generate_indexes() builds dictionary indexes for fast lookup.
+    - _validate_data() performs basic consistency checks.
+    - get_summary_stats() returns aggregate statistics.
     """
     input_file_loc: str
     dataset_name: str
     
-    # 数据属性，使用post_init=True延迟初始化
+    # Data attributes initialized by __post_init__
     order_fulfill: Dict[Tuple[int, str, str, str], int] = field(init=False)
     vehicle_load: Dict[Tuple[int, str, str, int, str], float] = field(init=False)
     non_fulfill: Dict[Tuple[str, str], int] = field(init=False)
     sku_inv_left: Dict[Tuple[str, str, int], int] = field(init=False)
     
-    # DataFrame缓存
+    # DataFrame cache
     df_result: Optional[pd.DataFrame] = field(init=False, default=None)
     df_details: Optional[pd.DataFrame] = field(init=False, default=None)
     df_summary: Optional[pd.DataFrame] = field(init=False, default=None)
@@ -48,7 +49,7 @@ class OutPutData:
     df_sku_inv_left: Optional[pd.DataFrame] = field(init=False, default=None)
     
     def __post_init__(self):
-        """初始化数据结构"""
+        """Initialize the data structures."""
         self.order_fulfill = {}
         self.vehicle_load = {}
         self.non_fulfill = {}
@@ -56,26 +57,22 @@ class OutPutData:
     
     def _reorganize_dataframe(self, df: pd.DataFrame, title_map: Dict[str, str]) -> pd.DataFrame:
         """
-        重新组织DataFrame的列名和顺序
-        
-        Parameters:
-        -----------
-        df : pd.DataFrame
-            输入的DataFrame
-        title_map : Dict[str, str]
-            列名映射字典
-            
+        Reorganize DataFrame column names and order.
+
+        Args:
+            df: Input DataFrame.
+            title_map: Column-name mapping.
+
         Returns:
-        --------
-        pd.DataFrame : 重新组织后的DataFrame
+            Reorganized DataFrame.
         """
-        # 创建副本避免修改原始数据
+        # Copy to avoid modifying the input data
         df_copy = df.copy()
         
-        # 重命名列
+        # Rename columns
         df_copy.rename(columns=title_map, inplace=True)
         
-        # 重新排序列（只包含存在的列）
+        # Reorder columns while keeping only columns that exist
         ordered_cols = [col for col in title_map.values() if col in df_copy.columns]
         df_copy = df_copy.reindex(columns=ordered_cols)
         
@@ -84,60 +81,51 @@ class OutPutData:
     def _load_and_process_csv(self, file_path: str, title_map: Dict[str, str], 
                              dtype_map: Dict[str, type]) -> pd.DataFrame:
         """
-        加载并处理CSV文件的通用方法
-        
-        Parameters:
-        -----------
-        file_path : str
-            文件路径
-        title_map : Dict[str, str]
-            列名映射
-        dtype_map : Dict[str, type]
-            数据类型映射
-            
+        Load and process a CSV file.
+
+        Args:
+            file_path: File path.
+            title_map: Column-name mapping.
+            dtype_map: Target data-type mapping.
+
         Returns:
-        --------
-        pd.DataFrame : 处理后的DataFrame
+            Processed DataFrame.
         """
         if not os.path.exists(file_path):
-            logger.warning(f"文件不存在: {file_path}")
-            # 返回空DataFrame但包含正确的列名
+            logger.warning(f"File does not exist: {file_path}")
+            # Return an empty DataFrame with the expected column names
             empty_df = pd.DataFrame(columns=list(title_map.values()))
             return self._apply_dtypes(empty_df, dtype_map)
         
         try:
-            # 读取CSV文件
+            # Read the CSV file
             df = pd.read_csv(file_path, header=0)
-            logger.info(f"成功加载文件: {file_path}, 形状: {df.shape}")
+            logger.info(f"Successfully loaded file: {file_path}, shape: {df.shape}")
             
-            # 重新组织列名
+            # Reorganize column names
             df = self._reorganize_dataframe(df, title_map)
             
-            # 应用数据类型
+            # Apply data types
             df = self._apply_dtypes(df, dtype_map)
             
             return df
             
         except Exception as e:
-            logger.error(f"加载文件失败 {file_path}: {str(e)}")
-            # 返回空DataFrame
+            logger.error(f"Failed to load file {file_path}: {str(e)}")
+            # Return an empty DataFrame
             empty_df = pd.DataFrame(columns=list(title_map.values()))
             return self._apply_dtypes(empty_df, dtype_map)
     
     def _apply_dtypes(self, df: pd.DataFrame, dtype_map: Dict[str, type]) -> pd.DataFrame:
         """
-        应用数据类型转换
-        
-        Parameters:
-        -----------
-        df : pd.DataFrame
-            输入DataFrame
-        dtype_map : Dict[str, type]
-            数据类型映射
-            
+        Apply data-type conversions.
+
+        Args:
+            df: Input DataFrame.
+            dtype_map: Target data-type mapping.
+
         Returns:
-        --------
-        pd.DataFrame : 类型转换后的DataFrame
+            DataFrame with converted types.
         """
         for col, dtype in dtype_map.items():
             if col in df.columns:
@@ -149,31 +137,33 @@ class OutPutData:
                     elif dtype == str:
                         df[col] = df[col].astype(str)
                 except Exception as e:
-                    logger.warning(f"列 {col} 类型转换失败: {str(e)}")
+                    logger.warning(f"Failed to convert column {col}: {str(e)}")
         
         return df
     
     def load(self) -> None:
         """
-        加载所有输出数据文件
+        Load all output data files.
         """
-        logger.info(f"开始加载数据集: {self.dataset_name}")
+        logger.info(f"Starting dataset load: {self.dataset_name}")
         
-        # 构建数据集目录路径
+        # Build the dataset directory path
         dataset_path = os.path.join(self.input_file_loc, self.dataset_name)
-        # 目录存在性检查：缺失则后续读取将返回空表
+        # Check directory existence. Missing files will produce empty tables.
         if not os.path.isdir(dataset_path):
-            logger.warning(f"数据集目录不存在: {dataset_path}")
+            logger.warning(f"Dataset directory does not exist: {dataset_path}")
         
-        # 定义文件配置
-        # - title_map: 原始 CSV 列名 -> 统一内部字段名
-        # - dtype_map: 目标数据类型（int/float/str）
-        # 各表语义：
-        #   result:  明细发运记录（件数/数量）
-        #   details: 明细+尺寸/容量等指标（便于核对单位）
-        #   summary: 按车辆聚合的占用体积/最小起运量等
-        #   non_fulfill:  未满足需求量
-        #   sku_inv_left: 每日剩余库存（单位需与检查逻辑一致）
+        # File configuration:
+        # - title_map: original CSV column name -> unified internal field name
+        # - dtype_map: target data type (int/float/str)
+        # Table semantics:
+        #   result: shipment detail records by quantity
+        #   details: shipment details with size and capacity metrics for
+        #            unit checks
+        #   summary: per-vehicle occupied volume and minimum-load metrics
+        #   non_fulfill: unmet demand quantities
+        #   sku_inv_left: daily remaining inventory, using units consistent with
+        #                 validation logic
         file_configs = {
             'result': {
                 'filename': 'opt_result.csv',
@@ -238,7 +228,7 @@ class OutPutData:
             }
         }
         
-        # 加载所有文件
+        # Load all files
         loaded_data = {}
         for key, config in file_configs.items():
             file_path = os.path.join(dataset_path, config['filename'])
@@ -249,110 +239,116 @@ class OutPutData:
             )
             loaded_data[key] = df
         
-        # 保存DataFrame引用
+        # Save DataFrame references
         self.df_result = loaded_data['result']
         self.df_details = loaded_data['details']
         self.df_summary = loaded_data['summary']
         self.df_non_fulfill = loaded_data['non_fulfill']
         self.df_sku_inv_left = loaded_data['sku_inv_left']
         
-        # 生成字典索引
+        # Generate dictionary indexes
         self._generate_indexes()
         
-        # 验证数据完整性
+        # Validate data integrity
         self._validate_data()
         
-        logger.info("数据加载完成")
+        logger.info("Data loading completed")
     
     def _generate_indexes(self) -> None:
-        """生成用于快速查询的字典索引
-        构造的字典键与含义：
+        """Generate dictionary indexes for fast lookup.
+
+        Constructed keys and values:
         - order_fulfill[(day, fact_id, dealer_id, sku_id)] = qty
-        - vehicle_load[(day, fact_id, dealer_id, vehicle_id, vehicle_type)] = occupied_size
+        - vehicle_load[(day, fact_id, dealer_id, vehicle_id, vehicle_type)] =
+          occupied_size
         - non_fulfill[(dealer_id, sku_id)] = non_fulfill_qty
         - sku_inv_left[(fact_id, sku_id, day)] = inv_left
         """
         try:
-            # 订单履行情况
+            # Order fulfillment
             if not self.df_result.empty:
                 self.order_fulfill = self.df_result.groupby(
                     ['day', 'fact_id', 'dealer_id', 'sku_id']
                 )['qty'].sum().to_dict()
             
-            # 车辆装载情况
+            # Vehicle loading
             if not self.df_summary.empty:
                 self.vehicle_load = self.df_summary.set_index(
                     ['day', 'fact_id', 'dealer_id', 'vehicle_id', 'vehicle_type']
                 )['occupied_size'].to_dict()
             
-            # 未满足需求
+            # Unmet demand
             if not self.df_non_fulfill.empty:
                 self.non_fulfill = self.df_non_fulfill.set_index(
                     ['dealer_id', 'sku_id']
                 )['non_fulfill_qty'].to_dict()
             
-            # 剩余库存
+            # Remaining inventory
             if not self.df_sku_inv_left.empty:
                 self.sku_inv_left = self.df_sku_inv_left.set_index(
                     ['fact_id', 'sku_id', 'day']
                 )['inv_left'].to_dict()
                 
-            logger.info("字典索引生成完成")
+            logger.info("Dictionary indexes generated")
             
         except Exception as e:
-            logger.error(f"生成字典索引失败: {str(e)}")
+            logger.error(f"Failed to generate dictionary indexes: {str(e)}")
     
     def _validate_data(self) -> None:
-        """验证数据完整性
-        - 关键表是否为空
-        - 结果与汇总车辆ID一致性
-        - 非法负值检查
+        """Validate data integrity.
+        - Check whether key tables are empty.
+        - Check vehicle-ID consistency between result and summary tables.
+        - Check for invalid negative values.
         """
         issues = []
         
-        # 检查关键数据是否为空
+        # Check whether key data is empty
         if self.df_result.empty:
-            issues.append("结果数据(opt_result.csv)为空")
+            issues.append("Result data (opt_result.csv) is empty")
         
         if self.df_summary.empty:
-            issues.append("汇总数据(opt_summary.csv)为空")
+            issues.append("Summary data (opt_summary.csv) is empty")
         
-        # 检查数据一致性
+        # Check data consistency
         if not self.df_result.empty and not self.df_summary.empty:
             result_vehicles = set(self.df_result['vehicle_id'].unique())
             summary_vehicles = set(self.df_summary['vehicle_id'].unique())
             if result_vehicles != summary_vehicles:
-                issues.append("结果数据和汇总数据中的车辆ID不一致")
+                issues.append(
+                    "Vehicle IDs differ between result data and summary data"
+                )
         
-        # 检查负值
+        # Check for negative values
         if not self.df_result.empty and (self.df_result['qty'] < 0).any():
-            issues.append("发现负的配送数量")
+            issues.append("Negative delivery quantities found")
         
         if not self.df_sku_inv_left.empty and (self.df_sku_inv_left['inv_left'] < 0).any():
-            issues.append("发现负的库存量")
+            issues.append("Negative inventory quantities found")
         
-        # 输出验证结果
+        # Emit validation results
         if issues:
-            logger.warning("数据验证发现问题:")
+            logger.warning("Data validation found issues:")
             for issue in issues:
                 logger.warning(f"  - {issue}")
         else:
-            logger.info("数据验证通过")
+            logger.info("Data validation passed")
     
     def get_summary_stats(self) -> Dict[str, int]:
         """
-        获取数据汇总统计
-        包含键：
-        - total_deliveries: 发运条目数（按 day,fact,dealer,sku 聚合后的字典大小）
-        - total_vehicles_used: 车辆装载条目数（按 day,fact,dealer,vehicle,veh_type）
-        - unfulfilled_demands: 未满足需求条目数（dealer,sku）
-        - inventory_records: 库存记录条目数（fact,sku,day）
-        - total_quantity_shipped: 总发运数量（来自 opt_result.qty）
-        - unique_vehicles: 唯一车辆数量（来自 opt_result.vehicle_id）
-        
+        Return aggregate output statistics.
+
+        Keys:
+        - total_deliveries: number of shipment entries after aggregating by
+          day, fact, dealer, and SKU.
+        - total_vehicles_used: number of vehicle-load entries after aggregating
+          by day, fact, dealer, vehicle, and vehicle type.
+        - unfulfilled_demands: number of unmet-demand entries by dealer and SKU.
+        - inventory_records: number of inventory records by fact, SKU, and day.
+        - total_quantity_shipped: total shipped quantity from opt_result.qty.
+        - unique_vehicles: number of unique vehicles from opt_result.vehicle_id.
+
         Returns:
-        --------
-        Dict[str, int]
+            Dictionary of aggregate statistics.
         """
         stats = {
             'total_deliveries': len(self.order_fulfill),

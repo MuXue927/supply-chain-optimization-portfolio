@@ -1,35 +1,31 @@
 """
 alns_optimizer.py
-模块说明（中文）：
-- 模块定位：
-  本模块为项目中 ALNS（Adaptive Large Neighborhood Search）优化流程的高层控制器与结果后处理组件。
-  它封装数据加载、初始解生成、算子注册、ALNS 配置/运行、以及结果导出与可视化等职责，
-  是运行启发式求解器并将结果转化为可分析输出的入口。
+High-level controller and result post-processing for the ALNS workflow.
 
-- 核心职责：
-  1. 管理输入/输出路径与数据加载（load_data）
-  2. 生成并校验初始解（create_initial_solution）
-  3. 构建并注册 destroy / repair 算子（_register_destroy_operators/_register_repair_operators）
-  4. 配置 ALNS（setup_alns）、选择器与接受/停止准则，并执行迭代（run_optimization）
-  5. 将求解结果写出 CSV、生成统计与可视化图表（_process_results、_generate_reports 等）
-  6. 支持可选的参数自动调整（ParamAutoTuner）与基于 ML 的算子选择（MLOperatorSelector）
+Responsibilities:
+1. Manage input/output paths and data loading through ``load_data``.
+2. Generate and validate the initial solution in ``create_initial_solution``.
+3. Register destroy and repair operators.
+4. Configure ALNS selection, acceptance, stopping rules, and iteration execution.
+5. Write CSV results and generate statistics and visual reports.
+6. Support optional ``ParamAutoTuner`` and ``MLOperatorSelector`` components.
 
-- 对外接口（主要）：
-  - ALNSOptimizer 类：主要方法包括 load_data, create_initial_solution, setup_alns, run_optimization
-  - is_file_in_use(file_path)：工具函数，用于检测文件是否被占用（注意：在不同平台上可能不可靠）
+Main public interface:
+  - ``ALNSOptimizer``: load_data, create_initial_solution, setup_alns,
+    run_optimization.
+  - ``is_file_in_use(file_path)``: best-effort file lock check that may be
+    platform-dependent.
 
-- 维护与改进建议（后续可逐步落地）：
-  * 将 imports 分组（标准库 / 第三方 / 项目内部）并移除未使用的模块（例如 sys）
-  * 将 matplotlib 延迟导入到需要绘图的函数内（减少模块导入开销，便于单元测试）
-  * 使用原子写入（写入临时文件并 os.replace）替代直接 append，以避免并发/重复写入问题
-  * 将 SegmentedRouletteWheel 的 num_destroy/num_repair 动态计算为实际注册的算子数，避免硬编码不一致
-  * 避免访问对象的私有属性（例如 tracker._iteration_count / stop._max_iterations），改为公开接口或增加安全判断
-  * 在对 pandas DataFrame 做删除/赋值前检查列存在性并使用 copy() 避免 SettingWithCopy 警告
-  * 为文件写入加入重试与超时机制（在 Windows 下 is_file_in_use 并非百分百可靠）
-  * 在可能为空的列表/字典访问处增加防护（例如 result.statistics.objectives 可能为空）
-  * 将日志分层：保持 logger 用于系统级错误，LogPrinter 用于用户可见输出
+Maintenance notes:
+  * Keep imports grouped by standard library, third-party, and local packages.
+  * Import plotting dependencies lazily in functions that need them.
+  * Prefer atomic writes for append-sensitive outputs when concurrency matters.
+  * Derive roulette-wheel operator counts from actual registrations.
+  * Prefer public methods over private attributes where practical.
+  * Guard optional DataFrame columns and empty tracker structures.
+  * Keep logger usage for system errors and LogPrinter for user-facing output.
 
-注意：下面的实现修改应逐步应用并在每一步后运行单元/烟雾测试以确认行为未改变。
+Apply behavioral changes incrementally and run tests after each step.
 """
 
 from __future__ import annotations
@@ -144,7 +140,7 @@ logger = logging.getLogger(__name__)
 # Utility: check if file is in use (moved here to avoid circular imports)
 def is_file_in_use(file_path):
     """
-    检查文件是否被占用（被其他程序打开）
+    Return whether a file is currently locked by another process.
     """
     if not os.path.exists(file_path):
         return False
@@ -173,20 +169,20 @@ def safe_state_snapshot(state: Any) -> Any:
 
 
 class ALNSOptimizer:
-    """ALNS优化器主类, 封装了整个优化流程"""
+    """High-level controller for the complete ALNS optimization workflow."""
 
     def __init__(self, input_file_loc: Any = None, output_file_loc: Any = None):
         """
-        初始化ALNS优化器
+        Initialize the ALNS optimizer.
 
         Parameters:
         -----------
         input_file_loc : str, optional
-            输入文件位置, 如果为None则使用默认路径
+            Input file location. Uses the default directory when omitted.
         output_file_loc : str, optional
-            输出文件位置, 如果为None则使用默认路径
+            Output file location. Uses the default directory when omitted.
         """
-        # 设置默认路径
+        # Set default paths.
         if input_file_loc is None or output_file_loc is None:
             current_dir = Path(__file__).parent
             par_path = current_dir.parent
@@ -203,10 +199,10 @@ class ALNSOptimizer:
         self.input_file_loc = Path(input_file_loc)
         self.output_file_loc = Path(output_file_loc)
 
-        # 初始化日志打印器
+        # Initialize the log printer.
         self.log_printer = LogPrinter(time.time())
 
-        # 初始化数据和状态
+        # Initialize data and optimization state.
         self.data: Optional[DataALNS] = None
         self.best_solution: Optional[SolutionState] = None
         self.best_feasible_state: Optional[SolutionState] = None
@@ -214,13 +210,13 @@ class ALNSOptimizer:
         self.result: Optional[Result] = None
         self.tracker: Optional[ALNSTracker] = None
 
-        # 初始化参数自动调整器和ML选择器
+        # Initialize optional parameter tuner and ML selector.
         self.param_tuner: Optional[ParamAutoTuner] = None
         self.ml_selector: Optional[MLOperatorSelector] = None
 
-        # 随机数生成器
+        # Random number generator.
         self.rng = rnd.default_rng(seed=SEED)
-        # 记录已注册的算子数量（用于动态设置选择器参数）
+        # Track registered operator counts for selector configuration.
         self._num_registered_destroy_ops: int = 0
         self._num_registered_repair_ops: int = 0
         self._iteration: int = 0
@@ -254,22 +250,23 @@ class ALNSOptimizer:
 
     def load_data(self, dataset_name: str) -> bool:
         """
-        加载数据
+        Load input data.
 
         Parameters:
         -----------
         dataset_name : str
-            数据集名称
+            Dataset name.
 
         Returns:
         --------
-        bool : 是否加载成功
+        bool
+            Whether loading succeeded.
         """
         try:
             self.log_printer.print("Loading Data...")
             start_time = time.time()
 
-            # 构建完整的输出路径
+            # Build the full output path.
             full_output_path = self.output_file_loc / dataset_name
 
             self.data = DataALNS(
@@ -282,22 +279,22 @@ class ALNSOptimizer:
                 f"Data loading elapsed time: {end_time - start_time:.2f}s"
             )
 
-            # 清理输出文件
+            # Clear output files.
             self._clear_output_files(full_output_path)
 
             return True
 
         except Exception as e:
-            logger.error(f"数据加载失败: {e}")
+            logger.error(f"Data loading failed: {e}")
             self.log_printer.print(f"Error loading data: {e}", color="bold red")
             return False
 
     def _clear_output_files(self, output_path: Path):
-        """清理输出文件"""
+        """Clear and reinitialize output files."""
         try:
             output_path.mkdir(parents=True, exist_ok=True)
 
-            # 定义需要清理的文件列表
+            # Define files that require clearing.
             files_to_clear = {
                 "opt_result.csv": [
                     "day",
@@ -311,7 +308,7 @@ class ALNSOptimizer:
                 "non_fulfill.csv": ["client_code", "product_code", "volume"],
             }
 
-            # 清理并初始化每个文件
+            # Clear and initialize each file.
             for file_name, header in files_to_clear.items():
                 file_path = output_path / file_name
                 with open(file_path, "w", newline="", encoding="utf-8") as file:
@@ -319,15 +316,16 @@ class ALNSOptimizer:
                     writer.writerow(header)
 
         except Exception as e:
-            logger.error(f"清理输出文件失败: {e}")
+            logger.error(f"Failed to clear output files: {e}")
 
     def create_initial_solution(self) -> Optional[SolutionState]:
         """
-        创建初始解
+        Create the initial solution.
 
         Returns:
         --------
-        SolutionState or None : 初始解, 如果创建失败则返回None
+        SolutionState or None
+            Initial solution, or ``None`` when creation fails.
         """
         if self.data is None:
             self.log_printer.print("Error: Data not loaded", color="bold red")
@@ -336,17 +334,17 @@ class ALNSOptimizer:
         try:
             self.log_printer.print("Initializing the solution...")
 
-            # 创建SolutionState的实例
+            # Create the SolutionState instance.
             state = SolutionState(self.data)
 
-            # 初始化参数自动调整器和ML选择器（按运行时配置动态启用）
+            # Initialize optional tuner and ML selector components.
             use_tuner = self.is_param_tuner_enabled()
             use_ml = self.is_ml_enabled()
             if use_tuner or use_ml:
                 self.log_printer.print("Initializing parameter auto-tuner...")
                 self.param_tuner = ParamAutoTuner(self.data, self.rng)
 
-                # 设置参数自动调整器引用
+                # Attach the parameter tuner.
                 state.set_param_tuner(self.param_tuner)
 
             if use_ml and self.param_tuner is not None:
@@ -354,7 +352,7 @@ class ALNSOptimizer:
                 self.ml_selector = MLOperatorSelector(self.param_tuner, self.rng)
                 state.set_ml_selector(self.ml_selector)
 
-            # 获取初始解（可选静默内部 print，避免初始解构造阶段刷屏）
+            # Build the initial solution, optionally suppressing noisy prints.
             quiet_init_logs = bool(
                 getattr(ALNSConfig, "QUIET_INITIAL_SOLUTION_LOGS", True)
             )
@@ -364,7 +362,7 @@ class ALNSOptimizer:
             else:
                 init_sol = initial_solution(state, rng=self.rng)
 
-            # 对初始解进行评估
+            # Evaluate the initial solution.
             initial_feasibility, violations = init_sol.validate()
 
             init_actual_obj = float(init_sol.calculate_cost())
@@ -382,7 +380,7 @@ class ALNSOptimizer:
                 )
                 self._print_violation_details(violations)
 
-                # 根据配置决定是否终止程序
+                # Decide whether to terminate according to configuration.
                 if getattr(ALNSConfig, "TERMINATE_ON_INFEASIBLE_INITIAL", True):
                     self.log_printer.print(
                         "Terminating due to infeasible initial solution.",
@@ -397,14 +395,14 @@ class ALNSOptimizer:
             return init_sol
 
         except Exception as e:
-            logger.error(f"创建初始解失败: {e}")
+            logger.error(f"Failed to create initial solution: {e}")
             self.log_printer.print(
                 f"Error creating initial solution: {e}", color="bold red"
             )
             return None
 
     def _print_violation_details(self, violations: Dict):
-        """打印违约详情"""
+        """Print violation details."""
         if violations.get("negative_inventory"):
             self.log_printer.print("Negative inventory violations:")
             for key, inv in violations["negative_inventory"]:
@@ -429,39 +427,40 @@ class ALNSOptimizer:
 
     def setup_alns(self) -> ALNS:
         """
-        设置ALNS算法实例
+        Configure the ALNS algorithm instance.
 
         Returns:
         --------
-        ALNS : 配置好的ALNS实例
+        ALNS
+            Configured ALNS instance.
         """
         try:
-            # 创建ALNS的实例
+            # Create the ALNS instance.
             alns = ALNS(rng=rnd.default_rng(seed=SEED))
 
-            # 注册destroy算子
+            # Register destroy operators.
             self._register_destroy_operators(alns)
 
-            # 注册repair算子
+            # Register repair operators.
             self._register_repair_operators(alns)
 
             return alns
 
         except Exception as e:
-            logger.error(f"ALNS设置失败: {e}")
+            logger.error(f"Failed to configure ALNS: {e}")
             raise
 
     def _register_destroy_operators(self, alns: ALNS):
-        """注册destroy算子"""
-        self.log_printer.print("注册destroy算子...")
+        """Register destroy operators."""
+        self.log_printer.print("Registering destroy operators...")
 
         try:
-            # 获取基础参数
+            # Load base parameters.
             destroy_params = ALNSConfig.get_destroy_params()
 
-            # 如果启用了参数自动调整和ML选择器，添加ML增强的破坏算子
+            # Add the ML destroy operator when tuner and selector are enabled.
             if self.is_ml_enabled() and self.param_tuner and self.ml_selector:
-                self.log_printer.print("注册ML增强的破坏算子...")
+                self.log_printer.print("Registering ML-enhanced destroy operator...")
                 ml_destroy_op = self._create_named_partial(
                     ml_based_destroy,
                     name="ml_based_destroy",
@@ -472,7 +471,7 @@ class ALNSOptimizer:
                     getattr(self, "_num_registered_destroy_ops", 0) + 1
                 )
 
-            # 注册random removal算子（使用 wrapper 工厂以便预设参数）
+            # Register random removal through a wrapper factory.
             random_removal_op = create_random_removal(
                 destroy_params["random_removal_degree"]
             )
@@ -481,14 +480,14 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # 注册 shaw removal算子（使用 wrapper 工厂）
+            # Register Shaw removal through a wrapper factory.
             shaw_removal_op = create_shaw_removal(destroy_params["shaw_removal_degree"])
             alns.add_destroy_operator(shaw_removal_op)
             self._num_registered_destroy_ops = (
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # 注册 periodic shaw removal算子（多参数工厂）
+            # Register periodic Shaw removal through its parameterized factory.
             periodic_shaw_removal_op = create_periodic_shaw_removal(
                 **destroy_params.get("periodic_shaw_params", {})
             )
@@ -497,7 +496,7 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # 其余需要参数的算子使用相应工厂创建并注册（infeasible_removal 不需要额外参数）
+            # Register remaining parameterized operators through their factories.
             # worst_removal: prefer operator-level default if not provided in DESTROY_DEFAULTS
             worst_defaults = ALNSConfig.get_operator_default("worst_removal").get(
                 "params", {}
@@ -575,13 +574,13 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # infeasible_removal 不需要传参，直接包裹注册以保证兼容性
+            # infeasible_removal takes no parameters; wrap it for compatibility.
             alns.add_destroy_operator(wrap_operator_no_args(infeasible_removal))
             self._num_registered_destroy_ops = (
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            # inventory_level_destruction: P1 优先级，按经销商库存异常破坏
+            # inventory_level_destruction: destroy around abnormal dealer inventory.
             inv_defaults = ALNSConfig.get_operator_default(
                 "inventory_level_destruction"
             ).get("params", {})
@@ -596,20 +595,20 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_destroy_ops", 0) + 1
             )
 
-            self.log_printer.print("所有destroy算子注册完成")
+            self.log_printer.print("All destroy operators registered.")
 
         except Exception as e:
-            logger.error(f"注册destroy算子失败: {e}")
+            logger.error(f"Failed to register destroy operators: {e}")
             raise
 
     def _register_repair_operators(self, alns: ALNS):
-        """注册repair算子"""
-        self.log_printer.print("注册repair算子...")
+        """Register repair operators."""
+        self.log_printer.print("Registering repair operators...")
 
         try:
-            # 如果启用了参数自动调整和ML选择器，添加ML增强的修复算子
+            # Add the ML repair operator when tuner and selector are enabled.
             if self.is_ml_enabled() and self.param_tuner and self.ml_selector:
-                self.log_printer.print("注册ML增强的修复算子...")
+                self.log_printer.print("Registering ML-enhanced repair operator...")
                 ml_repair_op = self._create_named_partial(
                     ml_based_repair,
                     name="ml_based_repair",
@@ -620,7 +619,7 @@ class ALNSOptimizer:
                     getattr(self, "_num_registered_repair_ops", 0) + 1
                 )
 
-            # 获取 repair 参数（通过 centralized accessors）
+            # Load repair parameters through centralized accessors.
             repair_params = ALNSConfig.get_repair_params()
             # per-operator fallbacks (read from OPERATOR_DEFAULTS when available)
             local_defaults = ALNSConfig.get_operator_default("local_search_repair").get(
@@ -636,7 +635,7 @@ class ALNSOptimizer:
                 "lookahead_repair"
             ).get("params", {})
 
-            # 注册 repair 算子，使用 wrapper / factory 以便预设参数并保证 __name__ 可读
+            # Register repair operators through wrappers and factories.
             alns.add_repair_operator(wrap_repair_no_args(greedy_repair))
             self._num_registered_repair_ops = (
                 getattr(self, "_num_registered_repair_ops", 0) + 1
@@ -696,19 +695,19 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_repair_ops", 0) + 1
             )
 
-            # 注册专门的车队整合修复算子，用于减少碎片化的车辆分配
+            # Register fleet consolidation to reduce fragmented assignments.
             alns.add_repair_operator(FleetConsolidationRepairOperator())
             self._num_registered_repair_ops = (
                 getattr(self, "_num_registered_repair_ops", 0) + 1
             )
 
-            # 注册顺序修复算子 (P0 优先级)
+            # Register the sequential repair operator.
             alns.add_repair_operator(create_sequential_repair())
             self._num_registered_repair_ops = (
                 getattr(self, "_num_registered_repair_ops", 0) + 1
             )
 
-            # 注册前瞻修复算子（停滞期跳盆地用，默认 h=2）
+            # Register lookahead repair for stagnation escape; default horizon is 2.
             lookahead_h = repair_params.get("lookahead_repair", {}).get(
                 "lookahead_horizon",
                 lookahead_defaults.get("lookahead_horizon", 2),
@@ -718,24 +717,24 @@ class ALNSOptimizer:
                 getattr(self, "_num_registered_repair_ops", 0) + 1
             )
 
-            self.log_printer.print("所有repair算子注册完成")
+            self.log_printer.print("All repair operators registered.")
 
         except Exception as e:
-            logger.error(f"注册repair算子失败: {e}")
+            logger.error(f"Failed to register repair operators: {e}")
             raise
 
     def _create_named_partial(self, func, name=None, **kwargs):
         """
-        创建带有__name__属性的partial对象, 以兼容ALNS库
+        Create a callable with a readable ``__name__`` for ALNS compatibility.
 
         Parameters:
         -----------
         func : callable
-            要创建partial的函数
+            Function to wrap.
         name : str, optional
-            partial对象的名称, 如果不提供则自动生成
+            Wrapper name. Generated automatically when omitted.
         **kwargs : dict
-            要固定的关键字参数
+            Keyword arguments to bind.
 
         Returns:
         --------
@@ -761,29 +760,31 @@ class ALNSOptimizer:
 
     def run_optimization(self, dataset_name: str) -> bool:
         """
-        运行完整的优化流程
+        Run the complete optimization workflow.
 
         Parameters:
         -----------
         dataset_name : str
-            数据集名称
+            Dataset name.
 
         Returns:
         --------
-        bool : 是否优化成功
+        bool
+            Whether optimization completed successfully.
         """
         try:
-            self.log_printer.print(f"开始优化流程! / {datetime.datetime.now()}")
+            self.log_printer.print(f"Starting optimization / {datetime.datetime.now()}")
             optimization_start_time = time.time()
 
-            # 1. 加载数据
+            # 1. Load data.
             t0 = time.time()
-            self.log_printer.print("Step 1: 加载数据...")
+            self.log_printer.print("Step 1: Loading data...")
             if not self.load_data(dataset_name):
                 return False
 
             # Optional startup plotting (guarded by config to avoid heavy startup cost).
-            # 供应链3D图默认禁用，需同时打开 ENABLE_STARTUP_PLOTTING 与 ENABLE_SUPPLY_CHAIN_3D。
+            # The supply-chain 3D plot is disabled by default; enable both
+            # ENABLE_STARTUP_PLOTTING and ENABLE_SUPPLY_CHAIN_3D to use it.
             if getattr(ALNSConfig, "ENABLE_STARTUP_PLOTTING", False) and getattr(
                 ALNSConfig, "ENABLE_SUPPLY_CHAIN_3D", False
             ):
@@ -800,26 +801,26 @@ class ALNSOptimizer:
                 except Exception as e:
                     logger.debug(f"Startup plotting skipped: {e}")
 
-            self.log_printer.print(f"Step 1耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 1 elapsed: {time.time() - t0:.2f}s")
 
-            # 2. 创建初始解
+            # 2. Create the initial solution.
             t0 = time.time()
-            self.log_printer.print("Step 2: 创建初始解...")
+            self.log_printer.print("Step 2: Creating initial solution...")
             init_sol = self.create_initial_solution()
             if init_sol is None:
                 return False
-            self.log_printer.print(f"Step 2耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 2 elapsed: {time.time() - t0:.2f}s")
 
-            # 3. 设置ALNS算法
+            # 3. Configure ALNS.
             t0 = time.time()
-            self.log_printer.print("Step 3: 设置ALNS算法...")
+            self.log_printer.print("Step 3: Configuring ALNS...")
             alns = self.setup_alns()
-            self.log_printer.print(f"Step 3耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 3 elapsed: {time.time() - t0:.2f}s")
 
-            # 4. 配置算子选择机制
+            # 4. Configure operator selection.
             t0 = time.time()
-            self.log_printer.print("Step 4: 配置算子选择机制...")
-            # 动态使用已注册的算子数量来配置选择器，避免硬编码
+            self.log_printer.print("Step 4: Configuring operator selection...")
+            # Use actual registration counts instead of hard-coded values.
             num_destroy = getattr(self, "_num_registered_destroy_ops", 7) or 7
             num_repair = getattr(self, "_num_registered_repair_ops", 6) or 6
             select = SegmentedRouletteWheel(
@@ -829,11 +830,11 @@ class ALNSOptimizer:
                 num_destroy=num_destroy,
                 num_repair=num_repair,
             )
-            self.log_printer.print(f"Step 4耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 4 elapsed: {time.time() - t0:.2f}s")
 
-            # 5. 配置接受准则
+            # 5. Configure acceptance rules.
             t0 = time.time()
-            self.log_printer.print("Step 5: 配置接受准则...")
+            self.log_printer.print("Step 5: Configuring acceptance policy...")
             sa_accept = SimulatedAnnealing(
                 start_temperature=getattr(ALNSConfig, "SA_START_TEMP", 1.0),
                 end_temperature=getattr(ALNSConfig, "SA_END_TEMP", 1e-3),
@@ -841,23 +842,24 @@ class ALNSOptimizer:
                 method="exponential",
             )
             self.acceptance = DemandConstraintAccept(sa_accept, self.data)
-            self.log_printer.print(f"Step 5耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 5 elapsed: {time.time() - t0:.2f}s")
 
-            # 6. 配置停止准则
+            # 6. Configure stopping rules.
             t0 = time.time()
-            self.log_printer.print("Step 6: 配置停止准则...")
+            self.log_printer.print("Step 6: Configuring stopping rules...")
 
-            # 使用组合停止准则：
-            # 小规模数据集: 300次迭代 OR 900秒运行时间
-            # 中规模数据集: 600次迭代 OR 1800秒运行时间
-            # 大规模数据集: 1000次迭代 OR 3600秒运行时间
+            # Combined stopping rule by dataset scale:
+            # small: 300 iterations OR 900 seconds;
+            # medium: 600 iterations OR 1800 seconds;
+            # large: 1000 iterations OR 3600 seconds.
             stop = create_standard_combined_criterion(
-                max_iterations=getattr(ALNSConfig, "MAX_ITERATIONS", 300),  # 300次迭代
-                max_runtime=getattr(ALNSConfig, "MAX_RUNTIME", 900),  # 900秒
-                max_no_improvement=None,  # 暂不使用无改进停止条件
+                max_iterations=getattr(ALNSConfig, "MAX_ITERATIONS", 300),
+                max_runtime=getattr(ALNSConfig, "MAX_RUNTIME", 900),
+                max_no_improvement=None,  # No-improvement stopping is disabled.
             )
 
-            # 将迭代上限初始化为一个更保守的高值，避免过早被 MaxIterations 截断。
+            # Initialize a conservative iteration ceiling so MaxIterations does
+            # not truncate a runtime-budgeted search too early.
             try:
                 runtime_budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 900))
                 base_iter_cap = int(getattr(ALNSConfig, "MAX_ITERATIONS", 300))
@@ -898,15 +900,15 @@ class ALNSOptimizer:
                 pass
 
             self.log_printer.print(
-                f"组合停止准则配置: 迭代上限将动态扩容, 运行时间预算{getattr(ALNSConfig, 'MAX_RUNTIME', 900)}秒"
+                f"Combined stopping rule: dynamic iteration cap, runtime budget {getattr(ALNSConfig, 'MAX_RUNTIME', 900)} seconds"
             )
-            self.log_printer.print(f"Step 6耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 6 elapsed: {time.time() - t0:.2f}s")
 
-            # 7. 设置追踪器和回调函数
+            # 7. Configure tracker and callbacks.
             t0 = time.time()
-            self.log_printer.print("Step 7: 设置追踪器和回调函数...")
+            self.log_printer.print("Step 7: Configuring tracker and callbacks...")
             self.tracker = ALNSTracker(log_printer=self.log_printer)
-            # 新增: 将tracker注入到初始解中, 以便在repair算子中使用
+            # Attach the tracker to the initial solution for repair operators.
             init_sol.set_tracker(self.tracker)
             try:
                 self.tracker.set_initial_reference(
@@ -916,7 +918,7 @@ class ALNSOptimizer:
             except Exception:
                 pass
 
-            # 将初始严格可行解注册为可回滚基线，避免早期候选不可行时无基线可回滚。
+            # Record a strictly feasible initial state as an early rollback baseline.
             try:
                 init_feasible, _ = init_sol.validate()
                 if init_feasible:
@@ -926,11 +928,11 @@ class ALNSOptimizer:
                 pass
 
             register_callbacks(alns, self, stop=stop)
-            self.log_printer.print(f"Step 7耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 7 elapsed: {time.time() - t0:.2f}s")
 
-            # 8. 运行ALNS算法
+            # 8. Run ALNS.
             t0 = time.time()
-            self.log_printer.print("Step 8: 运行ALNS算法...")
+            self.log_printer.print("Step 8: Running ALNS...")
             try:
                 quiet_operator_logs = bool(
                     getattr(ALNSConfig, "QUIET_OPERATOR_LOGS", True)
@@ -939,9 +941,9 @@ class ALNSOptimizer:
                     self.result = alns.iterate(
                         init_sol, select, cast(Any, self.acceptance), stop
                     )
-                self.log_printer.print(f"Step 8耗时: {time.time() - t0:.2f}s")
+                self.log_printer.print(f"Step 8 elapsed: {time.time() - t0:.2f}s")
             except Exception as e:
-                # 捕获并记录完整回溯以便定位 None 与 float 比较导致的异常
+                # Capture the full traceback for comparison failures.
                 import traceback
 
                 tb = traceback.format_exc()
@@ -957,52 +959,52 @@ class ALNSOptimizer:
 
             optimization_end_time = time.time()
             self.log_printer.print(
-                f"优化总耗时: {optimization_end_time - optimization_start_time:.2f}s"
+                f"Total optimization time: {optimization_end_time - optimization_start_time:.2f}s"
             )
 
-            # 9. 处理结果
+            # 9. Process results.
             t0 = time.time()
-            self.log_printer.print("Step 9: 处理结果...")
+            self.log_printer.print("Step 9: Processing results...")
             self._process_results()
-            self.log_printer.print(f"Step 9耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 9 elapsed: {time.time() - t0:.2f}s")
 
-            # 10. 生成报告和图表
+            # 10. Generate reports and figures.
             t0 = time.time()
-            self.log_printer.print("Step 10: 生成报告和图表...")
+            self.log_printer.print("Step 10: Generating reports and figures...")
             self._generate_reports()
-            self.log_printer.print(f"Step 10耗时: {time.time() - t0:.2f}s")
+            self.log_printer.print(f"Step 10 elapsed: {time.time() - t0:.2f}s")
 
-            self.log_printer.print_title(f"优化完成! {datetime.datetime.now()}")
+            self.log_printer.print_title(f"Optimization complete! {datetime.datetime.now()}")
 
             return True
 
         except Exception as e:
-            logger.error(f"优化过程失败: {e}")
+            logger.error(f"Optimization failed: {e}")
             self.log_printer.print(f"Optimization failed: {e}", color="bold red")
             return False
 
     def _process_results(self):
-        """处理优化结果"""
+        """Process optimization results."""
         if self.result is None:
             return
 
         try:
-            # 获取最终解
+            # Retrieve the final solution.
             self.best_solution = safe_state_snapshot(self.result.best_state)
 
-            # 可选：按实际目标函数选取追踪到的最佳可行解作为最终输出口径
+            # Optionally select the tracked best feasible state by actual objective.
             tracker_stats = self.tracker.get_statistics()
             if bool(getattr(ALNSConfig, "PREFER_FINAL_BEST_ACTUAL_SOLUTION", True)):
                 candidate_actual_best = tracker_stats.get("best_actual_solution")
                 if candidate_actual_best is not None:
                     self.best_solution = safe_state_snapshot(candidate_actual_best)
 
-            # 回调路径维护的“最优完全可行解”优先级最高，避免最终导出退化为非严格可行状态。
+            # The callback-maintained fully feasible state has highest priority.
             callback_best_feasible = getattr(self, "best_feasible_state", None)
             if callback_best_feasible is not None:
                 self.best_solution = safe_state_snapshot(callback_best_feasible)
 
-            # 输出前对最优解做一次轻量并车压缩（若不可行则自动回退）
+            # Run one light consolidation before output and roll back if infeasible.
             if self.best_solution is not None and getattr(
                 ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True
             ):
@@ -1040,7 +1042,7 @@ class ALNSOptimizer:
                             f"Final consolidation merged {merged_cnt} vehicles ({before_cnt} -> {after_cnt})."
                         )
 
-            # 输出统计信息
+            # Print statistics.
             self.log_printer.print(
                 f"Total iterations tracked: {tracker_stats['total_iterations']}"
             )
@@ -1057,7 +1059,7 @@ class ALNSOptimizer:
                 f"Final Actual Gap vs Initial: {tracker_stats['final_actual_gap']:+.2f}%"
             )
 
-            # 验证最终解
+            # Validate the final solution.
             final_feasibility, violations = self.best_solution.validate()
             if not final_feasibility:
                 self.log_printer.print(
@@ -1077,7 +1079,7 @@ class ALNSOptimizer:
             )
             self.log_printer.print(f"Best Solution Cost: {best_actual_obj:.2f}")
 
-            # 更新数据和输出结果
+            # Update data and write outputs.
             self._update_demands()
             self._update_inventory()
             self._output_results()
@@ -1085,7 +1087,7 @@ class ALNSOptimizer:
             self._write_repair_audit_report()
 
         except Exception as e:
-            logger.error(f"处理结果失败: {e}")
+            logger.error(f"Failed to process results: {e}")
             raise
 
     def _write_repair_audit_report(self):
@@ -1136,19 +1138,19 @@ class ALNSOptimizer:
             df.to_csv(out, index=False)
             self.log_printer.print(f"Repair feasibility audit saved: {out}")
         except Exception as e:
-            logger.error(f"写入修复算子审计报告失败: {e}")
+            logger.error(f"Failed to write repair feasibility audit: {e}")
 
     def _update_demands(self):
-        """更新需求数据"""
+        """Update demand data."""
         try:
-            # 更新需求
+            # Update demand.
             for veh in self.best_solution.vehicles:
                 for (sku_id, day), qty in veh.cargo.items():
                     key = (veh.dealer_id, sku_id)
                     if key in self.data.demands:
                         self.data.demands[key] -= qty
 
-            # 获取未满足的需求数据
+            # Collect unmet demand.
             non_fulfill_data = []
             for (dealer, sku_id), qty in self.data.demands.items():
                 if qty > 0:
@@ -1156,20 +1158,20 @@ class ALNSOptimizer:
                         {"client_code": dealer, "product_code": sku_id, "volume": qty}
                     )
 
-            # 保存未满足需求
+            # Save unmet demand.
             if non_fulfill_data:
                 df_non_fulfill = pd.DataFrame(non_fulfill_data)
                 output_file = Path(self.data.output_file_loc) / "non_fulfill.csv"
-                # 检查文件是否被占用
+                # Check whether the file is locked.
                 if is_file_in_use(output_file):
                     self.log_printer.print(
-                        f"文件 {output_file} 正在被占用, 请关闭后重试。",
+                        f"File {output_file} is in use; close it and retry.",
                         color="bold red",
                     )
                     return
                 df_non_fulfill.to_csv(output_file, mode="a", header=False, index=False)
 
-            # 更新数据对象中的需求
+            # Update demand in the data object.
             self.data.demands = {
                 (dealer, sku_id): qty
                 for (dealer, sku_id), qty in self.data.demands.items()
@@ -1177,38 +1179,38 @@ class ALNSOptimizer:
             }
 
         except Exception as e:
-            logger.error(f"更新需求失败: {e}")
+            logger.error(f"Failed to update demand: {e}")
             raise
 
     def _update_inventory(self):
-        """更新库存数据"""
+        """Update inventory data."""
         try:
             sku_inv_left = {}
 
-            # 遍历每个工厂的每种SKU
+            # Iterate over every plant and SKU.
             for plant_id in self.data.plants:
                 for sku_id in self.data.all_skus:
-                    # 获取期初库存
+                    # Read initial inventory.
                     current_inv = self.data.sku_initial_inv.get((plant_id, sku_id), 0)
 
-                    # 按时间顺序计算每天结束时的库存
+                    # Compute end-of-day inventory in chronological order.
                     for day in range(1, self.data.horizons + 1):
-                        # 加上当天生产量
+                        # Add same-day production.
                         current_inv += self.data.sku_prod_each_day.get(
                             (plant_id, sku_id, day), 0
                         )
 
-                        # 减去当天配送量
+                        # Subtract same-day shipments.
                         shipped_qty = 0
                         for veh in self.best_solution.vehicles:
                             if veh.fact_id == plant_id and (sku_id, day) in veh.cargo:
                                 shipped_qty += veh.cargo[(sku_id, day)]
                         current_inv -= shipped_qty
 
-                        # 保存当天结束时的库存
+                        # Store end-of-day inventory.
                         sku_inv_left[(plant_id, sku_id, day)] = current_inv
 
-            # 创建并保存库存DataFrame
+            # Create and save the inventory DataFrame.
             df_sku_inv_left = pd.DataFrame(
                 [
                     {
@@ -1223,33 +1225,35 @@ class ALNSOptimizer:
             output_file = Path(self.data.output_file_loc) / "sku_inv_left.csv"
             if is_file_in_use(output_file):
                 self.log_printer.print(
-                    f"文件 {output_file} 正在被占用, 请关闭后重试。", color="bold red"
+                    f"File {output_file} is in use; close it and retry.",
+                    color="bold red",
                 )
                 return
             df_sku_inv_left.to_csv(output_file, index=False)
 
         except Exception as e:
-            logger.error(f"更新库存失败: {e}")
+            logger.error(f"Failed to update inventory: {e}")
             raise
 
     def _output_results(self):
-        """输出结果到文件"""
+        """Write optimization results to file."""
         try:
             output_file = Path(self.data.output_file_loc) / "opt_result.csv"
             df_result = self._create_result_dataframe()
             if is_file_in_use(output_file):
                 self.log_printer.print(
-                    f"文件 {output_file} 正在被占用, 请关闭后重试。", color="bold red"
+                    f"File {output_file} is in use; close it and retry.",
+                    color="bold red",
                 )
                 return
             df_result.to_csv(output_file, mode="a", header=False, index=False)
 
         except Exception as e:
-            logger.error(f"输出结果失败: {e}")
+            logger.error(f"Failed to output results: {e}")
             raise
 
     def _create_result_dataframe(self) -> pd.DataFrame:
-        """创建结果DataFrame"""
+        """Create the result DataFrame."""
         rows = []
         for idx, veh in enumerate(self.best_solution.vehicles):
             for (sku_id, day), qty in veh.cargo.items():
@@ -1267,18 +1271,18 @@ class ALNSOptimizer:
         return pd.DataFrame(rows)
 
     def _generate_statistics(self):
-        """生成统计信息"""
+        """Generate summary statistics."""
         try:
             dataset = self.data.dataset_name
             output_location = Path(self.data.output_file_loc)
             input_location = self.input_file_loc / dataset
 
-            # 读取结果文件
+            # Read result files.
             df_result = pd.read_csv(output_location / "opt_result.csv")
             df_sku_size = pd.read_csv(input_location / "product_size.csv")
             df_all_veh = pd.read_csv(input_location / "vehicle.csv")
 
-            # 合并数据前, 确保主键列类型一致（全部转为str）
+            # Normalize join-key types before merging.
             if "product_code" in df_result.columns:
                 df_result["product_code"] = df_result["product_code"].astype(str)
             if "product_code" in df_sku_size.columns:
@@ -1290,23 +1294,24 @@ class ALNSOptimizer:
             df_result = pd.merge(df_result, df_sku_size, on=["product_code"])
             df_result = pd.merge(df_result, df_all_veh, on=["vehicle_type"])
 
-            # 删除不需要的列
+            # Remove unneeded columns.
             if "cost_to_use" in df_result.columns:
                 del df_result["cost_to_use"]
 
-            # 计算占用体积
+            # Compute occupied volume.
             df_result["occupied_size"] = df_result["qty"] * df_result["standard_size"]
 
-            # 保存详细结果
+            # Save detailed results.
             details_file = output_location / "opt_details.csv"
             if is_file_in_use(details_file):
                 self.log_printer.print(
-                    f"文件 {details_file} 正在被占用, 请关闭后重试。", color="bold red"
+                    f"File {details_file} is in use; close it and retry.",
+                    color="bold red",
                 )
                 return
             df_result.to_csv(details_file, index=False)
 
-            # 生成汇总统计
+            # Generate summary statistics.
             df_stat1 = df_result.copy()
             if "product_code" in df_stat1.columns:
                 df_stat1 = df_stat1.drop(["product_code", "standard_size"], axis=1)
@@ -1323,28 +1328,29 @@ class ALNSOptimizer:
                 }
             )
 
-            # 重置索引
+            # Reset the index.
             df_summary = df_summary.reset_index()
 
             summary_file = output_location / "opt_summary.csv"
             if is_file_in_use(summary_file):
                 self.log_printer.print(
-                    f"文件 {summary_file} 正在被占用, 请关闭后重试。", color="bold red"
+                    f"File {summary_file} is in use; close it and retry.",
+                    color="bold red",
                 )
                 return
             df_summary.to_csv(summary_file, index=False)
 
-            # 验证容量约束
+            # Validate capacity constraints.
             self._validate_capacity_constraints(df_summary)
 
         except Exception as e:
-            logger.error(f"生成统计信息失败: {e}")
+            logger.error(f"Failed to generate statistics: {e}")
             raise
 
     def _validate_capacity_constraints(self, df_summary: pd.DataFrame):
-        """验证容量约束"""
+        """Validate vehicle capacity constraints."""
         try:
-            # 检查是否所有车辆装载的SKU体积满足车辆容量约束
+            # Check whether every vehicle load satisfies its capacity.
             is_cap_exceed = pd.Series(
                 df_summary["occupied_size"] <= df_summary["carry_standard_size"]
             )
@@ -1355,7 +1361,7 @@ class ALNSOptimizer:
                 )
             else:
                 self.log_printer.print(
-                    "⚠️ 部分车辆的装载体积超出容量限制", color="yellow"
+                    "Some vehicle loads exceed capacity limits", color="yellow"
                 )
                 df_exceed = df_summary[
                     df_summary["occupied_size"] > df_summary["carry_standard_size"]
@@ -1378,24 +1384,24 @@ class ALNSOptimizer:
                 output_path = Path(self.data.output_file_loc) / "extra_volume.csv"
                 if is_file_in_use(output_path):
                     self.log_printer.print(
-                        f"文件 {output_path} 正在被占用, 请关闭后重试。",
+                        f"File {output_path} is in use; close it and retry.",
                         color="bold red",
                     )
                     return
                 df_exceed_info.to_csv(output_path, index=False)
-                self.log_printer.print(f"超容量信息已保存到: {output_path}")
+                self.log_printer.print(f"Capacity excess details saved to: {output_path}")
 
         except Exception as e:
-            logger.error(f"验证容量约束失败: {e}")
+            logger.error(f"Failed to validate capacity constraints: {e}")
 
     def _generate_reports(self):
-        """生成报告和图表"""
+        """Generate reports and figures."""
         try:
-            # 支持通过配置开关在性能分析/CI场景下禁用所有报告与绘图（避免 matplotlib 的文本布局开销）
+            # Allow reports and plotting to be disabled for profiling and CI.
             if not getattr(ALNSConfig, "ENABLE_REPORTS", True):
                 try:
                     self.log_printer.print(
-                        "报告生成已禁用 (ENABLE_REPORTS=False)，跳过绘图。"
+                        "Report generation disabled (ENABLE_REPORTS=False); skipping plots."
                     )
                 except Exception:
                     pass
@@ -1412,41 +1418,40 @@ class ALNSOptimizer:
             except Exception as e:
                 logger.debug(f"Visualization tools unavailable: {e}")
                 return
-            # 创建图像目录
+            # Create the image directory.
             images_dir = Path(self.data.output_file_loc) / "images"
             images_dir.mkdir(exist_ok=True)
-            # 绘制目标函数变化（引导目标 + 实际目标）
+            # Plot search and actual objective changes.
             plot_objective_changes(
                 self.result,
                 str(self.data.output_file_loc),
                 tracker=self.tracker,
             )
-            # 绘制算子性能（调用可视化模块）
+            # Plot operator performance.
             plot_operator_performance(self.best_solution, self.result)
-            # 绘制Gap变化
+            # Plot gap changes.
             plot_gap_changes(self.tracker, str(self.data.output_file_loc))
 
-            # 生成参数自动调整和ML选择器报告
+            # Generate tuner and ML selector reports.
             if self.param_tuner:
                 self._generate_param_tuning_report()
 
         except Exception as e:
-            logger.error(f"生成报告失败: {e}")
+            logger.error(f"Failed to generate reports: {e}")
             self.log_printer.print(
                 f"Warning: Failed to generate reports: {e}", color="yellow"
             )
 
     def _plot_operator_performance(self):
-        """绘制算子性能（简化版本）"""
+        """Plot a simplified operator performance chart."""
         try:
             import matplotlib.pyplot as plt
-            # 这里实现一个简化的算子性能图表
-            # 原始版本过于复杂, 简化为基本的柱状图
+            # Simplified bar chart for operator usage.
 
             destroy_counts = self.result.statistics.destroy_operator_counts
             repair_counts = self.result.statistics.repair_operator_counts
 
-            # 创建简化的性能图表
+            # Create the simplified performance figure.
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
             # Destroy operators
@@ -1454,7 +1459,7 @@ class ALNSOptimizer:
                 operators = list(destroy_counts.keys())
                 totals = [
                     sum(counts[:4]) for counts in destroy_counts.values()
-                ]  # 前4个结果的总和
+                ]  # Sum the first four result categories.
                 ax1.bar(operators, totals, color="skyblue")
                 ax1.set_title("Destroy Operators Performance")
                 ax1.set_ylabel("Total Usage")
@@ -1481,21 +1486,21 @@ class ALNSOptimizer:
             plt.close()
 
         except Exception as e:
-            logger.error(f"绘制算子性能失败: {e}")
+            logger.error(f"Failed to plot operator performance: {e}")
 
     def _generate_param_tuning_report(self):
-        """生成参数自动调整和ML选择器的报告"""
+        """Generate parameter tuning and ML selector reports."""
         if not self.param_tuner:
             return
 
         try:
-            self.log_printer.print("生成参数自动调整和ML选择器报告...")
+            self.log_printer.print("Generating parameter tuning and ML selector reports...")
 
-            # 创建报告目录
+            # Create the report directory.
             report_dir = self.output_file_loc / "param_tuning_report"
             report_dir.mkdir(parents=True, exist_ok=True)
 
-            # 生成参数自动调整报告
+            # Generate the parameter tuning report.
             param_report_path = report_dir / "param_tuning_report.csv"
             with open(param_report_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -1530,26 +1535,26 @@ class ALNSOptimizer:
                             ]
                         )
 
-            self.log_printer.print(f"参数自动调整报告已保存到: {param_report_path}")
+            self.log_printer.print(f"Parameter tuning report saved to: {param_report_path}")
 
-            # 如果ML选择器可用，生成ML选择器报告
+            # Generate ML selector reports when available.
             if self.ml_selector:
-                # 生成破坏算子性能报告
+                # Generate the destroy-operator performance report.
                 destroy_report_path = report_dir / "destroy_operators_performance.csv"
                 with open(destroy_report_path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(["Operator", "Usage Count", "Average Performance"])
 
-                    # 统计各算子使用情况
+                    # Count usage by operator.
                     destroy_op_stats = {}
                     for op_name in self.param_tuner.operators:
                         if "removal" in op_name:
                             destroy_op_stats[op_name] = {"count": 0, "total_perf": 0.0}
 
-                    # 从ML选择器中获取性能数据
+                    # Read performance data from the ML selector.
                     for i, op_encoding in enumerate(self.ml_selector.destroy_features):
                         if len(op_encoding) > 0:
-                            # 最后几个元素是算子的one-hot编码
+                            # The final elements encode the selected operator.
                             op_idx = np.argmax(
                                 op_encoding[-len(self.ml_selector.destroy_op_map) :]
                             )
@@ -1562,7 +1567,7 @@ class ALNSOptimizer:
                                 destroy_op_stats[op_name]["count"] += 1
                                 destroy_op_stats[op_name]["total_perf"] += perf
 
-                    # 写入报告
+                    # Write the report.
                     for op_name, stats in destroy_op_stats.items():
                         avg_perf = (
                             stats["total_perf"] / stats["count"]
@@ -1572,25 +1577,25 @@ class ALNSOptimizer:
                         writer.writerow([op_name, stats["count"], f"{avg_perf:.4f}"])
 
                 self.log_printer.print(
-                    f"破坏算子性能报告已保存到: {destroy_report_path}"
+                    f"Destroy operator performance report saved to: {destroy_report_path}"
                 )
 
-                # 生成修复算子性能报告
+                # Generate the repair-operator performance report.
                 repair_report_path = report_dir / "repair_operators_performance.csv"
                 with open(repair_report_path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(["Operator", "Usage Count", "Average Performance"])
 
-                    # 统计各算子使用情况
+                    # Count usage by operator.
                     repair_op_stats = {}
                     for op_name in self.param_tuner.operators:
                         if "repair" in op_name:
                             repair_op_stats[op_name] = {"count": 0, "total_perf": 0.0}
 
-                    # 从ML选择器中获取性能数据
+                    # Read performance data from the ML selector.
                     for i, op_encoding in enumerate(self.ml_selector.repair_features):
                         if len(op_encoding) > 0:
-                            # 最后几个元素是算子的one-hot编码
+                            # The final elements encode the selected operator.
                             op_idx = np.argmax(
                                 op_encoding[-len(self.ml_selector.repair_op_map) :]
                             )
@@ -1603,7 +1608,7 @@ class ALNSOptimizer:
                                 repair_op_stats[op_name]["count"] += 1
                                 repair_op_stats[op_name]["total_perf"] += perf
 
-                    # 写入报告
+                    # Write the report.
                     for op_name, stats in repair_op_stats.items():
                         avg_perf = (
                             stats["total_perf"] / stats["count"]
@@ -1613,11 +1618,12 @@ class ALNSOptimizer:
                         writer.writerow([op_name, stats["count"], f"{avg_perf:.4f}"])
 
                 self.log_printer.print(
-                    f"修复算子性能报告已保存到: {repair_report_path}"
+                    f"Repair operator performance report saved to: {repair_report_path}"
                 )
 
         except Exception as e:
-            logger.error(f"生成参数自动调整和ML选择器报告失败: {e}")
+            logger.error(f"Failed to generate tuning and ML selector reports: {e}")
             self.log_printer.print(
-                f"生成参数自动调整和ML选择器报告失败: {e}", color="bold red"
+                f"Failed to generate tuning and ML selector reports: {e}",
+                color="bold red",
             )

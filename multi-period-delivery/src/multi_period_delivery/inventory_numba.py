@@ -1,17 +1,23 @@
 """
 inventory_numba.py
 
-辅助模块：为 compute_inventory 提供数组化/Numba 加速的实现原型。
-目标：
- - 提供稳定的索引映射（plant/sku/day -> int index）
- - 将 state/data 转换为 ndarray 表示（s_ikt, shipments, prod）
- - 提供可选的 Numba njit 内核（若可用）和 numpy 回退实现
- - 提供安全包装：尝试快速路径，失败时回退到 state.compute_inventory()
+Helper module providing array-based and optional Numba-accelerated
+implementations of compute_inventory.
 
-注意：
- - 该模块做保守性实现：所有改动作用于 state.s_ikt（期末库存）并在失败时回退。
- - 在将来将此内核用于更深度集成（如 validate 增量化或 regret 算子的候选评估），
-   需要在调用方确保 state 的其它缓存/变量一致性（例如 shipped_cache 等）。
+Goals:
+ - Provide stable index mappings (plant/sku/day -> integer index).
+ - Convert state/data into ndarray representations (s_ikt, shipments, prod).
+ - Provide an optional Numba njit kernel when available and a NumPy fallback.
+ - Provide a safe wrapper that tries the fast path and falls back to
+   state.compute_inventory() on failure.
+
+Notes:
+ - The implementation is deliberately conservative: all changes are written to
+   state.s_ikt (ending inventory), and failures fall back to the original path.
+ - Deeper integration of this kernel (for example advisory validation or
+   candidate evaluation in regret operators) requires callers to maintain
+   consistency for all other state caches and variables, such as
+   shipped_cache.
 """
 
 from dataclasses import dataclass
@@ -403,7 +409,8 @@ def compute_inventory_numba_safe(state):
 
         return True
     except Exception:
-        # 让调用方（alnsopt.compute_inventory）决定回退策略，避免递归调用自身。
+        # Let the caller (alnsopt.compute_inventory) decide the fallback path to
+        # avoid recursively calling this wrapper.
         return False
 
 

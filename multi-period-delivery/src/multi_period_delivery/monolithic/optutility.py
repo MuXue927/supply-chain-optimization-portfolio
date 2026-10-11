@@ -30,7 +30,7 @@ def my_callback(model, where):
             print("Stop early - 10% gap achieved")
             model.terminate()
     elif where == GRB.Callback.MIPSOL and model.cbGet(GRB.Callback.MIPSOL_OBJ) > MYEPS:
-        # 发现新解，并且新解的目标函数值大于我规定的精度
+        # Report a new incumbent only when it improves by the configured tolerance.
         model.terminate()
 
 # Model.terminate() --> Generate a request to terminate the current optimization. This method can be called at any
@@ -57,28 +57,23 @@ class LogPrinter:
         is_tty = sys.stdout.isatty() and not force_plain
         self.use_rich_formatting = is_tty
         if is_tty:
-            # 如果是teletype，启用全部功能
+            # Enable full terminal formatting when attached to a TTY.
             self.console = Console()
         else:
-            # 如果不是，则禁用终端特定的格式化
-            # force_terminal=False确保rich不会使用终端特定的格式化
-            # color_system=None表示完全禁用字体颜色
+            # Disable terminal-specific formatting for redirected output.
+            # force_terminal=False prevents Rich from emitting terminal escapes.
+            # color_system=None disables ANSI colors entirely.
             self.console = Console(force_terminal=False, color_system=None)
 
     def strip_ansi(self, text):
         # ======================================================================================
-        # 下面这个正则表达式非常全面，几乎可以匹配所有常见的ANSI转义序列。使用这个模式
-        # 可以有效地识别和删除文本中的ANSI转义序列,从而得到纯文本内容
+        # This pattern matches common ANSI escape sequences so they can be
+        # removed before returning plain text.
         # re.compile(pattern, flags=0)
-        # 将正则表达式的样式编译为一个正则对象，可用于匹配，表达式的行为可以通过指定flags值来修改
-        # \x1B -- 这匹配ASCII转义字符,其十六进制值是1B。在ANSI转义序列中,这个字符总是出现在序列的开始。
-        # (?:...) -- 这是一个非捕获组。它用于分组,但不会创建一个单独的捕获组。
-        # [@-Z\\-_] -- 这表示一个字符集，可以匹配从@到Z的任何大写字母、反斜杠\、以及下划线_
-        # | 表示“或”操作符，分隔两个可能的模式
-        # \[ 表示匹配一个左方括号，方括号在正则表达式中有特殊含义，所以需要转义
-        # [0-?]* 表示匹配0次或者1次或者多次字符，范围从0到?
-        # [ -/]* 表示匹配0次或者1次或者多次字符，范围从空格到斜杠/
-        # [@-~]* 表示匹配0次或者1次或者多次字符，范围从@到~
+        # Compile the ANSI escape pattern. The pattern combines:
+        # - ESC for the start of the sequence;
+        # - a non-capturing group for common escape forms;
+        # - character classes for parameter bytes and final bytes.
         # ======================================================================================
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         return ansi_escape.sub('', text)
@@ -87,7 +82,8 @@ class LogPrinter:
     def print(self, msg: str, color: str = 'bold blue'):
         # global START_TIME  # indicates START_TIME is a global variable and can be used out of the scope of print() func.
         end_time = time.time()
-        # # datetime.now() --> 返回表示当前地方时的date和time对象，该方法会在可能的情况下提供比通过 time.time() 时间戳所获时间值更高的精度
+        # datetime.now() provides a higher-resolution local timestamp than a raw
+        # time.time() value.
         # now = datetime.datetime.now()
         formatted_msg = f'{end_time - self.start_time :.1f}s ' + msg
         if self.use_rich_formatting:
@@ -113,5 +109,5 @@ class LogPrinter:
             print(self.strip_ansi(centered_msg))
             print(self.strip_ansi(centered_line))
 
-# 不要在模块级别创建实例
+# Do not create a logger instance at module import time.
 # log_printer = LogPrinter(time.time())

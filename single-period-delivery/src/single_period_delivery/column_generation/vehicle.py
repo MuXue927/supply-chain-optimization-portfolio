@@ -1,8 +1,8 @@
-# 定义Vehicle类，用于模型初始可行解的构造
-# Vehicle类需要提供的功能包括
-# 1. 明确是哪个生产基地 i 为哪个经销商 j 使用哪种车型 f
-# 2. 需要能够计算车辆上装载的商品的体积
-# 3. 需要判断当前车辆是否满载
+# Defines the Vehicle class used to construct an initial feasible solution.
+# The Vehicle class supports the following:
+# 1. Identifying which production plant i serves which dealer j with vehicle type f.
+# 2. Calculating the volume of products loaded on the vehicle.
+# 3. Determining whether the vehicle is fully loaded.
 from .InputDataCG import InputDataCG
 from dataclasses import dataclass, field
 from typing import Dict
@@ -13,7 +13,7 @@ from typing import Dict
 
 
 @dataclass
-class Vehicle:  # fact_id, dealer_id, type, data 都是需要在实例化Vehicle对象时，要提供的
+class Vehicle:  # fact_id, dealer_id, type, and data must be provided when constructing a Vehicle.
     fact_id: str
     dealer_id: str
     type: str
@@ -29,8 +29,8 @@ class Vehicle:  # fact_id, dealer_id, type, data 都是需要在实例化Vehicle
 
     # init: If true (the default), this field is included as a parameter to the generated __init__() method.
 
-    capacity: float = field(init=False)  # 车辆的可用体积
-    cargo: Dict[str, int] = field(default_factory=dict)  # 车辆上装载的SKU以及数量
+    capacity: float = field(init=False)  # Available vehicle volume.
+    cargo: Dict[str, int] = field(default_factory=dict)  # SKUs loaded on the vehicle and their quantities.
 
     def __post_init__(self):
         Vehicle.id += 1
@@ -40,13 +40,14 @@ class Vehicle:  # fact_id, dealer_id, type, data 都是需要在实例化Vehicle
     def get_avail_space(self):
         return self.capacity
 
-    # sku_id代表要装载的SKU编号，num代表要装多少sku
+    # sku_id identifies the SKU to load, and num specifies how many units to load.
     def load(self, sku_id: str, num: int):
-        # 返回装车以后剩余多少sku装不上车，如果装10，剩余10个装不上，很可能满载了
+        # Return the number of SKUs that cannot be loaded. If 10 are requested and 10 remain,
+        # the vehicle is likely at capacity.
         data = self.data
         sku_size = data.sku_sizes[sku_id]
-        num_loaded = int(self.capacity // sku_size)  # 计算当前车辆容量可以装载的sku数量
-        num_loaded = min(num, num_loaded)       # 实际装载的sku数量
+        num_loaded = int(self.capacity // sku_size)  # Number of SKUs that fit in the current vehicle capacity.
+        num_loaded = min(num, num_loaded)       # Actual number of SKUs loaded.
 
         if num_loaded > 0:
             if sku_id in self.cargo:
@@ -54,14 +55,14 @@ class Vehicle:  # fact_id, dealer_id, type, data 都是需要在实例化Vehicle
             else:
                 self.cargo[sku_id] = num_loaded
             self.capacity -= num_loaded * sku_size
-        return num - num_loaded  # 返回剩余多少sku未装载
+        return num - num_loaded  # Return the number of SKUs left unloaded.
 
     def clear(self):
-        self.capacity = self.data.veh_type_cap[self.type]  # 重置车辆的可用体积为车辆空载时候的容量
+        self.capacity = self.data.veh_type_cap[self.type]  # Reset available volume to the empty-vehicle capacity.
         self.cargo.clear()  # dict.clear() method --> remove all items from the dictionary
 
-    # 用于判断车辆上是否装载有货物
+    # Determine whether the vehicle contains cargo.
     def is_empty(self):
         if len(self.cargo) == 0:
-            return True  # 如果未装载，返回 Ture
+            return True  # Return True when the vehicle is empty.
         return False

@@ -2,71 +2,80 @@
 visualization
 =============
 
-模块定位
-    提供求解过程与结果分析所需的各类可视化输出函数:
-      1. 目标值变化曲线 (objective)
-      2. Gap 收敛曲线
-      3. 算子使用/表现统计 (堆叠水平条形图 + 表格)
-      4. 供应链 3D 交互网络 (Plotly 可交互 HTML)
+Module role
+    Provide visualization outputs for solution processes and result analysis:
+      1. Objective-value curves.
+      2. Gap convergence curves.
+      3. Operator usage and performance statistics (stacked horizontal bars
+         plus tables).
+      4. Interactive 3D supply-chain network (interactive Plotly HTML).
 
-设计原则
-    - 函数相互独立, 无全局状态
-    - 输入只读 (不修改传入对象)
-    - 自动创建输出目录 (images) 防止保存失败
-    - Matplotlib 图在保存后即关闭, 避免内存泄漏
-    - Plotly 交互图追加 JS 增强边点击高亮与侧边面板信息展示
+Design principles
+    - Functions are independent and do not use global state.
+    - Inputs are read-only; passed objects are not modified.
+    - Output directories (images) are created automatically to avoid save
+      failures.
+    - Matplotlib figures are closed after saving to prevent memory leaks.
+    - Plotly HTML includes JavaScript enhancements for edge-click highlighting
+      and the information panel.
 
-依赖说明
+Dependencies
     - numpy / matplotlib / networkx / plotly
-    - DataALNS: 用于 3D 网络图的供应链数据构建
+    - DataALNS: builds supply-chain data for the 3D network graph.
 
-主要函数
+Main functions
     plot_objective_changes(result, output_file_loc, tracker=None)
-        优先绘制“引导搜索目标 + 实际目标”双曲线；若 tracker 不可用则回退调用 result.plot_objectives()
+        Prefer the paired search-objective and actual-objective curves. Fall
+        back to result.plot_objectives() when tracker data is unavailable.
 
     plot_gap_changes(tracker, output_file_loc)
-        绘制两类 Gap:
-          A. 当前解相对初始解的 Gap
-          B. 新最优解相对上一次最优解的改进幅度（%）
+        Plot two kinds of gap:
+          A. Gap between the current solution and the initial solution.
+          B. Improvement percentage from a new best solution over the
+             previous best.
 
     plot_operator_performance(state, result)
-        组合 4 子图 (2 组堆叠条形 + 2 组表格) 展示破坏/修复算子表现
+        Combine four subplots (two stacked-bar groups and two table groups)
+        to show destroy and repair operator performance.
 
     plot_supply_chain_network_3d_enhanced(data, output_file_loc)
-        构建生产基地→经销商供应关系 3D 交互网络并生成 HTML (边点击高亮)
+        Build a 3D plant-to-dealer supply network and generate HTML with
+        edge-click highlighting.
 
-注意
-    - 未改变原函数核心逻辑，仅:
-        * 统一 imports
-        * 增加目录存在性检查
-        * 增补详细文档与注释
-        * 去除未使用 imports (fm, Patch)
-    - 已实现改进: 动态列数 / 自适应字体缩放 / Gap 平滑 (moving average 可选)
+Notes
+    - Core function behavior is unchanged. The cleanup only:
+        * Normalizes imports.
+        * Adds directory existence checks.
+        * Adds detailed documentation and comments.
+        * Removes unused imports (fm, Patch).
+    - Implemented improvements: dynamic column count, adaptive font scaling,
+      and optional moving-average gap smoothing.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import os
 
 # =========================
-# 第三方库
+# Third-party libraries
 # =========================
 import numpy as np
 
 # =========================
-# 项目内部
+# Internal project modules
 # =========================
 from .InputDataALNS import DataALNS
 from .alns_config import default_config as ALNSConfig
 
 
 # ---------------------------------------------------------------------
-# 基础曲线绘制
+# Basic curve plotting
 # ---------------------------------------------------------------------
 def _ensure_image_dir(output_file_loc: str) -> str:
     """
-    确保输出目录下的 images 子目录存在, 返回其绝对路径
+    Ensure the images subdirectory exists under the output directory and
+    return its path.
     """
     img_dir = os.path.join(output_file_loc, "images")
     os.makedirs(img_dir, exist_ok=True)
@@ -74,13 +83,13 @@ def _ensure_image_dir(output_file_loc: str) -> str:
 
 
 def _moving_average(series, window: int):
-    """简单移动平均；window<=1 时返回原序列副本。"""
+    """Simple moving average; return a copy when window <= 1."""
     arr = np.asarray(series, dtype=float)
     if window <= 1 or arr.size == 0 or window > arr.size:
         return arr.copy(), np.arange(1, arr.size + 1)
     kernel = np.ones(window, dtype=float) / float(window)
     smoothed = np.convolve(arr, kernel, mode="valid")
-    # 对齐到窗口中心位置
+    # Align x-coordinates to the window center.
     start = window // 2
     x = np.arange(start + 1, start + 1 + smoothed.size)
     return smoothed, x
@@ -88,10 +97,11 @@ def _moving_average(series, window: int):
 
 def _reconstruct_actual_objectives_from_tracker(tracker):
     """
-    从 tracker 中提取或重建“实际目标值”序列。
-    优先级:
+    Extract or reconstruct the actual-objective series from tracker data.
+
+    Priority:
       1) tracker.actual_objectives / actual_objectives_history
-      2) 由 tracker.gaps + tracker.initial_actual_obj 反推
+      2) Reconstruct from tracker.gaps and tracker.initial_actual_obj.
     """
     for attr in ("actual_objectives", "actual_objectives_history"):
         values = getattr(tracker, attr, None)
@@ -116,10 +126,12 @@ def _reconstruct_actual_objectives_from_tracker(tracker):
 
 def _best_improvement_series_from_objectives(objectives):
     """
-    从目标值序列构造“新最优相对上次最优改进(%)”序列。
-    返回:
-      x_best: 发生新最优的迭代索引（从1开始）
-      imp_best: 对应改进百分比
+    Build the improvement percentage of each new best objective over the
+    previous best objective.
+
+    Returns:
+      x_best: one-based iteration indices where a new best was found.
+      imp_best: corresponding improvement percentages.
     """
     arr = np.asarray(objectives, dtype=float)
     if arr.size == 0:
@@ -148,21 +160,23 @@ def plot_objective_changes(
     show_raw: bool = True,
 ) -> None:
     """
-        绘制目标函数变化曲线。
-        优先绘制:
-            - 引导搜索目标 (Search Objective)
-            - 实际目标 (Actual Objective, Gurobi-aligned)
-        若 tracker 数据不可用, 回退到 result.plot_objectives().
-    参数:
-        result            需提供 plot_objectives(title=...) 方法的对象
-        output_file_loc   输出根目录
-    输出:
-        保存 SVG 至 images/Objective.svg
+        Plot objective-value changes.
+        Prefer plotting:
+            - Search Objective
+            - Actual Objective (Gurobi-aligned)
+        Fall back to result.plot_objectives() when tracker data is unavailable.
+
+    Parameters:
+        result            Object providing plot_objectives(title=...).
+        output_file_loc   Output root directory.
+
+    Output:
+        Save an SVG to images/Objective.svg.
     """
     _ensure_image_dir(output_file_loc)
     import matplotlib.pyplot as plt
 
-    # fallback: tracker 不可用时沿用原逻辑
+    # Fallback: use the original logic when tracker data is unavailable.
     if tracker is None or not hasattr(tracker, "objectives"):
         plt.figure(figsize=(10, 6))
         result.plot_objectives(title="Changes of Objective")
@@ -188,7 +202,7 @@ def plot_objective_changes(
     plt.figure(figsize=(10, 6))
     ax = plt.gca()
 
-    # Search objective (左轴)
+    # Search objective (left axis)
     if search_obj.size > 0:
         x_s = np.arange(1, search_obj.size + 1)
         if show_raw:
@@ -215,7 +229,7 @@ def plot_objective_changes(
         ax.set_ylabel("Search objective", color="#1f77b4")
         ax.tick_params(axis="y", labelcolor="#1f77b4")
 
-    # Actual objective (右轴)
+    # Actual objective (right axis)
     if actual_obj.size > 0:
         ax2 = ax.twinx()
         x_a = np.arange(1, actual_obj.size + 1)
@@ -263,21 +277,28 @@ def plot_gap_changes(
     tracker, output_file_loc: str, smooth_window: int = 1, show_raw: bool = True
 ) -> None:
     """
-        绘制 gap 收敛曲线 (支持可选平滑)。
-        分两部分:
-            1) 当前解相对初始解的 Gap (Current vs Initial)
-            2) 新最优解相对上一次最优解的改进百分比 (Best vs PrevBest)
-    参数:
-        tracker         含 gaps(list[float]) 的追踪器
-        output_file_loc 输出根目录
-        smooth_window   平滑窗口 (>=2 启用简单移动平均); =1 表示不平滑
-        show_raw        是否同时显示原始曲线 (淡色)
-    输出:
+        Plot gap convergence curves with optional smoothing.
+
+        The plot has two parts:
+            1) Gap between the current solution and the initial solution.
+            2) Improvement percentage from a new best over the previous best.
+
+    Parameters:
+        tracker         Tracker containing gaps (list[float]).
+        output_file_loc Output root directory.
+        smooth_window   Smoothing window; >=2 enables a simple moving average,
+                        while 1 disables smoothing.
+        show_raw        Whether to show the raw curve in light color.
+
+    Output:
         images/Gaps.svg
-    行为:
-        - 原始曲线: 使用 raw_color (可见) 或灰度透明 (show_raw 模式)
-        - 平滑曲线: 使用 smoothed_color 与更粗线宽
-        - 若 smooth_window > len(gaps) 默认降级为仅绘制原始曲线
+
+    Behavior:
+        - Raw curve: uses raw_color when visible or grayscale transparency in
+          show_raw mode.
+        - Smoothed curve: uses smoothed_color with a thicker line.
+        - If smooth_window > len(gaps), fall back to plotting only the raw
+          curve.
     """
     _ensure_image_dir(output_file_loc)
     gaps = np.asarray(getattr(tracker, "gaps", []) or [], dtype=float)
@@ -356,22 +377,26 @@ def plot_gap_changes(
 
 
 # ---------------------------------------------------------------------
-# 算子表现可视化
+# Operator-performance visualization
 # ---------------------------------------------------------------------
 def plot_operator_group(
     ax, operator_counts, title: str, status_labels: list[str], colors: list[str]
 ) -> None:
     """
-    绘制单个算子组 (destroy / repair) 的堆叠水平条形图 (动态列数).
-    参数:
+    Plot one operator group (destroy / repair) as a stacked horizontal bar
+    chart with dynamic column count.
+
+    Parameters:
         ax              Matplotlib Axes
-        operator_counts dict[str, sequence]  每个算子对应 (s1, s2, ..., sK)
-        title           子图标题
-        status_labels   每列状态标签 (长度 = K)
-        colors          颜色列表 (长度 >= K; 若不足需调用侧扩展)
-    行为:
-        - 若某算子计数序列长度 < K → 用 0 填充
-        - 所有 K 列堆叠展示
+        operator_counts dict[str, sequence]  (s1, s2, ..., sK) per operator.
+        title           Subplot title.
+        status_labels   Status label for each column (length = K).
+        colors          Color list (length >= K; callers must extend if
+                        needed).
+
+    Behavior:
+        - If an operator count sequence is shorter than K, pad it with zeros.
+        - Display all K columns as a stack.
     """
     operator_names = [name.replace("_", " ").title() for name in operator_counts.keys()]
     K = len(status_labels)
@@ -423,15 +448,19 @@ def plot_operator_group(
 
 def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
     """
-    可视化算子表现 (destroy / repair) – 动态状态列 & 自适应字体:
-        - 自动检测状态列数 (基于 counts 序列长度)
-        - 若状态数 > 4 扩展标签及调色
-        - 行数多时自动缩小表格字体
-    参数:
-        state       当前解 (需含 state.data.output_file_loc)
-        result      统计对象, 含 destroy_operator_counts / repair_operator_counts
-        cmap_name   当需要生成额外颜色时使用的 Matplotlib 调色板
-    输出:
+    Visualize operator performance (destroy / repair) with dynamic status
+    columns and adaptive fonts:
+        - Detect the number of status columns from the counts sequence length.
+        - Extend labels and colors when there are more than four statuses.
+        - Automatically reduce table font size when there are many rows.
+
+    Parameters:
+        state       Current solution (must contain state.data.output_file_loc).
+        result      Statistics object with destroy_operator_counts and
+                    repair_operator_counts.
+        cmap_name   Matplotlib colormap used when extra colors are needed.
+
+    Output:
         images/Performance of Operators.svg
     """
     import matplotlib.pyplot as plt
@@ -447,7 +476,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
     destroy_counts = result.statistics.destroy_operator_counts
     repair_counts = result.statistics.repair_operator_counts
 
-    # 确定状态列数 (取两组中最大)
+    # Determine the status column count from the larger of the two groups.
     def _status_len(count_dict):
         return len(next(iter(count_dict.values()))) if count_dict else 0
 
@@ -462,7 +491,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
         extra = [f"S{i}" for i in range(len(base_labels) + 1, K + 1)]
         status_labels = base_labels + extra
 
-    # 颜色生成
+    # Color generation
     base_colors = ["#3C9BC9", "#76CBB4", "#FC757B", "#FFE59B"]
     if K <= len(base_colors):
         colors = base_colors[:K]
@@ -470,11 +499,11 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
         cmap = plt.get_cmap(cmap_name)
         colors = [cmap(i % cmap.N) for i in range(K)]
 
-    # 绘制堆叠条形
+    # Draw stacked bars
     plot_operator_group(ax1, destroy_counts, "Destroy operators", status_labels, colors)
     plot_operator_group(ax2, repair_counts, "Repair operators", status_labels, colors)
 
-    # 表格数据准备 (补零对齐)
+    # Prepare table data (pad with zeros for alignment)
     def _pad_counts(counts_list, K):
         c = list(counts_list)
         if len(c) < K:
@@ -496,7 +525,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
     ax_table1.axis("off")
     ax_table2.axis("off")
 
-    # 动态列宽
+    # Dynamic column widths
     max_width_first_col = max(
         [len(str(row[0])) for row in destroy_data]
         + [len(str(row[0])) for row in repair_data]
@@ -514,7 +543,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
     col_widths = [max_width_first_col / 8]
     col_widths.extend([w / 6 + 0.15 for w in other_col_widths])
 
-    # 字体自适应
+    # Adaptive font sizing
     max_rows = max(len(destroy_data), len(repair_data))
     if max_rows <= 10:
         fsize = 9
@@ -536,7 +565,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
         )
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(fsize)
-        # scale 依据状态列数适度压缩
+        # Scale row height moderately based on the status column count.
         scale_y = 1.2 if max_rows < 18 else 1.0
         tbl.scale(1.0, scale_y)
         for (i, j), cell in tbl._cells.items():
@@ -573,7 +602,7 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
         left=0.1, right=0.98, bottom=0.2, top=0.92, wspace=0.3, hspace=0.4
     )
 
-    # 图例 (所有状态)
+    # Legend (all statuses)
     handles, _ = ax1.get_legend_handles_labels()
     plt.figlegend(
         handles,
@@ -596,21 +625,26 @@ def plot_operator_performance(state, result, cmap_name: str = "tab20") -> None:
 
 
 # ---------------------------------------------------------------------
-# 供应链 3D 交互网络
+# Interactive 3D supply-chain network
 # ---------------------------------------------------------------------
 def plot_supply_chain_network_3d_enhanced(data: DataALNS, output_file_loc: str) -> None:
     """
-    构建生产基地→经销商供应关系 3D 交互网络 (Plotly).
-    节点: plant / dealer
-    边属性: total_supply (plant 可供, 初始库存 + 生产), total_demand (dealer 对交集 SKU 需求)
-    交互:
-      - 悬停显示边指标
-      - 点击边高亮 (红色/加粗) 并在右上信息框展示详情
-      - 双击 / 点击背景 重置
-    输出:
+    Build an interactive 3D plant-to-dealer supply network with Plotly.
+
+    Nodes: plant / dealer.
+    Edge attributes: total_supply (plant availability: initial inventory plus
+    production) and total_demand (dealer demand for shared SKUs).
+
+    Interactions:
+      - Hover to show edge metrics.
+      - Click an edge to highlight it in red and show details in the upper-right
+        information panel.
+      - Double-click or click the background to reset.
+
+    Output:
         images/supply_chain_network_3d_enhanced.html
     """
-    # 1. 图构建
+    # 1. Graph construction
     import networkx as nx
     import plotly.graph_objects as go
     import plotly.io as pio
@@ -636,15 +670,15 @@ def plot_supply_chain_network_3d_enhanced(data: DataALNS, output_file_loc: str) 
                 plant, dealer, total_supply=total_supply, total_demand=total_demand
             )
 
-    # 2. 布局 (spring 3D)
+    # 2. Layout (3D spring)
     pos = nx.spring_layout(G, dim=3, k=1.5, iterations=50, seed=42)
     node_xyz = np.array([pos[v] for v in G.nodes()])
     edge_xyz = [(pos[u], pos[v]) for u, v in G.edges()]
 
     def create_node_trace(nodelist, color, symbol, size, name):
         """
-        构造节点散点轨迹
-        color 决定节点类型 (用于 hover 文本)
+        Build a node scatter trace.
+        Color determines node type for hover text.
         """
         idx = [list(G.nodes()).index(n) for n in nodelist]
         return go.Scatter3d(
@@ -662,7 +696,7 @@ def plot_supply_chain_network_3d_enhanced(data: DataALNS, output_file_loc: str) 
             name=name,
         )
 
-    # 3. 边轨迹
+    # 3. Edge traces
     edge_traces = []
     for (u, v), (start, end) in zip(G.edges(), edge_xyz):
         x0, y0, z0 = start
@@ -702,7 +736,7 @@ def plot_supply_chain_network_3d_enhanced(data: DataALNS, output_file_loc: str) 
             )
         )
 
-    # 4. 组合图形
+    # 4. Combined figure
     fig = go.Figure(
         data=edge_traces
         + [
@@ -742,7 +776,7 @@ def plot_supply_chain_network_3d_enhanced(data: DataALNS, output_file_loc: str) 
         hovermode="closest",
     )
 
-    # 5. 保存 HTML + 注入交互 JS
+    # 5. Save HTML and inject interaction JavaScript
     images_dir = _ensure_image_dir(output_file_loc)
     html_path = os.path.join(images_dir, "supply_chain_network_3d_enhanced.html")
 

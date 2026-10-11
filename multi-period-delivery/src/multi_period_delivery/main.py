@@ -36,17 +36,17 @@ from .alns_optimizer import ALNSOptimizer, is_file_in_use
 
 def run_model(input_file_loc=None, output_file_loc=None):
     """
-    运行模型的主函数
+    Run the multi-period optimization model.
     
     Parameters:
     -----------
     input_file_loc : str, optional
-        输入文件位置
+        Input data location.
     output_file_loc : str, optional
-        输出文件位置
+        Output data location.
     """
     try:
-        # 使用默认路径如果未提供
+        # Use default paths when no explicit paths are provided.
         if input_file_loc is None:
             current_dir = Path(__file__).parent
             par_path = current_dir.parent
@@ -58,18 +58,18 @@ def run_model(input_file_loc=None, output_file_loc=None):
 
         dataset_name = f'dataset_{DATASET_IDX}'
 
-        # 创建优化器实例
+        # Create the optimizer instance.
         optimizer = ALNSOptimizer(input_file_loc, output_file_loc)
-        # 运行优化
+        # Run optimization.
         success = optimizer.run_optimization(dataset_name)
         if success:
             print("=" * 100)
             optimizer.log_printer.print_title("The Vehicle Loading Plan is Done!")
         else:
-            print("优化过程失败")
+            print("Optimization process failed.")
             sys.exit(1)
     except Exception as e:
-        logger.error(f"运行模型失败: {e}")
+        logger.error(f"Failed to run model: {e}")
         print(f"Error: {e}")
         sys.exit(1)
 

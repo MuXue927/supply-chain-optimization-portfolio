@@ -1,48 +1,56 @@
 """
 repair_operators.py
 
-模块说明（中文详解）
-- 本模块实现并暴露一组 ALNS 修复算子（repair operators），供主流程注册使用。
-- 设计原则：
-  1. 不修改 multi_period_delivery 其他模块的行为（只读依赖），尽量复用 multi_period_delivery 中已有的工具函数。
-  2. 保持兼容性：保留对外算子名称与签名，避免主流程导入失败。
-  3. 将复杂/模拟行为通过 state.copy() 在副本上执行，以避免修改核心状态或要求修改 alnsopt 接口。
-  4. 对可能有较高开销的模拟（例如 regret 算子）进行显式注释并提出优化建议。
+Module overview
+- This module implements and exposes ALNS repair operators for registration by
+  the main workflow.
+- Design principles:
+  1. Do not change the behavior of other multi_period_delivery modules; treat
+     dependencies as read-only and reuse existing utilities where possible.
+  2. Preserve compatibility by keeping public operator names and signatures so
+     main-flow imports do not fail.
+  3. Run complex or simulated behavior on copies created by state.copy() to
+     avoid modifying core state or requiring alnsopt interface changes.
+  4. Explicitly document potentially expensive simulations, such as the regret
+     operator, and note optimization opportunities.
 
-暴露接口（对外使用时请保持这些名称不变）
+Public interfaces; keep these names unchanged when using them externally:
 - greedy_repair(partial, rng)
 - local_search_repair(partial, rng, max_iter=10, time_limit=5.0)
 - inventory_balance_repair(partial, rng)
 - smart_batch_repair(partial, rng)
-- infeasible_repair(partial, rng)  # 可行性纠偏 wrapper，实际调用 infeasible_removal
+- infeasible_repair(partial, rng)  # Feasibility wrapper that calls infeasible_removal.
 - regret_based_repair(partial, rng, k=2, topN=6, time_limit=10.0)
-- RegretBasedRepairOperator (可直接传入 alns.add_repair_operator)
+- RegretBasedRepairOperator, which can be passed directly to
+  alns.add_repair_operator.
 
-说明：若按“核心修复算子”统计，本模块对应 8 类；infeasible_repair 仅作为
-兼容性包装器存在，不单独计入核心修复算子类别。
+Note: counting core repair operators, this module covers eight categories.
+infeasible_repair exists only as a compatibility wrapper and is not counted as
+a separate core repair-operator category.
 """
 
 # -------------------------
-# 标准库与类型导入（已整理）
+# Standard-library and typing imports
 # -------------------------
 import time
 from typing import Optional
 
 # -------------------------
-# 第三方库导入（明确用途）
+# Third-party imports
 # -------------------------
 import numpy as np
 from numpy import random as rnd
 import logging
 
 # -------------------------
-# 包内模块导入（以相对导入保证与 multi_period_delivery 包兼容）
+# Package imports; relative imports preserve compatibility with the
+# multi_period_delivery package.
 # -------------------------
 from .alnsopt import SolutionState
 from .vehicle import Vehicle
 from .destroy_operators import (
     infeasible_removal,
-)  # 用于调用 infeasible_removal 外部实现
+)  # Used to call the external infeasible_removal implementation.
 from .inventory_utils import precompute_plant_day_inventory
 from .alns_config import default_config as ALNSConfig
 
@@ -68,7 +76,7 @@ from .repair_utils import (
     commit_load_with_tracking,
 )
 
-# module logger
+# Module logger.
 logger = logging.getLogger(__name__)
 
 
@@ -105,8 +113,9 @@ def _safe_prev_obj(state) -> float:
 
 
 # ---------------------------
-# 修复算子实现（对外调用）
-# 说明：所有算子均以 partial/state 为输入，并返回修复后的 state（有些算子会 copy 后返回副本）
+# Repair-operator implementations for external use.
+# All operators accept partial/state and return a repaired state. Some copy the
+# input and return the copy.
 # ---------------------------
 
 
@@ -120,7 +129,7 @@ class RepairOperatorWrapper:
     def __init__(self, func_or_callable, name: Optional[str] = None, **fixed_kwargs):
         self.func = func_or_callable
         self.fixed_kwargs = fixed_kwargs or {}
-        # Ensure ALNS logging can read a friendly name
+        # Ensure ALNS logging can read a friendly name.
         if name is None:
             self.__name__ = getattr(func_or_callable, "__name__", "repair_op")
         else:
@@ -202,13 +211,15 @@ def greedy_repair(
     stock_weight: Optional[float] = None,
 ) -> SolutionState:
     """
-    重写后的 greedy_repair:
-    - 预计算 total_available 与 resource_pool
-    - 在内循环中只操作 resource_pool 并调用 veh_loading(..., skip_compute_inventory=True)
-    - 整体插入结束后统一调用 post_repair 进行一次性 compute_inventory 与上报
+    Reworked greedy_repair:
+    - Precompute total_available and resource_pool.
+    - In the inner loop, operate only on resource_pool and call
+      veh_loading(..., skip_compute_inventory=True).
+    - After all insertions, call post_repair once for compute_inventory and
+      reporting.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 greedy_repair 算子")
+    logger.debug("[OPLOG] Starting greedy_repair operator")
     state = partial
     data = state.data
 
@@ -221,7 +232,7 @@ def greedy_repair(
     shipped = state.compute_shipped()
     supply_chain = data.construct_supply_chain()
 
-    # 预计算以减少重复遍历
+    # Precompute to reduce repeated traversal.
     total_available_map = precompute_total_available(state, data, supply_chain)
     resource_pool = build_resource_pool(state, data)
 
@@ -260,7 +271,7 @@ def greedy_repair(
     demand_weight = max(0.0, min(1.0, demand_weight))
     stock_weight = max(0.0, min(1.0, stock_weight))
 
-    # 1) 构建未满足需求及优先级
+    # 1) Build unsatisfied demand entries and priorities.
     unsatisfied = []
     for (dealer, sku_id), demand in data.demands.items():
         shipped_qty = shipped.get((dealer, sku_id), 0)
@@ -276,7 +287,8 @@ def greedy_repair(
 
     unsatisfied.sort(key=lambda x: x[2], reverse=True)
 
-    # 2) 按优先级分配：使用 resource_pool 做本地库存检查并递减
+    # 2) Allocate by priority using resource_pool for local inventory checks
+    # and decrements.
     inserted_vehicles = []
     for (dealer, sku_id), remain_demand, _ in unsatisfied:
         if remain_demand <= 0:
@@ -294,7 +306,8 @@ def greedy_repair(
                 if available <= 0 or remain_demand <= 0:
                     continue
 
-                # 先填充同线路已有车辆，减少新开车数量
+                # Fill existing vehicles on the same route first to reduce new
+                # vehicle creation.
                 for existing in find_existing_route_vehicles(state, plant, dealer, day):
                     if remain_demand <= 0 or available <= 0:
                         break
@@ -321,7 +334,7 @@ def greedy_repair(
                 if available <= 0 or remain_demand <= 0:
                     continue
 
-                # 尝试不同车型（按容量降序）
+                # Try vehicle types by descending capacity.
                 sku_size = data.sku_sizes.get(sku_id, 0)
                 if sku_size <= 0:
                     sku_size = 1.0
@@ -368,7 +381,7 @@ def greedy_repair(
             if remain_demand <= 0:
                 break
 
-    # 3) 批量后处理：一次性 compute_inventory 与 上报
+    # 3) Batch post-processing: one compute_inventory call and reporting.
     prev_obj_value: float = float(prev_obj if prev_obj is not None else 0.0)
     post_repair(
         state,
@@ -381,7 +394,7 @@ def greedy_repair(
     elapsed = time.time() - t0
     try:
         logger.debug(
-            f"[OPLOG] greedy_repair: 插入 {len(inserted_vehicles)} 辆车 ({elapsed:.4f}s)"
+            f"[OPLOG] greedy_repair: inserted {len(inserted_vehicles)} vehicles ({elapsed:.4f}s)"
         )
     except Exception:
         pass
@@ -393,16 +406,20 @@ def local_search_repair(
     partial: SolutionState, rng: rnd.Generator, max_iter: Optional[int] = None
 ) -> SolutionState:
     """
-    局部搜索修复, Local Search Repair:
-    - 在 greedy_repair 的基础上进行局部改进尝试, 例如替换车型以节省成本或提高装载效率
-    设计思路:
-    - 采用贪心+替换的启发式：遍历车辆，尝试使用更小容量车型（只要满足装载约束）替换，若目标函数变好则保留
-    - 返回一个新的 state, 使用 partial.copy() 并在副本上操作
-    注意: max_iter 参数控制最大迭代次数, 避免过长运行, 属于保护机制, 不应该纳入参数调优的范围
+    Local Search Repair:
+    - Improve on greedy_repair by trying local changes, such as replacing
+      vehicle types to reduce cost or improve loading efficiency.
+    - Approach: use a greedy replacement heuristic. Traverse vehicles and try
+      smaller-capacity vehicle types that still satisfy loading constraints;
+      keep a replacement when it improves the objective.
+    - Return a new state by calling partial.copy() and operating on the copy.
+    - Note: max_iter limits the number of iterations as a guard against long
+      runs and should not be included in parameter tuning.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 local_search_repair 算子")
-    # 记录进入局部搜索前的目标值（用于 post_repair 的改进计算与上报）
+    logger.debug("[OPLOG] Starting local_search_repair operator")
+    # Record the objective before local search for post_repair improvement
+    # calculation and reporting.
     prev_obj_saved: float = _safe_prev_obj(partial)
     state = partial.copy()
     state = greedy_repair(state, rng)
@@ -411,7 +428,7 @@ def local_search_repair(
     iter_count = 0
 
     num_demands = len(data.demands)
-    # 动态调整最大迭代次数，仅当未显式传入时
+    # Dynamically adjust max_iter only when it was not explicitly provided.
     if max_iter is None:
         max_iter = min(50, max(5, num_demands // 20))
     else:
@@ -426,32 +443,33 @@ def local_search_repair(
         improved = False
 
         old_obj = state.objective()
-        # 遍历车辆并尝试车型替换
+        # Traverse vehicles and try vehicle-type replacements.
         for i, veh in enumerate(list(state.vehicles)):
-            current_load = state.compute_veh_load(veh)  # 计算当前车辆的总装载量
-            cost = data.veh_type_cost[veh.type]  # 当前车型的成本
+            current_load = state.compute_veh_load(veh)  # Current total load.
+            cost = data.veh_type_cost[veh.type]  # Current vehicle-type cost.
 
             for veh_type in list(
                 data.all_veh_types
-            ):  # 尝试所有车型, 但不包括当前车型, 进行替换
+            ):  # Try every vehicle type except the current one.
                 if veh_type == veh.type:
                     continue
 
                 cond1 = (
                     data.veh_type_cap[veh_type] >= current_load
-                )  # 条件1: 新车型容量足够
+                )  # Condition 1: the new type has enough capacity.
                 cond2 = (
                     current_load >= data.veh_type_min_load[veh_type]
-                )  # 条件2: 新车型满足最小装载要求
-                cond3 = data.veh_type_cost[veh_type] < cost  # 条件3: 新车型成本更低
+                )  # Condition 2: the new type satisfies the minimum load.
+                cond3 = data.veh_type_cost[veh_type] < cost  # Condition 3: lower cost.
 
                 if cond1 and cond2 and cond3:
-                    # 构造新车辆并尝试替换
+                    # Construct a new vehicle and try the replacement.
                     new_veh = Vehicle(
                         veh.fact_id, veh.dealer_id, veh_type, veh.day, data
                     )
                     new_veh.cargo = veh.cargo.copy()
-                    # 同步已装载体积与剩余容量，避免后续重复遍历 cargo 计算
+                    # Synchronize loaded volume and remaining capacity to avoid
+                    # repeated cargo traversal later.
                     try:
                         loaded = 0
                         for (sku_k, d_k), q_k in new_veh.cargo.items():
@@ -459,7 +477,8 @@ def local_search_repair(
                         new_veh._loaded_volume = loaded
                         new_veh.capacity = max(0, new_veh.max_capacity - loaded)
                     except Exception:
-                        # 任何异常下保持来自原车辆的缓存值以保证兼容性
+                        # Preserve cached values from the old vehicle on any
+                        # exception for compatibility.
                         new_veh._loaded_volume = getattr(veh, "_loaded_volume", 0)
                         new_veh.capacity = getattr(
                             veh, "capacity", new_veh.max_capacity
@@ -472,14 +491,15 @@ def local_search_repair(
                             improved = True
                             old_obj = new_obj
                         else:
-                            # 回退
+                            # Roll back.
                             state.vehicles[i] = old_veh
                     except Exception:
-                        # 在异常情况下确保回退到旧车辆并继续
+                        # Ensure rollback to the old vehicle and continue after
+                        # an exception.
                         state.vehicles[i] = old_veh
                         continue
 
-    # 由于该算子实际并没有插入新车辆, 所以 inserted 为空列表
+    # This operator does not insert new vehicles, so inserted is empty.
     post_repair(
         state, [], op_name="local_search_repair", prev_obj=prev_obj_saved, t0=t0
     )
@@ -487,7 +507,7 @@ def local_search_repair(
     elapsed = time.time() - t0
     try:
         logger.debug(
-            f"[OPLOG] local_search_repair: 只尝试进行车型替换, 未插入新车辆, 完成 ({elapsed:.4f}s)"
+            f"[OPLOG] local_search_repair: attempted vehicle-type replacements only, inserted no new vehicles, complete ({elapsed:.4f}s)"
         )
     except Exception:
         pass
@@ -499,13 +519,16 @@ def inventory_balance_repair(
     partial: SolutionState, rng: rnd.Generator
 ) -> SolutionState:
     """
-    基于库存平衡的修复, Inventory Balance Repair:
-    - 使用 inventory_utils.precompute_plant_day_inventory 预计算每个 (plant, day) 的总库存
-    - 按库存多->少的顺序从附近（同厂）工厂分配车辆来满足需求，倾向于优先使用库存充足的工厂
-    - 该算子直接在传入 state 上提交修改, commit=True
+    Inventory Balance Repair:
+    - Use inventory_utils.precompute_plant_day_inventory to precompute total
+      inventory for each (plant, day).
+    - Allocate vehicles in descending inventory order from nearby plants,
+      preferring plants with sufficient inventory.
+    - This operator commits modifications directly to the supplied state with
+      commit=True.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 inventory_balance_repair 算子")
+    logger.debug("[OPLOG] Starting inventory_balance_repair operator")
     state = partial
     data = state.data
 
@@ -513,26 +536,29 @@ def inventory_balance_repair(
 
     unsatisfied = get_unmet_demand(state)
 
-    # 预计算工厂-日库存（提高性能，避免多次遍历 s_ikt）
+    # Precompute plant-day inventory to improve performance and avoid repeated
+    # s_ikt traversal.
     plant_inventory = precompute_plant_day_inventory(state)
-    # 仅保留 day >= 1 的条目, 问题域特定约定
+    # Keep only entries with day >= 1, as required by the problem domain.
     plant_inventory = {
         (plant, day): inv for (plant, day), inv in plant_inventory.items() if day >= 1
     }
 
-    # 按库存降序遍历，每个工厂按其覆盖的经销商分配车辆
+    # Traverse in descending inventory order and allocate vehicles for each
+    # plant's covered dealers.
     sorted_plant_days = sorted(
         plant_inventory.items(), key=lambda x: x[1], reverse=True
     )
     supply_chain = data.construct_supply_chain()
 
-    # 记录插入的车辆, 用于 post_repair
+    # Record inserted vehicles for post_repair.
     inserted_vehicles = []
 
     for (plant, day), _ in sorted_plant_days:
         dealers = [dealer for (p, dealer), skus in supply_chain.items() if p == plant]
         for dealer in dealers:
-            # 构建受限 orders：每个 SKU 限制为未满足量与该 (plant,sku,day) 的可用量
+            # Build constrained orders: each SKU is limited by unmet demand and
+            # available quantity for this (plant, sku, day).
             candidate_orders = {}
             total_volume = 0.0
             for (dealer_id, sku_id), qty in unsatisfied.items():
@@ -546,9 +572,11 @@ def inventory_balance_repair(
                 total_volume += take * data.sku_sizes.get(sku_id, 0)
             if not candidate_orders:
                 continue
-            # 使用确定性 best-fit 车型，避免随机车型导致车辆碎片化
+            # Use a deterministic best-fit vehicle type to avoid fragmentation
+            # from random choices.
             veh_type = select_vehicle_type_for_volume(total_volume, data)
-            # 若总货量超出车辆容量，按比例缩放到车辆容量内（保守策略）
+            # If total cargo exceeds vehicle capacity, scale it proportionally
+            # to fit as a conservative strategy.
             cap = data.veh_type_cap[veh_type]
             if total_volume > cap and total_volume > 0:
                 scale = cap / total_volume
@@ -567,18 +595,20 @@ def inventory_balance_repair(
                     commit=True,
                     skip_compute_inventory=True,
                 )
-                # 捕获 veh_loading 实际加入到 state.vehicles 的所有新车辆
+                # Capture all new vehicles actually added to state.vehicles by
+                # veh_loading.
                 new_vs = state.vehicles[before_len:]
                 if new_vs:
                     inserted_vehicles.extend(new_vs)
-                    # 使用新增车辆的实际装载量更新 unsatisfied
+                    # Update unsatisfied demand using the actual load of new
+                    # vehicles.
                     for sku_id in list(candidate_orders.keys()):
                         loaded = sum(v.cargo.get((sku_id, day), 0) for v in new_vs)
                         unsatisfied[(dealer, sku_id)] = max(
                             0, unsatisfied[(dealer, sku_id)] - loaded
                         )
             except Exception:
-                # 回退到不抑制 compute_inventory 的尝试
+                # Fall back to a call that does not suppress compute_inventory.
                 try:
                     before_len = len(state.vehicles)
                     veh_loading(
@@ -610,7 +640,7 @@ def inventory_balance_repair(
     elapsed = time.time() - t0
     try:
         logger.debug(
-            f"[OPLOG] inventory_balance_repair: 插入 {len(inserted_vehicles)} 辆车, 完成 ({elapsed:.4f}s)"
+            f"[OPLOG] inventory_balance_repair: inserted {len(inserted_vehicles)} vehicles, complete ({elapsed:.4f}s)"
         )
     except Exception:
         pass
@@ -620,18 +650,20 @@ def inventory_balance_repair(
 
 def infeasible_repair(partial: SolutionState, rng: rnd.Generator) -> SolutionState:
     """
-    不可行解快速修复的兼容 wrapper:
-    - 直接调用 multi_period_delivery.destroy_operators.infeasible_removal, 外部已实现的移除/修复算子
-    - 本 wrapper 在入口与返回处增加 OPLOG 日志，便于跟踪修复流程
+    Compatibility wrapper for quick infeasible-solution repair:
+    - Directly call the externally implemented remove/repair operator
+      multi_period_delivery.destroy_operators.infeasible_removal.
+    - Add OPLOG messages at entry and return to make the repair flow easier to
+      trace.
     """
     t0 = time.time()
     logger.debug(
-        "[OPLOG] 开始执行 infeasible_repair(wrapper) 算子 -> 调用 infeasible_removal"
+        "[OPLOG] Starting infeasible_repair(wrapper) operator -> calling infeasible_removal"
     )
     result = infeasible_removal(partial, rng)
     elapsed = time.time() - t0
     try:
-        logger.debug(f"[OPLOG] infeasible_repair(wrapper): 返回 ({elapsed:.4f}s)")
+        logger.debug(f"[OPLOG] infeasible_repair(wrapper): returned ({elapsed:.4f}s)")
     except Exception:
         pass
     return result
@@ -646,13 +678,17 @@ def smart_batch_repair(
 ) -> SolutionState:
     """
     Smart Batch Repair:
-    - 将未满足需求划分为若干批次, 即 batch, 使用资源池 resource_pool 跟踪 (plant,sku,day) 的可用量
-    - 对每个批次使用启发式规则 _find_best_allocation + greedy 装载 veh_loading
-    - 适用于大量需求场景，通过批次与资源池减少重复计算
-    注意: max_iter, timeout 参数控制最大迭代次数与时间, 避免过长运行, 属于保护机制, 不应该纳入参数调优的范围
+    - Split unmet demand into batches and track available quantities for
+      (plant, sku, day) with resource_pool.
+    - For each batch, use the _find_best_allocation heuristic and greedy
+      veh_loading.
+    - Useful for large-demand scenarios because batching and the resource pool
+      reduce repeated computation.
+    Note: max_iter and timeout limit iterations and runtime as guardrails
+    against excessive runs and should not be included in parameter tuning.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 smart_batch_repair 算子")
+    logger.debug("[OPLOG] Starting smart_batch_repair operator")
     state = partial
     data = state.data
 
@@ -660,7 +696,7 @@ def smart_batch_repair(
 
     num_demands = len(data.demands)
 
-    # 动态调整时间限制, 避免过长运行
+    # Dynamically adjust the time limit to avoid excessively long runs.
     defaults = ALNSConfig.get_operator_default("smart_batch_repair").get("params", {})
     max_iter = max(
         1,
@@ -685,7 +721,7 @@ def smart_batch_repair(
 
     iterations = 0
 
-    total_inserted = []  # 记录所有插入的车辆, 用于 post_repair
+    total_inserted = []  # All inserted vehicles, used by post_repair.
 
     while iterations < max_iter and (timeout is None or time.time() - t0 < timeout):
         iterations += 1
@@ -707,7 +743,7 @@ def smart_batch_repair(
         if not progress:
             break
 
-    # 最后尝试填充剩余需求
+    # Try to fill any remaining demand at the end.
     if timeout is None or time.time() - t0 < timeout:
         inserted_vehicles = _force_load_remaining_demands(state, data)
         if inserted_vehicles:
@@ -724,7 +760,7 @@ def smart_batch_repair(
     elapsed = time.time() - t0
     try:
         logger.debug(
-            f"[OPLOG] smart_batch_repair: 插入 {len(total_inserted)} 辆车 ({elapsed:.4f}s)"
+            f"[OPLOG] smart_batch_repair: inserted {len(total_inserted)} vehicles ({elapsed:.4f}s)"
         )
     except Exception:
         pass
@@ -733,7 +769,7 @@ def smart_batch_repair(
 
 
 # ---------------------------
-# Regret 算子（后悔值法）实现
+# Regret-based repair implementation
 # ---------------------------
 def regret_based_repair(
     partial: SolutionState,
@@ -743,10 +779,11 @@ def regret_based_repair(
     time_limit: Optional[float] = None,
 ) -> SolutionState:
     """
-    注意: time_limit 参数控制最大运行时间, 属于限时保护机制, 不应该纳入参数调优的范围
+    Note: time_limit caps runtime as a guardrail and should not be included in
+    parameter tuning.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 regret_based_repair 算子")
+    logger.debug("[OPLOG] Starting regret_based_repair operator")
     state = partial
     data = state.data
 
@@ -769,10 +806,10 @@ def regret_based_repair(
     except Exception:
         prev_obj_saved = None
 
-    inserted_vehicles = []  # 记录插入的车辆, 用于日志或分析
+    inserted_vehicles = []  # Inserted vehicles for logging or analysis.
 
     num_demands = len(data.demands)
-    # 动态调整时间限制, 避免过长运行
+    # Dynamically adjust the time limit to avoid excessively long runs.
     defaults = ALNSConfig.get_operator_default("regret_based_repair").get("params", {})
     k = max(1, _coerce_int(k if k is not None else defaults.get("k", 2), 2))
     topN = max(1, _coerce_int(topN if topN is not None else defaults.get("topN", 6), 6))
@@ -786,7 +823,7 @@ def regret_based_repair(
     repair_baseline_obj = prev_obj_saved
 
     while time.time() - t0 < time_limit:
-        # 获取当前未满足需求
+        # Get the current unmet demand.
         removal = get_unmet_demand(state)
         if not removal:
             break
@@ -797,10 +834,12 @@ def regret_based_repair(
             prev_obj = None
         regret_list = []
 
-        # 预先缓存供应链映射与一次性构建的资源池以避免内层循环中频繁计算可用量
+        # Cache the supply-chain map and build the resource pool once to avoid
+        # repeated availability calculations in the inner loop.
         supply_chain = data.construct_supply_chain()
         resource_pool = _construct_resource_pool(state, data)
-        # 本地缓存热点只读字典以减少属性查找开销
+        # Bind hot read-only dictionaries locally to reduce attribute lookup
+        # overhead.
         _sku_sizes = getattr(data, "sku_sizes", {})
         _veh_type_cap = getattr(data, "veh_type_cap", {})
         try:
@@ -829,13 +868,15 @@ def regret_based_repair(
         global_memo = {}
         state_snapshot = (len(state.vehicles), getattr(state, "last_objective", None))
 
-        # 针对每个未满足需求生成候选并在副本上模拟
-        # 为避免在每个 demand 上扫描 supply_chain，提前构建 (dealer,sku)->plants 映射并复用
+        # Generate candidates for each unmet demand and simulate them on copies.
+        # Build a (dealer, sku) -> plants map once instead of scanning
+        # supply_chain for every demand.
         plants_for_dealer_sku = {}
         for (plant_key, dealer_key), skus in supply_chain.items():
             for s in skus:
                 plants_for_dealer_sku.setdefault((dealer_key, s), []).append(plant_key)
-        # 预计算 days range 以避免在热循环中反复构造 range 对象
+        # Precompute the days range to avoid constructing range objects in the
+        # hot loop.
         days_range = range(1, horizons + 1)
         # cache day_map per (plant, sku) for the duration of this regret iteration to avoid repeated
         # ResourcePool.get_day_map calls which are hot-path and expensive due to tuple-key hashing.
@@ -845,10 +886,12 @@ def regret_based_repair(
             # use mapping to get available plants quickly (avoids repeated supply_chain iteration)
             available_plants = plants_for_dealer_sku.get((dealer, sku_id), [])
 
-            # 本循环是性能热点：尽量减少昂贵的 state.copy()/veh_loading()/compute_improvement 调用
-            # 1) 对 topN/k 做安全上限（来自全局配置）
-            # 2) 使用更紧凑的 memo key（对 est_qty 做分箱）以提高缓存命中率
-            # 3) 将 available 提前计算避免在 veh_type 内重复查询
+            # This loop is a performance hot spot. Minimize expensive
+            # state.copy(), veh_loading(), and compute_improvement() calls.
+            # 1) Apply safe caps to topN/k from global configuration.
+            # 2) Use a compact memo key by binning est_qty to improve cache hits.
+            # 3) Precompute available values to avoid repeated lookups inside
+            # the vehicle-type loop.
             # reuse global memo across demands (includes dealer + state snapshot)
             max_topn_cap = getattr(ALNSConfig, "REGRET_MAX_TOPN", None)
             max_k_cap = getattr(ALNSConfig, "REGRET_MAX_K", None)
@@ -857,7 +900,8 @@ def regret_based_repair(
             if max_k_cap is not None:
                 k = min(k, int(max_k_cap))
 
-            # 评估车辆类型时优先尝试大容量车型以便更快找到高回报候选
+            # Evaluate larger-capacity vehicle types first to find high-reward
+            # candidates faster.
             # reuse the global pre-sorted vehicle type list computed once per operator call
             veh_types_sorted = veh_types_sorted_global
 
@@ -969,11 +1013,13 @@ def regret_based_repair(
             # on it for multiple candidates to avoid repeated heavy copies.
             try:
                 tmp_base = state.copy(clone_vehicles=False)
-                # 在临时基态上抑制 compute_inventory，以避免在多次精评中触发全表重算
+                # Suppress compute_inventory on the temporary base state to
+                # avoid full recomputation during repeated exact evaluations.
                 try:
                     tmp_base.suppress_compute_inventory()
                 except Exception:
-                    # 若临时对象不支持该接口则继续（向后兼容）
+                    # Continue if the temporary object does not support the
+                    # interface, preserving backward compatibility.
                     pass
             except Exception:
                 tmp_base = None
@@ -1007,11 +1053,12 @@ def regret_based_repair(
                                 state, prev_obj, dealer, sku_id, est_qty, veh_type
                             )
                             if bool(_ok_d):
-                                # accept delta estimate and memoize result; skip expensive simulation
+                                # Accept the delta estimate and memoize it;
+                                # skip expensive simulation.
                                 global_memo[combined_key] = (float(_impr_d), True)
                                 continue
                         except Exception:
-                            # fallthrough to full simulation path on any error
+                            # Fall through to the full simulation path on any error.
                             pass
 
                         # Use tmp_base (single copy) and apply+rollback to avoid repeated copies.
@@ -1092,16 +1139,17 @@ def regret_based_repair(
                                         before_suppress,
                                     )
                                 except Exception:
-                                    # best-effort: if we cannot restore attribute, ignore
+                                    # Best-effort rollback: ignore restoration failures.
                                     pass
                             except Exception:
-                                # best-effort rollback; if rollback fails, drop tmp_base to avoid reuse
+                                # Best-effort rollback; drop tmp_base if rollback
+                                # fails to avoid reuse.
                                 tmp_base = None
                             # store exact-simulation result in global_memo for this state snapshot
                             try:
                                 global_memo[combined_key] = (improvement, bool(success))
                             except Exception:
-                                # ignore memo write failures (shouldn't happen)
+                                # Ignore memo write failures, which should not occur.
                                 pass
                     else:
                         # Use fast estimate as memoized score (may be negative/zero)
@@ -1133,7 +1181,7 @@ def regret_based_repair(
             # normalize candidates format to match original code expectation
             candidates = [(imp, cand) for (imp, cand) in candidates]
             # proceed as before
-            # 计算后悔值（top1 - topk）
+            # Calculate regret as top1 - topk.
             candidates.sort(key=lambda x: x[0], reverse=True)
             top1 = candidates[0][0]
             topk = candidates[min(k - 1, len(candidates) - 1)][0]
@@ -1142,12 +1190,13 @@ def regret_based_repair(
 
         if not regret_list:
             break
-        # 选择最大后悔值的任务并提交最优候选
+        # Select the task with maximum regret and commit its best candidate.
         regret_list.sort(key=lambda x: x[1], reverse=True)
         (dealer_sel, sku_sel), _, best_candidate = regret_list[0]
 
         plant_sel, veh_type_sel, day_sel, qty_sel = best_candidate
-        # 在提交前重新检查可用量并按照当前可用量调整提交量（防止超发）
+        # Recheck availability before committing and adjust the quantity to
+        # prevent overshipment.
         # Prefer using the precomputed resource_pool snapshot to avoid expensive recomputation;
         # fall back to accurate _construct_resource_availability only when pool has no entry.
         avail_now = resource_pool_get((plant_sel, sku_sel, day_sel), None)
@@ -1157,7 +1206,8 @@ def regret_based_repair(
             )
         qty_to_commit = min(qty_sel, avail_now)
         if qty_to_commit <= 0:
-            # 无可用量，跳过本次循环以便重新评估其他任务
+            # No availability; skip this iteration so other tasks can be
+            # reevaluated.
             continue
         vehicle = Vehicle(plant_sel, dealer_sel, veh_type_sel, day_sel, data)
         try:
@@ -1203,10 +1253,11 @@ def regret_based_repair(
                         except Exception:
                             pass
                 except Exception:
-                    # ignore any failures to avoid disrupting main loop
+                    # Ignore failures to avoid disrupting the main loop.
                     pass
             else:
-                # 兼容性回退：若 veh_loading 未将 vehicle 对象加入 state.vehicles，则保留原 vehicle 记录
+                # Compatibility fallback: retain the original vehicle record if
+                # veh_loading did not append it to state.vehicles.
                 actual_committed = vehicle.cargo.get((sku_sel, day_sel), 0)
                 if actual_committed > 0:
                     inserted_vehicles.append(vehicle)
@@ -1244,10 +1295,11 @@ def regret_based_repair(
                         except Exception:
                             pass
                 except Exception:
-                    # ignore any failures to avoid disrupting main loop
+                    # Ignore failures to avoid disrupting the main loop.
                     pass
         except Exception:
-            # 提交失败，跳过并继续（下次循环会重新评估 unmet demands）
+            # Commit failed; skip and continue. The next loop reevaluates unmet
+            # demand entries.
             continue
 
     repair_baseline_value: float = float(
@@ -1264,7 +1316,7 @@ def regret_based_repair(
     elapsed = time.time() - t0
     try:
         logger.debug(
-            f"[OPLOG] regret_based_repair: 插入 {len(inserted_vehicles)} 辆车 ({elapsed:.4f}s)"
+            f"[OPLOG] regret_based_repair: inserted {len(inserted_vehicles)} vehicles ({elapsed:.4f}s)"
         )
     except Exception:
         pass
@@ -1274,8 +1326,8 @@ def regret_based_repair(
 
 class RegretBasedRepairOperator:
     """
-    可作为 alns.add_repair_operator 接受的对象。
-    使用示例: alns.add_repair_operator(RegretBasedRepairOperator(k=2, topN=6))
+    Object accepted by alns.add_repair_operator.
+    Example: alns.add_repair_operator(RegretBasedRepairOperator(k=2, topN=6))
     """
 
     def __init__(self, k: int = 2, topN: int = 6, time_limit: Optional[float] = None):
@@ -1300,45 +1352,51 @@ def fleet_consolidation_repair(
     current: SolutionState, rng: rnd.Generator
 ) -> SolutionState:
     """
-    专门的车队整合修复算子。
+    Specialized fleet-consolidation repair operator.
 
-    此算子的主要目标是通过合并小型车辆到大型车辆来减少车队规模，
-    同时保持可行性。这与其他修复算子(需要满足需求)不同，这里优先考虑的是
-    车队优化和合并效率。
+    This operator primarily reduces fleet size by merging small vehicles into
+    larger ones while preserving feasibility. Unlike repair operators that
+    prioritize satisfying demand, this operator prioritizes fleet optimization
+    and consolidation efficiency.
 
-    工作流程：
-    1. 按(plant, dealer, day)将车辆分组（相同的发运路线）
-    2. 在每个组内，按体积对车辆排序（从小到大）
-    3. 贪心地尝试将较小的车辆合并到较大的车辆中
-    4. 从大到小尝试目标车辆，以最大化合并概率
-    5. 调用 post_repair 完成清理
+    Workflow:
+    1. Group vehicles by (plant, dealer, day), representing the same dispatch
+       route.
+    2. Sort vehicles within each group by volume from smallest to largest.
+    3. Greedily try to merge smaller vehicles into larger ones.
+    4. Try target vehicles from largest to smallest to maximize merge
+       probability.
+    5. Call post_repair to complete cleanup.
 
     Args:
-        current: 当前解状态
-        rng: 随机数生成器（未使用，但保持接口一致性）
+        current: current solution state.
+        rng: random-number generator, unused but retained for interface
+          consistency.
 
     Returns:
-        合并后的SolutionState（如果合并成功）或原始状态的复制版本
+        The consolidated SolutionState, or a copy of the original state when no
+        consolidation succeeds.
     """
     from .repair_utils import consolidate_route_vehicles, post_repair
 
     state = current.copy()
 
-    # 保存原始车辆数用于日志记录
+    # Save the original vehicle count for logging.
     before_count = len(state.vehicles)
 
     try:
-        # 调用consolidation函数进行车队合并
-        # 对于这个专门的算子，我们使用更激进的合并策略（高max_pairs）
+        # Call the consolidation function for fleet merging.
+        # This specialized operator uses a more aggressive strategy with a high
+        # max_pairs value.
         max_pairs = getattr(ALNSConfig, "REPAIR_POST_CONSOLIDATION_MAX_PAIRS", 300)
-        # 对于这个专门的consolidation算子，增加最大合并对数以获得最大效果
-        max_pairs = max_pairs * 2  # 增加到600对
+        # Increase the maximum merge pairs for this consolidation operator.
+        max_pairs = max_pairs * 2  # Increase to 600 pairs.
 
         merged_count = consolidate_route_vehicles(state, max_pairs_per_group=max_pairs)
 
         after_count = len(state.vehicles)
 
-        # 使用post_repair完成清理和验证
+        # Use post_repair for cleanup and validation.
         inserted_veh = []
         try:
             post_repair(
@@ -1351,16 +1409,16 @@ def fleet_consolidation_repair(
         except Exception as e:
             try:
                 logger.debug(
-                    f"[OPLOG] fleet_consolidation_repair: post_repair异常: {e}"
+                    f"[OPLOG] fleet_consolidation_repair: post_repair exception: {e}"
                 )
             except Exception:
                 pass
 
-        # 日志记录合并结果
+        # Log the consolidation result.
         try:
             logger.debug(
-                f"[OPLOG] fleet_consolidation_repair: 合并 {merged_count} 对 "
-                f"({before_count} -> {after_count} 辆车)"
+                f"[OPLOG] fleet_consolidation_repair: merged {merged_count} pairs "
+                f"({before_count} -> {after_count} vehicles)"
             )
         except Exception:
             pass
@@ -1368,10 +1426,10 @@ def fleet_consolidation_repair(
         return state
 
     except Exception as e:
-        # 如果出现异常，返回原始状态的副本
+        # On exception, return a copy of the original state.
         try:
             logger.warning(
-                f"[OPLOG] fleet_consolidation_repair: 异常 {e}, 返回原始状态"
+                f"[OPLOG] fleet_consolidation_repair: exception {e}; returning original state"
             )
         except Exception:
             pass
@@ -1382,23 +1440,29 @@ def sequential_repair(
     partial: SolutionState, rng: rnd.Generator, lookahead_horizon: Optional[int] = None
 ) -> SolutionState:
     """
-    顺序修复 (Sequential Repair) - P0 优先级
+    Sequential Repair with P0 priority.
 
-    核心思想：
-      按时间周期顺序进行修复，充分利用多期库存约束的递推结构。
-      第t期修复后，期末库存自动成为第t+1期的初始库存，确保库存约束自动满足。
+    Core idea:
+      Repair in chronological period order and exploit the recursive structure
+      of multi-period inventory constraints. After repairing period t, ending
+      inventory becomes the opening inventory for period t+1, so inventory
+      constraints are automatically satisfied.
 
-    算法步骤：
-      1. 复制当前状态，获取期初库存
-      2. 遍历时间周期 t=1 to H,对该期执行单期贪心修复并维护库存
-      3. 返回修复后的状态，库存约束自动满足
+    Algorithm:
+      1. Copy the current state and obtain opening inventory.
+      2. Iterate periods t=1 to H, applying single-period greedy repair while
+         maintaining inventory.
+      3. Return the repaired state with inventory constraints satisfied.
 
-    返回值：修复后的可行或接近可行的解
+    Return:
+      A feasible or near-feasible repaired solution.
 
-    特点：✓ 显式维护库存约束，递推式修复 ✓ 对多期库存平衡问题特别有效
+    Characteristics:
+      - Explicitly maintains inventory constraints through recursive repair.
+      - Particularly effective for multi-period inventory balancing.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 sequential_repair 算子")
+    logger.debug("[OPLOG] Starting sequential_repair operator")
     state = partial.copy()
     data = state.data
     lookahead_h = max(0, _coerce_int(lookahead_horizon, 0))
@@ -1406,34 +1470,34 @@ def sequential_repair(
         getattr(ALNSConfig, "LOOKAHEAD_REPAIR_DELAY_PENALTY", 0.5), 0.5
     )
 
-    # 安全性检查
+    # Safety check.
     if not state.vehicles:
-        logger.debug("[OPLOG] sequential_repair: 无车辆，直接返回")
+        logger.debug("[OPLOG] sequential_repair: no vehicles, returning directly")
         return state
 
     horizons = getattr(data, "horizons", 0)
     if horizons <= 0:
         return state
 
-    # 初始化库存
+    # Initialize inventory.
     try:
         state.compute_inventory()
     except Exception:
         pass
 
-    # 计算当前已发运的库存缓存
+    # Compute the current shipped-inventory cache.
     shipped_cache = {}
     try:
         shipped_cache = state.compute_shipped()
     except Exception:
         shipped_cache = {}
 
-    # 按周期顺序修复
+    # Repair in period order.
     supply_chain = data.construct_supply_chain()
     for period in range(1, horizons + 1):
         unsatisfied_this_period = []
 
-        # 获取本期未满足需求
+        # Get unmet demand for this period.
         for (dealer, sku_id), total_demand in data.demands.items():
             already_sent = shipped_cache.get((dealer, sku_id), 0)
             unmet = total_demand - already_sent
@@ -1441,7 +1505,7 @@ def sequential_repair(
             if unmet > 0:
                 unsatisfied_this_period.append((dealer, sku_id, unmet))
 
-        # 对该期执行贪心修复
+        # Apply greedy repair for this period.
         for dealer, sku_id, unmet_qty in unsatisfied_this_period:
             plants = [
                 p
@@ -1452,7 +1516,8 @@ def sequential_repair(
             while unmet_qty > 0:
                 best_choice = None
 
-                # 在 [period, period + lookahead_h] 的时间窗口中择优插入
+                # Choose insertions within the [period, period + lookahead_h]
+                # time window.
                 day_upper = min(horizons, period + lookahead_h)
                 candidate_days = range(period, day_upper + 1)
 
@@ -1467,7 +1532,8 @@ def sequential_repair(
                             if load_qty <= 0:
                                 continue
 
-                            # 优先用已有路由车辆，否则创建新车辆
+                            # Prefer an existing route vehicle; otherwise create
+                            # a new vehicle.
                             cand_veh = None
                             for veh in state.vehicles:
                                 if (
@@ -1491,7 +1557,8 @@ def sequential_repair(
                             else:
                                 veh_type = cand_veh.type
 
-                            # 使用快速估计打分 + 延迟惩罚，避免仅按当期贪心。
+                            # Score with fast estimation plus delay penalty to
+                            # avoid purely myopic greedy choices.
                             _, impro_fast, _ = compute_improvement_fast_add_vehicle(
                                 state,
                                 plant=plant,
@@ -1569,22 +1636,22 @@ def sequential_repair(
                     )
                     unmet_qty -= actual_loaded
                 except Exception as e:
-                    logger.debug(f"[OPLOG] sequential_repair: 装载异常 {e}")
+                    logger.debug(f"[OPLOG] sequential_repair: loading exception {e}")
                     break
 
-    # 最终处理
+    # Final post-processing.
     try:
         state.compute_inventory()
         state.mark_objective_dirty()
     except Exception:
         pass
 
-    logger.debug(f"[OPLOG] sequential_repair: 完成 ({time.time() - t0:.4f}s)")
+    logger.debug(f"[OPLOG] sequential_repair: complete ({time.time() - t0:.4f}s)")
     return state
 
 
 def create_sequential_repair(lookahead_horizon: Optional[int] = None):
-    """工厂函数：创建顺序修复算子包装器"""
+    """Factory that creates a sequential-repair operator wrapper."""
     defaults = ALNSConfig.get_operator_default("sequential_repair").get("params", {})
     lookahead_horizon = lookahead_horizon or defaults.get("lookahead_horizon", None)
     name = "sequential_repair"
@@ -1599,17 +1666,20 @@ def lookahead_repair(
     lookahead_horizon: Optional[int] = None,
 ) -> SolutionState:
     """
-    前瞻修复:
-    - 在 sequential 风格的周期推进框架下, 对 [t, t+h] 窗口内的候选插入进行显式前瞻评分
-    - 评分同时考虑:
-        1) 快速改进估计
-        2) 延后交付惩罚
-        3) 未来若干天的库存安全压力
-        4) 是否可以复用已有路线车辆(降低车队碎片化)
-    - 目标不是单纯“看更远一天”, 而是避免当前插入把未来库存压穿或制造额外碎片车
+    Lookahead Repair:
+    - Within a sequential period-advancing framework, explicitly score
+      candidate insertions in the [t, t+h] window.
+    - The score considers:
+        1) fast improvement estimates,
+        2) delay penalties,
+        3) inventory safety pressure over future days, and
+        4) whether an existing route vehicle can be reused to reduce fleet
+           fragmentation.
+    - The goal is not simply looking one day farther, but avoiding insertions
+      that deplete future inventory or create extra fragmented vehicles.
     """
     t0 = time.time()
-    logger.debug("[OPLOG] 开始执行 lookahead_repair 算子")
+    logger.debug("[OPLOG] Starting lookahead_repair operator")
     state = partial.copy()
     data = state.data
 
@@ -1825,7 +1895,7 @@ def lookahead_repair(
                     if new_vs:
                         inserted_vehicles.extend(new_vs)
                 except Exception as e:
-                    logger.debug(f"[OPLOG] lookahead_repair: 装载异常 {e}")
+                    logger.debug(f"[OPLOG] lookahead_repair: loading exception {e}")
                     break
 
     try:
@@ -1841,12 +1911,12 @@ def lookahead_repair(
         prev_obj=_safe_prev_obj(partial),
         t0=t0,
     )
-    logger.debug(f"[OPLOG] lookahead_repair: 完成 ({time.time() - t0:.4f}s)")
+    logger.debug(f"[OPLOG] lookahead_repair: complete ({time.time() - t0:.4f}s)")
     return state
 
 
 def create_lookahead_repair(lookahead_horizon: Optional[int] = None):
-    """工厂函数：创建前瞻修复算子包装器"""
+    """Factory that creates a lookahead-repair operator wrapper."""
     defaults = ALNSConfig.get_operator_default("lookahead_repair").get("params", {})
     lookahead_horizon = (
         lookahead_horizon
@@ -1862,10 +1932,11 @@ def create_lookahead_repair(lookahead_horizon: Optional[int] = None):
 
 class FleetConsolidationRepairOperator:
     """
-    可作为 alns.add_repair_operator 接受的对象。
-    使用示例: alns.add_repair_operator(FleetConsolidationRepairOperator())
+    Object accepted by alns.add_repair_operator.
+    Example: alns.add_repair_operator(FleetConsolidationRepairOperator())
 
-    此算子专门优化车队规模，通过消除碎片化的车辆分配来实现。
+    This operator optimizes fleet size by eliminating fragmented vehicle
+    assignments.
     """
 
     def __init__(self):

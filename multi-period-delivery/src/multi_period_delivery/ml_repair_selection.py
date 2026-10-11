@@ -1,5 +1,5 @@
 """
-利用基于机器学习的算子选择机制, 自动选择最佳修复算子
+Use the machine-learning operator selector to choose the best repair operator.
 """
 
 import time
@@ -11,7 +11,7 @@ from .alnsopt import SolutionState
 from .alns_config import default_config as ALNSConfig
 from .repair_utils import compute_mixed_operator_reward
 
-# 导入所需的修复算子
+# Import the required repair operators
 from .repair_operators import (
     greedy_repair,
     local_search_repair,
@@ -48,24 +48,27 @@ def ml_based_repair(
     current: SolutionState, rng: rnd.Generator, min_sample_size: Optional[int] = None
 ) -> SolutionState:
     """
-    基于机器学习的修复算子
+    Apply an ML-guided repair operator.
 
-    使用ML选择器自动选择最适合当前解状态的修复算子和参数。
-    在数据不足时，随机选择一个修复算子。
+    The ML selector chooses the repair operator and parameters best suited to
+    the current solution state. When training data is insufficient, choose a
+    repair operator randomly.
 
     Args:
-        current: 当前解状态
-        rng: 随机数生成器
-        min_sample_size: 最小样本数量，低于此数量时随机选择算子
+        current: Current solution state.
+        rng: Random-number generator.
+        min_sample_size: Minimum sample count. Below this threshold, select an
+            operator randomly.
 
     Returns:
-        修改后的解状态
+        The modified solution state.
     """
     t0 = time.time()
-    print("[OPLOG] 开始执行 ml_based_repair 算子")
+    print("[OPLOG] Starting ml_based_repair operator")
     state = current.copy()
 
-    # 若未显式传入 min_sample_size，则从集中配置中读取默认值（向后兼容）
+    # If min_sample_size is not supplied, read the default from centralized
+    # configuration for backward compatibility.
     if min_sample_size is None:
         min_sample_size = int(getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20))
     else:
@@ -83,13 +86,13 @@ def ml_based_repair(
         )
     effective_min_sample_size = max(min_sample_size, takeover_min)
 
-    # 检查ML选择器是否可用
+    # Check whether the ML selector is available
     if not state.ml_selector:
-        print("[OPLOG] ml_based_repair: ML选择器不可用, 回退到贪心修复")
+        print("[OPLOG] ml_based_repair: ML selector unavailable; falling back to greedy repair")
         greedy_params = ALNSConfig.get_repair_params().get("greedy_repair", {})
         return greedy_repair(state, rng, **(greedy_params or {}))
 
-    # 获取可用的修复算子列表
+    # Build the available repair-operator map
     repair_operators = {
         "greedy_repair": lambda s, r, **kwargs: greedy_repair(s, r, **kwargs),
         "local_search_repair": lambda s, r, **kwargs: local_search_repair(
@@ -110,7 +113,7 @@ def ml_based_repair(
         ),
     }
 
-    # 检查训练数据是否足够
+    # Check whether training data is sufficient
     use_ml = False
     if hasattr(state.ml_selector, "should_use_ml"):
         use_ml = bool(
@@ -122,20 +125,21 @@ def ml_based_repair(
         )
 
     if not use_ml:
-        # 数据不足，随机选择一个修复算子
+        # Insufficient data: choose a repair operator randomly
         print(
-            f"[OPLOG] ml_based_repair: 使用随机回退 ({len(state.ml_selector.repair_features)} < {effective_min_sample_size})"
+            f"[OPLOG] ml_based_repair: using random fallback "
+            f"({len(state.ml_selector.repair_features)} < {effective_min_sample_size})"
         )
         op_name = rng.choice(list(repair_operators.keys()))
         operator = repair_operators[op_name]
 
-        # 获取参数
+        # Retrieve parameters
         params = {}
         if state.param_tuner:
             params = state.param_tuner.get_operator_params(op_name)
         params = _sanitize_repair_params(op_name, params)
 
-        # 执行算子
+        # Execute the operator
         prev_obj = state.objective()
         new_state = operator(state, rng, **params)
         new_obj, improvement, _ = compute_mixed_operator_reward(
@@ -148,20 +152,24 @@ def ml_based_repair(
         elif math.isinf(improvement):
             improvement = 1e6 if improvement > 0 else -1e6
 
-        # 记录性能（使用操作前状态特征，避免泄漏后验信息）
+        # Record performance using the pre-operation state features to avoid
+        # leaking post-operation information.
         state.ml_selector.record_operator_performance(
             op_name, "repair", state, improvement
         )
         if hasattr(state.ml_selector, "update_op_feedback"):
             state.ml_selector.update_op_feedback("repair", improvement)
 
-        print(f"[OPLOG] ml_based_repair: 随机选择 {op_name}，改进值 {improvement:.4f}")
+        print(
+            f"[OPLOG] ml_based_repair: randomly selected {op_name}; "
+            f"improvement {improvement:.4f}"
+        )
         return new_state
 
-    # 训练数据足够，使用ML选择器选择最佳算子
+    # Sufficient training data: use the ML selector to choose the best operator
     state.ml_selector.train_models()
 
-    # 选择最佳算子
+    # Select the best operator
     op_name, params = state.ml_selector.select_best_operator(
         state, "repair", list(repair_operators.keys())
     )
@@ -169,7 +177,7 @@ def ml_based_repair(
 
     operator = repair_operators[op_name]
 
-    # 执行算子
+    # Execute the operator
     prev_obj = state.objective()
     new_state = operator(state, rng, **params)
     new_obj, improvement, _ = compute_mixed_operator_reward(
@@ -182,12 +190,14 @@ def ml_based_repair(
     elif math.isinf(improvement):
         improvement = 1e6 if improvement > 0 else -1e6
 
-    # 记录性能（使用操作前状态特征，避免泄漏后验信息）
+    # Record performance using the pre-operation state features to avoid
+    # leaking post-operation information.
     state.ml_selector.record_operator_performance(op_name, "repair", state, improvement)
     if hasattr(state.ml_selector, "update_op_feedback"):
         state.ml_selector.update_op_feedback("repair", improvement)
 
     print(
-        f"[OPLOG] ml_based_repair: 选择 {op_name}，改进值 {improvement:.4f} ({time.time() - t0:.4f}s)"
+        f"[OPLOG] ml_based_repair: selected {op_name}; improvement "
+        f"{improvement:.4f} ({time.time() - t0:.4f}s)"
     )
     return new_state

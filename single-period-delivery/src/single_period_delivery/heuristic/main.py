@@ -39,10 +39,10 @@ def run_model(
     log_printer.print(f"Start optimizing! / Now {datetime.datetime.now()}")
     
     
-    objectives = {}  # 记录每次实验的配送成本
-    times = {}       # 记录每次实验的运行时间
-    solutions = {}   # 记录每次实验获取的可行解
-    fulfills = {}    # 记录每次实验满足的经销商需求量
+    objectives = {}  # Delivery cost recorded for each experiment.
+    times = {}       # Runtime recorded for each experiment.
+    solutions = {}   # Feasible solution obtained in each experiment.
+    fulfills = {}    # Dealer demand satisfied in each experiment.
     
     
     for i in range(exp_nums):
@@ -51,11 +51,11 @@ def run_model(
         
         start_time = time.time()
         
-        # 创建模型
+        # Create the model.
         model = HeuristicModel(data)
         
         # =================================================================
-        # 优化阶段1
+        # Optimization Stage 1.
         log_printer.print_title('Stage 1: Optimize the supply quantity')
         
         model.optimize_stage_1()
@@ -68,28 +68,28 @@ def run_model(
     
     
         # =================================================================
-        # 优化阶段2
+        # Optimization Stage 2.
         log_printer.print_title('Stage 2: Optimize the loading process')
         
         model.optimize_stage_2()
         
-        # 计算每种车型 f 的使用数量
+        # Compute the number of vehicles used for each vehicle type f.
         veh_type_nums = model.cal_vehicle_type_nums()
         
-        # 计算每种车型 f 的车辆 l 的集合
+        # Compute the set of vehicle identifiers l for each vehicle type f.
         model.cal_vehicle_type_sets()
         
-        # 计算第二阶段获取的完整解 X_full
+        # Compute the complete feasible solution X_full from Stage 2.
         X_full = model.calculate_solution()
         
-        # 检查获得的完整可行解, 是否满足所有经销商的需求
+        # Check whether the complete feasible solution satisfies all dealer demand.
         is_fulfill = model.check_solution()
         log_printer.print(f"Have the demands of all dealers been satisfied? {is_fulfill}.")
         
-        # 计算总成本
+        # Compute the total cost.
         total_cost = model.calculate_cost()
         
-        # 计算使用的车辆总数
+        # Compute the total number of vehicles used.
         total_veh_nums = model.calculate_vehicle_nums()
         
         for veh_type, veh_num in veh_type_nums.items():
@@ -102,29 +102,29 @@ def run_model(
         log_printer.print(f'Number of vehicles used: {total_veh_nums}')
         log_printer.print(f'Total cost: {total_cost: .2f}\n')
             
-        # 记录可行解
+        # Record the feasible solution.
         solutions[i+1, total_cost] = X_full
-        # 记录目标函数值
+        # Record the objective value.
         objectives[i+1] = total_cost
-        # 记录运行时间
+        # Record the runtime.
         times[i+1] = end_time - start_time
-        # 记录满足的经销商需求量
+        # Record satisfied dealer demand.
         fulfills[i+1] = fulfill
 
-    # 计算平均目标函数值
+    # Compute the average objective value.
     avg_obj = sum(objectives.values()) / exp_nums
     
-    # 计算平均运行时间
+    # Compute the average runtime.
     avg_time = sum(times.values()) / exp_nums
     
-    # 计算最优目标函数值
+    # Compute the best objective value.
     best_obj = min(list(objectives.values()))
     
     for (exp_no, cost), sol in solutions.items():
         if cost == best_obj:  
             print(f"The best objective function value is found in experiment No. {exp_no}, with cost: {cost: .2f}")
             X_full = sol
-            # 只输出最优目标函数值对应的解
+            # Output only the solution associated with the best objective value.
             clear_output_file(output_file_loc)
             
             clear_fulfill_file(output_file_loc)
@@ -142,19 +142,19 @@ def run_model(
 def update_inv_order(solution):
     global data
     
-    # 更新库存和需求
+    # Update inventory and demand.
     for (plant, dealer, sku_id, veh_type, veh_id), qty in solution.items():
-        # 更新库存
+        # Update inventory.
         data.sku_inv[(plant, sku_id)] -= qty
-        # 更新需求
+        # Update demand.
         data.demands[(dealer, sku_id)] -= qty
     
-    # extra_fulfill是超额满足的经销商需求，qty=0表示恰好满足经销商需求
-    # 为了便于在文件中查找，所以保留qty=0的那些行
+    # extra_fulfill stores demand fulfilled in excess; qty=0 means the demand was satisfied exactly.
+    # Rows with qty=0 are retained to make the output file easier to search.
     extra_fulfill = {(dealer, sku_id): -qty for (dealer, sku_id), qty in data.demands.items() if qty <= 0}
     
-    # sku_inv_left是生产基地中剩余的库存，qty=0表示没有剩余库存
-    # 为了便于在文件中查找，所以保留qty=0的那些行
+    # sku_inv_left stores remaining plant inventory; qty=0 means no inventory remains.
+    # Rows with qty=0 are retained to make the output file easier to search.
     sku_inv_left = {(plant, sku_id): qty for (plant, sku_id), qty in data.sku_inv.items() if qty >= 0}
     
 
@@ -172,7 +172,7 @@ def update_inv_order(solution):
 
 
 def clear_fulfill_file(output_file_loc=output_loc):
-    """清理满足经销商需求的文件，在每个数据集的文件夹中创建新的结果文件"""
+    """Reset the dealer-fulfillment output file in the dataset folder."""
     if not os.path.exists(output_file_loc):
         os.makedirs(output_file_loc)
     output_file_name = 'fulfill.csv'
@@ -182,7 +182,7 @@ def clear_fulfill_file(output_file_loc=output_loc):
         writer.writerow(header)
 
 def clear_output_file(output_file_loc=output_loc):
-    """清理输出文件，在每个数据集的文件夹中创建新的结果文件"""
+    """Reset the optimization output file in the dataset folder."""
     if not os.path.exists(output_file_loc):
         os.makedirs(output_file_loc)
     output_file_name = 'opt_result.csv'
@@ -192,7 +192,7 @@ def clear_output_file(output_file_loc=output_loc):
         writer.writerow(header)
         
 def save_fulfill(fulfill):
-    """保存满足经销商需求的结果"""
+    """Save dealer-fulfillment results."""
     if not os.path.exists(data.output_file_loc):
         os.makedirs(data.output_file_loc)
     
@@ -204,10 +204,10 @@ def save_fulfill(fulfill):
 
 
 def output_result(solution):
-    """在对应数据集的文件夹中保存结果"""
+    """Save the optimization result in the corresponding dataset folder."""
     output_file = os.path.join(data.output_file_loc, 'opt_result.csv')
     df_result = create_dataframe(solution)
-    # header=False表示不将dataframe的列名写入文件
+    # header=False prevents DataFrame column names from being written to the file.
     df_result.to_csv(output_file, mode='a', header=False)
 
 def create_dataframe(solution):
@@ -229,7 +229,7 @@ def create_dataframe(solution):
 
     
 def result_state(r_data: InputDataHeuristic):
-    """处理并保存统计结果到对应的数据集文件夹"""
+    """Process and save summary statistics in the corresponding dataset folder."""
     dataset = r_data.dataset_name
     output_location = r_data.output_file_loc
     input_location = os.path.join(r_data.input_file_loc, dataset)
@@ -263,9 +263,9 @@ def result_state(r_data: InputDataHeuristic):
     df_tmp.to_csv(os.path.join(output_location, 'opt_summary.csv'))
     
     df_tmp = df_tmp.reset_index()
-    # 判断是否所有车辆中装载的SKU体积满足车辆容量约束
+    # Check whether every vehicle's loaded SKU volume satisfies its capacity constraint.
     is_cap_exceed = pd.Series(df_tmp['occupied_size'] <= df_tmp['carry_standard_size'])
-    if is_cap_exceed.all():  # 所有值都为True，则返回True
+    if is_cap_exceed.all():  # Return True when every value is True.
         log_printer.print("Congratulations! "
                           "The volume of SKUs loaded in each vehicle is equal or smaller than vehicle's capacity.")
     else:

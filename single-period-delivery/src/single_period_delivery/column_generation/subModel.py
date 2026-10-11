@@ -1,8 +1,8 @@
-# 列生成算法的子模型
-# 适用于模型1——分解方法
-# 模型 1 的假设包括：单周期、SKU库存量 > 需求量、生产基地的存储能力无上限
-# 多生产基地、多经销商、多车型、多SKU
-# 每家生产基地可以提供相同的SKU，不同生产基地提供的SKU之间存在交集
+# Subproblem for the column-generation algorithm.
+# Intended for Model 1: the decomposition approach.
+# Model 1 assumes a single period, SKU inventory greater than demand, and unlimited storage at production plants.
+# It supports multiple production plants, dealers, vehicle types, and SKUs.
+# Production plants may supply overlapping SKU sets.
 import math
 from gurobipy import GRB
 import gurobipy as gp
@@ -18,53 +18,54 @@ class SubModel:
     vehicle_type: str
     data: InputDataCG
 
-    # 设定环境参数
-    # MIP模型的求解gap，当达到设定的gap后，模型停止，默认值为0
+    # Environment parameters.
+    # MIP gap tolerance. Optimization stops once the configured gap is reached; the default is 0.
     param_gap_limit: float = field(init=False)
-    # MIP模型求解的时间限制，默认值为60
+    # MIP time limit in seconds; the default is 60.
     param_time_limit: float = field(init=False)
-    # 是否输出gurobi的求解日志
+    # Whether to print the Gurobi solver log.
     param_output_flag: int = field(init=False)
 
-    # 所有SKU的集合
+    # Set of all SKUs.
     all_skus: Set[str] = field(init=False)
-    # 当前经销商需要的且当前生产基地能够提供的SKU集合
+    # SKUs required by the current dealer and available from the current production plant.
     require_skus: Set[str] = field(init=False)
-    # 每种SKU的体积量化数值 {sku: size}
+    # Volume per unit for each SKU: {sku: size}.
     sku_sizes: Dict[str, float] = field(init=False)
-    # 生产基地可以提供的SKU数量 {(plant, sku): qty}
+    # SKU quantity available at production plants: {(plant, sku): qty}.
     sku_inv: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商对SKU的需求 {(dealer, sku): qty}
+    # Dealer demand by SKU: {(dealer, sku): qty}.
     demands: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商需要的SKU集合
+    # SKU set requested by each dealer.
     skus_dealer: Dict[str, Set[str]] = field(init=False)
 
-    # 每一种车辆类型的使用成本 {v_type: cost}
+    # Usage cost for each vehicle type: {v_type: cost}.
     veh_type_cost: Dict[str, float] = field(init=False)
-    # 每一种车辆类型的容量上限 {v_type: capacity}
+    # Capacity limit for each vehicle type: {v_type: capacity}.
     veh_type_cap: Dict[str, int] = field(init=False)
-    # 每一种车辆类型的最小起运量 {v_type: min_load}
+    # Minimum shipment quantity for each vehicle type: {v_type: min_load}.
     veh_type_min_load: Dict[str, int] = field(init=False)
 
-    # 接下来，需要定义数学模型、目标函数和决策变量
-    # 最后再定义约束条件
-    # 定义子模型
+    # Define the mathematical model, objective function, and decision variables.
+    # Add the constraints after defining those components.
+    # Subproblem model.
     model: gp.Model = field(init=False)
-    # 定义目标函数
+    # Objective function.
     obj: gp.LinExpr = field(init=False)
-    # 定义决策变量
-    # 子模型的决策变量，表示从生产基地 i 到经销商 j 的车辆类型 f 对应的一辆车辆中装载SKU k 的商品数量
-    # 其中，生产基地 i 、经销商 j 和车辆类型 f都是已知的
+    # Decision variables.
+    # Quantity of SKU k loaded in a vehicle of type f traveling from production plant i to dealer j.
+    # Production plant i, dealer j, and vehicle type f are fixed in each subproblem.
     d_xs: gp.tupledict[str, gp.Var] = field(init=False)
-    # 辅助变量：车辆类型 f 中装载的SKU体积是否低于最小起运量，如果是取1，否则取0
+    # Auxiliary variable: 1 if the loaded volume for vehicle type f is below the minimum shipment
+    # quantity, and 0 otherwise.
     p_f: gp.Var = field(init=False)
 
-    # 定义需要向模型中添加的约束条件
-    # 车辆类型 f 的容量约束
+    # Constraints added to the model.
+    # Capacity constraint for vehicle type f.
     cons_veh_cap: gp.Constr = field(init=False)
-    # 车辆类型 f 的最小起运量约束
+    # Minimum shipment quantity constraint for vehicle type f.
     cons_veh_min_load: gp.Constr = field(init=False)
-    # 决策变量的取值上限约束
+    # Upper-bound constraints for the decision variables.
     cons_xs_bounds1: gp.tupledict[Hashable, gp.Constr] = field(init=False)
     cons_xs_bounds2: gp.tupledict[Hashable, gp.Constr] = field(init=False)
 
@@ -82,7 +83,7 @@ class SubModel:
         self.veh_type_cap = self.data.veh_type_cap
         self.veh_type_min_load = self.data.veh_type_min_load
 
-        # 子模型的目标函数，只有在获取到主模型约束条件的对偶价格之后，才会构建
+        # The subproblem objective is built only after dual prices for the master constraints are available.
         self.model = gp.Model()
         self.obj = gp.LinExpr()
 
@@ -90,7 +91,7 @@ class SubModel:
         self.d_xs = self.model.addVars(self.require_skus, lb=0, vtype=GRB.INTEGER, name="d_xs")
         self.p_f = self.model.addVar(lb=0, vtype=GRB.BINARY, name="p_f")
 
-        # 计算所有种类SKU体积之和，作为最小起运量约束中的 Big Number
+        # Compute the total volume of all SKU types for the Big-M term in the minimum shipment constraint.
         # BigM = sum(self.demands[dealer_id, sku_id] * self.sku_sizes[sku_id] for (dealer_id, sku_id) in self.demands)
 
         # BigM = sum(self.demands[self.dealer_id, sku_id] * self.sku_sizes[sku_id] for sku_id in self.require_skus)
@@ -109,7 +110,7 @@ class SubModel:
 
         # BigM = BigNum
 
-        # 添加约束条件
+        # Add constraints.
         self.cons_veh_cap = self.model.addConstr((
             gp.quicksum(
                 self.d_xs[sku_id] * self.sku_sizes[sku_id] for sku_id in self.require_skus
@@ -140,7 +141,7 @@ class SubModel:
             # log_printer.print("Exception: Sub Model Is Infeasible or Unbounded!")
             # self.model.computeIIS()
             # self.model.write("Infeasible_SubModel.ilp")
-            # if self.model.IISMinimal:  # 判断 model.computeIIS() 返回的是否是包含不可行约束条件数目最少的IIS
+            # if self.model.IISMinimal:  # Check whether computeIIS() returned a minimal irreducible infeasible subsystem.
             #     log_printer.print('IIS is minimal \n')
             # else:
             #     log_printer.print('IIS is not minimal \n')

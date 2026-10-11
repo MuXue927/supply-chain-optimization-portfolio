@@ -1,45 +1,50 @@
 """
 vehicle
 
-模块定位
-    表示单次运输动作中的一辆可装载车辆实体。该类作为 ALNS 解状态的一部分，
-    记录“某生产基地 -> 某经销商”在特定日、特定车辆类型下的装载决策。
+Module role
+    Represents one loadable vehicle in a single transportation action. This
+    class is part of the ALNS solution state and records the loading decision
+    from a plant to a dealer on a specific day and vehicle type.
 
-核心职责
-    - 标识信息: (fact_id, dealer_id, type, day) + 唯一 id
-    - 容量管理: max_capacity / 当前剩余 capacity
-    - 装载记录: cargo[(sku_id, day)] = 装载数量
-    - 操作方法: load / clear / is_full / is_empty / get_avail_space
+Responsibilities
+    - Identity: (fact_id, dealer_id, type, day) plus a unique id.
+    - Capacity management: max_capacity and current remaining capacity.
+    - Cargo record: cargo[(sku_id, day)] = loaded quantity.
+    - Operations: load / clear / is_full / is_empty / get_avail_space.
 
-说明:
-    - 引入 CargoDict：一个轻量的 dict 子类，用于在直接修改 cargo 时自动维护
-      Vehicle._loaded_volume 与 capacity（避免代码库大量替换点）。
-    - cargo 属性暴露为一个包装器（property），当外部赋值（例如 veh.cargo = other.cargo.copy()）
-      时会自动包装为 CargoDict 并同步已装载体积与剩余容量。
+Implementation notes:
+    - CargoDict is a lightweight dict subclass that keeps
+      Vehicle._loaded_volume and capacity synchronized when cargo is modified
+      in place.
+    - The cargo property wraps external assignments (for example,
+      veh.cargo = other.cargo.copy()) in CargoDict and synchronizes loaded
+      volume and remaining capacity.
 """
 
 # =========================
-# 项目内部依赖
+# Internal project dependencies
 # =========================
 from .InputDataALNS import DataALNS
 
 # =========================
-# 标准库 / 类型
+# Standard library / typing
 # =========================
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, MutableMapping
 
 # -------------------------
-# CargoDict: 自动维护 loaded_volume 与 capacity 的 dict wrapper
+# CargoDict: a dict wrapper that maintains loaded_volume and capacity.
 # -------------------------
 class CargoDict(dict):
     """
     A dict-like container that updates its parent Vehicle's _loaded_volume and capacity
     whenever items are added/removed/updated in the mapping.
 
-    注意:
-      - copy() 返回一个内建 dict（调用方若将其赋值给 veh.cargo 会触发 Vehicle.cargo setter来重新包装）
-      - 该类仅在 Vehicle 实例内部用于保证对 cargo 的原地修改能同步缓存
+    Notes:
+      - copy() returns a built-in dict. Assigning it back to veh.cargo triggers
+        the Vehicle.cargo setter so it is wrapped again.
+      - This class is used only inside Vehicle instances to synchronize caches
+        when cargo is modified in place.
     """
     def __init__(self, vehicle, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -58,10 +63,10 @@ class CargoDict(dict):
             sku, d = key
             delta = (value - prev) * self._sku_size(sku)
             self._veh._loaded_volume = getattr(self._veh, "_loaded_volume", 0.0) + delta
-            # keep capacity consistent and non-negative
+            # Keep capacity consistent and non-negative.
             self._veh.capacity = max(0, self._veh.max_capacity - getattr(self._veh, "_loaded_volume", 0.0))
         except Exception:
-            # best-effort: leave vehicle state as-is on error
+            # Best effort: leave vehicle state unchanged on error.
             pass
 
     def __delitem__(self, key):
@@ -110,24 +115,24 @@ class CargoDict(dict):
         return k, v
 
     def copy(self):
-        # return a plain dict to match expectations of other code paths
+        # Return a plain dict to match the expectations of other code paths.
         return dict(self)
 
 # =========================
-# 数据类: Vehicle
+# Data class: Vehicle
 # =========================
 @dataclass
 class Vehicle:
     """
-    车辆实体:
+    Vehicle entity:
         fact_id: str
         dealer_id: str
         type: str
         day: int
         data: DataALNS
 
-    动态属性（init=False）:
-        id, max_capacity, capacity, cargo (包装为 CargoDict)
+    Dynamic attributes (init=False):
+        id, max_capacity, capacity, cargo (wrapped as CargoDict)
     """
     fact_id: str
     dealer_id: str
@@ -138,44 +143,47 @@ class Vehicle:
     id: int = field(init=False, default=-1)
     max_capacity: int = field(init=False, default=0)
     capacity: int = field(init=False, default=0)
-    # cargo 使用 init=False 并通过 property 管理，以便在赋值时自动包装为 CargoDict
+    # cargo uses init=False and is managed by a property so assignments are
+    # automatically wrapped as CargoDict.
     cargo: Dict[Tuple[str, int], int] = field(init=False, repr=False, default_factory=dict)
 
-    _id_counter = 0  # 类变量
+    _id_counter = 0  # Class-level counter.
 
     def __post_init__(self):
-        # 分配唯一 id
+        # Assign a unique id.
         self.id = Vehicle._id_counter
         Vehicle._id_counter += 1
-        # 初始化容量
+        # Initialize capacity.
         try:
             self.max_capacity = int(self.data.veh_type_cap[self.type])
         except Exception:
             self.max_capacity = 0
         self.capacity = self.max_capacity
-        # 初始化装载记录为 CargoDict，以保证原地修改能更新缓存
+        # Initialize cargo as CargoDict so in-place changes update the cache.
         try:
             self._cargo = CargoDict(self, {})
         except Exception:
-            # 兼容性保护
+            # Compatibility fallback.
             self._cargo = {}
-        # 缓存已装载总体积，避免频繁遍历 cargo 计算体积
+        # Cache total loaded volume to avoid repeatedly scanning cargo.
         self._loaded_volume = 0
 
-    # cargo property: 对外以 veh.cargo 访问, 赋值时会包装并同步 _loaded_volume/capacity
+    # Cargo property: access as veh.cargo; assignments are wrapped and
+    # synchronize _loaded_volume/capacity.
     @property
     def cargo(self):
         return self._cargo
 
     @cargo.setter
     def cargo(self, mapping):
-        # mapping 可能是普通 dict 或其他映射；包装为 CargoDict 并同步已装载量
+        # mapping may be a plain dict or another mapping; wrap it in CargoDict
+        # and synchronize the loaded volume.
         try:
             if isinstance(mapping, CargoDict):
                 new_map = CargoDict(self, dict(mapping))
             else:
                 new_map = CargoDict(self, dict(mapping) if mapping is not None else {})
-            # 计算已装载体积
+            # Compute loaded volume.
             loaded = 0
             for (sku_k, d_k), q_k in new_map.items():
                 try:
@@ -186,7 +194,8 @@ class Vehicle:
             self._loaded_volume = loaded
             self.capacity = max(0, self.max_capacity - loaded)
         except Exception:
-            # 兼容性回退: 将 cargo 赋为普通 dict 并尽量保留旧缓存
+            # Compatibility fallback: assign a plain dict and preserve the old
+            # cache where possible.
             try:
                 self._cargo = dict(mapping) if mapping is not None else {}
             except Exception:
@@ -195,13 +204,13 @@ class Vehicle:
             self.capacity = getattr(self, "capacity", self.max_capacity)
 
     def __eq__(self, other):
-        # Use id-only equality for speed: id is unique per Vehicle instance
+        # Use id-only equality for speed: id is unique per Vehicle instance.
         if not isinstance(other, Vehicle):
             return False
         return self.id == other.id
 
     def __hash__(self):
-        # Hash based on unique id for faster hashing/comparisons
+        # Hash based on unique id for faster hashing/comparisons.
         return hash(self.id)
 
     def __repr__(self):
@@ -210,22 +219,24 @@ class Vehicle:
 
     def get_avail_space(self) -> int:
         """
-        返回当前剩余容量 (体积单位)
+        Return the current remaining capacity in volume units.
         """
         return self.capacity
 
     def is_full(self) -> bool:
         """
-        判断车辆是否已无剩余容量
+        Return True when the vehicle has no remaining capacity.
         """
         return self.capacity <= 0
 
     def load(self, sku_id: str, num: int) -> int:
         """
-        试图装载指定 SKU 数量（原子/防御性实现）:
-            - 先做本地计算，只有在确认不会导致不一致时再提交状态更新
-            - 若 SKU 不存在抛出异常
-            - 返回未成功装载的剩余件数 (num - 实际装载)
+        Attempt to load a quantity of the specified SKU using an atomic,
+        defensive implementation:
+            - Compute locally first and commit only when consistency is
+              guaranteed.
+            - Raise an exception when the SKU is unknown.
+            - Return the quantity that could not be loaded (num - loaded).
         """
         if num <= 0:
             return num
@@ -233,44 +244,49 @@ class Vehicle:
             raise ValueError(f"SKU {sku_id} not found in data.sku_sizes")
         sku_size = float(self.data.sku_sizes[sku_id])
 
-        # 计算可装载数量（基于剩余容量），确保整数除法语义一致
+        # Compute the loadable quantity from remaining capacity and keep
+        # integer-division semantics explicit.
         max_by_cap = 0
         if sku_size > 0:
             max_by_cap = int(self.capacity // sku_size)
         else:
-            # 防御性处理: sku_size 不应为 0，但若发生则阻止装载以避免无限循环/错误
+            # Defensive handling: sku_size should never be zero. If it is,
+            # block loading to avoid infinite loops or invalid state.
             raise ValueError(f"Invalid sku_size=0 for SKU {sku_id}")
 
         num_loaded = min(num, max_by_cap)
 
         if num_loaded <= 0:
-            return num  # 无法装载任何件数
+            return num  # No quantity can be loaded.
 
-        # 计算新的状态（本地变量），确保原子提交
+        # Compute the new state in local variables for an atomic commit.
         prev_qty = self._cargo.get((sku_id, self.day), 0)
         new_qty = prev_qty + num_loaded
         new_capacity = self.capacity - num_loaded * sku_size
         new_loaded_volume = getattr(self, "_loaded_volume", 0.0) + num_loaded * sku_size
 
-        # 防御性检查：不应出现负容量或不一致的已装载体积
+        # Defensive check: negative capacity or inconsistent loaded volume
+        # must never occur.
         if new_capacity < 0 or new_loaded_volume < 0:
-            # 保护：不提交任何修改，报告异常
+            # Guard: report the inconsistency without committing changes.
             raise RuntimeError(f"Load would cause negative capacity or loaded volume (sku_id={sku_id}, load={num_loaded}, new_capacity={new_capacity})")
 
-        # 提交状态更新（原子） — 使用 CargoDict 的 __setitem__ 以保持缓存一致
+        # Commit atomically through CargoDict.__setitem__ to keep caches
+        # consistent.
         self._cargo[(sku_id, self.day)] = new_qty
-        # __setitem__ 会更新 _loaded_volume 与 capacity，但确保一致性
+        # __setitem__ updates _loaded_volume and capacity; assign again to
+        # guarantee consistency.
         self._loaded_volume = new_loaded_volume
         self.capacity = new_capacity
 
-        return num - num_loaded  # 返回未装载数量
+        return num - num_loaded  # Return the unloaded quantity.
 
     def clear(self):
         """
-        重置车辆: 清空装载并恢复剩余容量
+        Reset the vehicle by clearing cargo and restoring remaining capacity.
         """
         try:
-            # 使用 CargoDict.clear 保证缓存一致
+            # Use CargoDict.clear to keep caches consistent.
             if isinstance(self._cargo, CargoDict):
                 self._cargo.clear()
             else:
@@ -282,7 +298,7 @@ class Vehicle:
 
     def is_empty(self) -> bool:
         """
-        判断是否尚未装载任何货物
+        Return True when no cargo has been loaded.
         """
         try:
             return not bool(self._cargo)

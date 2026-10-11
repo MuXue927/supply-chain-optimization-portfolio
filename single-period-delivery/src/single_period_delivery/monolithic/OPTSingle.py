@@ -1,4 +1,4 @@
-# 用于执行单周期优化模型的代码
+# Execute the single-period optimization model.
 from .optLogicSingle import run_model
 
 if __name__ == "__main__":

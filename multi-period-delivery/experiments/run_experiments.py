@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-批量运行实验模板脚本 (scripts/run_experiments.py)
+Batch experiment runner for the multi-period project.
 
-功能:
-- 接受实例列表、算法变体、seeds、time_limit、并行度、输出目录等参数
-- 对每个 (instance, variant, seed) 组合创建独立输出目录并运行 multi_period_delivery 优化器
-- 在每次运行前通过 multi_period_delivery.alns_config.default_config.update_from_dict 临时设置 ENABLE_PARAM_TUNER / ENABLE_ML_OPERATORS / SEED / MAX_RUNTIME / LOG_DIR
-- 每次运行结束写入 run_metadata.json（包含元数据与运行状态），便于后续 prepare_thesis_results.py 汇总
+Responsibilities:
+- Accept instance paths, variants, seeds, time limits, parallelism, and output paths.
+- Run the multi-period optimizer for each (instance, variant, seed) tuple.
+- Update the shared ALNS configuration before each run.
+- Write run_metadata.json so prepare_thesis_results.py can aggregate results.
 
-说明:
-- 在 Windows 上建议使用 --parallel 以 1 为默认值（Gurobi/第三方库可能对并行有限制）。
-- 本脚本假定 multi_period_delivery.alns_optimizer.ALNSOptimizer 的签名为:
+Notes:
+- On Windows, keep --parallel=1 unless concurrent solver processes are known to be safe.
+- This script assumes the ALNSOptimizer signature:
     ALNSOptimizer(input_file_loc, output_file_loc)
-  并提供方法 run_optimization(dataset_name) -> bool
-- 若项目中具体接口略有不同，请根据本脚本结构做小范围适配。
+  and the method run_optimization(dataset_name) -> bool.
+- Adjust the adapter logic if the public interface changes.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def utc_now_iso_z() -> str:
 
 def parse_seeds(seeds_spec: str) -> List[int]:
     """
-    支持形式:
+    Supported forms:
       - "0-9" -> [0..9]
       - "0,2,5" -> [0,2,5]
       - "0" -> [0]
@@ -63,23 +63,23 @@ def parse_seeds(seeds_spec: str) -> List[int]:
 
 def is_valid_instance(path_str: str):
     """
-    快速校验实例路径是否看起来像一个可运行的实例。
-    返回 (ok: bool, reason: str)
+    Validate whether a path looks like a runnable instance.
+    Returns (ok: bool, reason: str).
 
-    支持的格式：
-    - 具体的 dataset_N 目录（如 datasets/multiple-periods/small/dataset_1）
-      必须包含 order.csv 文件
+    Supported format:
+    - A concrete dataset_N directory such as
+      datasets/multiple-periods/small/dataset_1 containing order.csv.
 
-    校验项（best-effort）：
-     - 若是文件：标记为invalid
-     - 若是dataset_*目录：检查order.csv是否存在；存在则接受
-     - 若是其他目录：不接受（容器目录需逐个指定dataset_*）
+    Validation rules:
+     - Files are invalid.
+     - dataset_* directories are accepted only when order.csv exists.
+     - Container directories must be expanded before validation.
     """
     p = Path(path_str)
     if p.is_file():
         return False, "path is a file; expected a dataset directory"
 
-    # 只接受 dataset_* 目录格式
+    # Accept only concrete dataset_* directories.
     if p.name.lower().startswith("dataset_"):
         orderf = p / "order.csv"
         if orderf.exists():
@@ -87,24 +87,24 @@ def is_valid_instance(path_str: str):
         else:
             return False, "dataset_* directory but order.csv missing"
 
-    # 不接受其他目录格式（如容器目录small, medium, large）
-    # 用户应该明确指定每个dataset_*
+    # Reject container directories such as small, medium, and large.
     return False, "not a dataset_* directory (use dataset_1, dataset_2, ...)"
 
 
 def expand_container_to_datasets(container_path: str) -> List[str]:
     """
-    将容器目录（small/medium/large）展开为所有包含的 dataset_* 目录。
+    Expand a container directory such as small, medium, or large into all
+    contained dataset_* directories.
 
-    示例:
-    - 输入: datasets/multiple-periods/small
-    - 输出: [
+    Example:
+    - Input: datasets/multiple-periods/small
+    - Output: [
         datasets/multiple-periods/small/dataset_1,
         datasets/multiple-periods/small/dataset_2,
         ...
       ]
 
-    返回展开的dataset列表（已排序）。
+    Returns the sorted dataset path list.
     """
     container = Path(container_path)
     if not container.is_dir():
@@ -141,18 +141,18 @@ def expand_instances(patterns: List[str]) -> List[str]:
         if p not in seen:
             seen.add(p)
             out.append(p)
-    # 过滤掉可能不是实例的配置文件（例如 model_config*.json）
+    # Remove configuration files such as model_config*.json.
     filtered = [p for p in out if "model_config" not in Path(p).name.lower()]
 
-    # 首先尝试验证每个路径
-    # 若路径是容器目录（small/medium/large），自动展开到dataset_*子目录
+    # Validate each path first. Container directories are expanded into their
+    # dataset_* children.
     pre_validated = []
     for path_str in filtered:
         ok, reason = is_valid_instance(path_str)
         if ok:
             pre_validated.append(path_str)
         else:
-            # 检查是否是容器目录
+            # Check whether this path is a scale container directory.
             container_datasets = expand_container_to_datasets(path_str)
             if container_datasets:
                 print(
@@ -161,10 +161,10 @@ def expand_instances(patterns: List[str]) -> List[str]:
                 )
                 pre_validated.extend(container_datasets)
             else:
-                # 标记为无效候选
-                pre_validated.append((path_str, reason))  # 元组表示验证失败
+                # Record the validation failure reason.
+                pre_validated.append((path_str, reason))
 
-    # 应用最终验证逻辑到所有候选实例
+    # Apply final validation to all candidate instances.
     valid_instances = []
     skipped = []
     for item in pre_validated:
@@ -179,7 +179,7 @@ def expand_instances(patterns: List[str]) -> List[str]:
             else:
                 skipped.append((path_str, reason))
 
-    # 如果有被跳过的实例，打印日志
+    # Report skipped invalid instances.
     if skipped:
         print("Skipped instances (invalid):", flush=True)
         for path_str, reason in skipped:
@@ -208,7 +208,7 @@ def make_variant_flags(variant: str):
 
 def run_single(args_tuple):
     """
-    Worker 函数，在新的进程/线程中导入 multi_period_delivery 并执行一次运行。
+    Worker entry point that imports the package and runs one experiment.
     args_tuple: (instance_path, variant, seed, time_limit, out_base_dir)
     """
     if len(args_tuple) >= 6:
@@ -230,14 +230,15 @@ def run_single(args_tuple):
     run_dir.mkdir(parents=True, exist_ok=True)
     worker_log_file = run_dir / "worker_console.log"
 
-    # 如果实例是一个数据目录且缺失 model_config_alns.json，尝试从上级 datasets 目录回退复制一份
+    # If a concrete dataset directory lacks model_config_alns.json, try to
+    # copy a fallback configuration from a parent datasets directory.
     try:
         inst_path_obj = Path(instance_path)
         if inst_path_obj.is_dir():
             cfg_name = "model_config_alns.json"
             dst_cfg = inst_path_obj / cfg_name
             if not dst_cfg.exists():
-                # 尝试在 parent 级别（如 datasets/multiple-periods）寻找全局配置并复制
+                # Look for a shared configuration under the parent directory.
                 parent_cfg = (
                     Path("datasets") / "multiple-periods" / "model_config_alns.json"
                 )
@@ -247,7 +248,7 @@ def run_single(args_tuple):
 
                         shutil.copy(parent_cfg, dst_cfg)
                     except Exception:
-                        # best-effort,继续让后续逻辑处理可能的缺失
+                        # Best-effort copy; later validation reports any missing file.
                         pass
 
     except Exception:
@@ -309,7 +310,8 @@ def run_single(args_tuple):
             std_ctx = redirect_stdout(_fh) if (_fh is not None) else nullcontext()
             err_ctx = redirect_stderr(_fh) if (_fh is not None) else nullcontext()
             with std_ctx, err_ctx:
-                # 如果传入的是具体的 dataset_N 目录，则将其 parent 作为输入路径，dataset_name 为该目录名
+                # For a concrete dataset_N directory, use its parent as the
+                # input root and the directory name as the dataset name.
                 inst_obj = Path(instance_path)
                 if inst_obj.name.lower().startswith("dataset_") and inst_obj.is_dir():
                     input_loc = str(inst_obj.parent)
@@ -331,7 +333,7 @@ def run_single(args_tuple):
                         time_limit=int(time_limit),
                         write_outputs=True,
                     )
-                    # 合并关键信息到统一元数据格式
+                    # Merge monolithic metadata into the unified record.
                     if isinstance(mono_meta, dict):
                         status = mono_meta.get("status", "unknown")
                         ok = status in (
@@ -350,12 +352,13 @@ def run_single(args_tuple):
                         "ENABLE_ML_OPERATORS": bool(enable_ml),
                         "SEED": int(seed),
                         "MAX_RUNTIME": int(time_limit),
-                        # 每次运行单独日志目录
+                        # Use a separate log directory for each run.
                         "LOG_DIR": str(run_dir / "logs"),
                     }
                     ALNSConfig.update_from_dict(cfg_updates)
 
-                    # 输出目录传给 ALNSOptimizer；传入的 input_loc 应为包含 dataset_* 子目录的父路径
+                    # Pass the output directory to ALNSOptimizer. input_loc must
+                    # be the parent directory containing dataset_* folders.
                     optimizer = ALNSOptimizer(input_loc, str(run_dir))
                     ok = optimizer.run_optimization(dataset_name)
 
@@ -471,7 +474,7 @@ def main():
         "--instances",
         nargs="+",
         required=True,
-        help="实例路径或 glob 模式, 支持多个，例如 data/small/*.json 或 datasets/small/dir",
+        help="Instance path or glob pattern; multiple values are supported.",
     )
     parser.add_argument(
         "--variants",
@@ -486,25 +489,25 @@ def main():
         "--seeds",
         type=str,
         default="0-4",
-        help="随机种子范围或列表，例如 0-9 或 0,2,5",
+        help="Random seed range or list, for example 0-9 or 0,2,5.",
     )
     parser.add_argument(
         "--time-limit",
         type=int,
         default=300,
-        help="每次运行的 wall-clock time limit (秒)，会写入 ALNSConfig.MAX_RUNTIME",
+        help="Wall-clock time limit in seconds for each run.",
     )
     parser.add_argument(
         "--out-dir",
         type=str,
         default="OutPut-ALNS/experiments",
-        help="实验输出根目录",
+        help="Root directory for experiment output.",
     )
     parser.add_argument(
         "--parallel",
         type=int,
         default=1,
-        help="并行进程数 (Windows 建议 1 或小于 CPU 核心数)",
+        help="Number of parallel worker processes. Use 1 on Windows by default.",
     )
 
     args = parser.parse_args()

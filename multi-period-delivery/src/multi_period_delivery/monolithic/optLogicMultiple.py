@@ -1,5 +1,5 @@
-# 定义多周期优化模型的执行逻辑
-# 并将模型的求解结果保存到csv文件
+# Execution logic for the multi-period monolithic optimization model.
+# Solver results are written to CSV files.
 import os
 import sys
 import csv
@@ -9,9 +9,9 @@ from .MonolithicModelMultiple import *
 
 data: InputDataMultiple
 
-# 获取当前.py文件所在的目录，这样可以确保路径正确，即使文件被移动到其他位置也不会影响
+# Resolve paths relative to the module location.
 current_dir = os.path.dirname(__file__)
-# 当前.py文件所在目录的上一级目录
+# Parent package directory.
 par_path = os.path.dirname(current_dir)
 input_loc = os.path.join(par_path, 'datasets', 'multiple-periods', 'small')
 output_loc = os.path.join(par_path, 'outputs', 'multiple-periods', 'small')
@@ -102,7 +102,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         best_bound = None
 
     try:
-        gurobi_runtime = getattr(model.model, "Runtime", None)   # 求解器运行时间
+        gurobi_runtime = getattr(model.model, "Runtime", None)  # Solver runtime.
         if gurobi_runtime is not None:
             try:
                 gurobi_runtime = float(gurobi_runtime)
@@ -112,10 +112,10 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         gurobi_runtime = None
 
     try:
-        simplex_iters = getattr(model.model, "IterCount", None)     # gurobi求解模型调用的单纯形迭代次数
-        barrier_iters = getattr(model.model, "BarIterCount", None)  # gurobi求解模型调用的内点法迭代次数
+        simplex_iters = getattr(model.model, "IterCount", None)  # Simplex iterations.
+        barrier_iters = getattr(model.model, "BarIterCount", None)  # Barrier iterations.
         
-        iterations = 0  # 总迭代次数
+        iterations = 0  # Total solver iterations.
         if simplex_iters is not None:
             iterations += int(simplex_iters)
         if barrier_iters is not None:
@@ -130,12 +130,12 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         iterations = None
 
     try:
-        mip_gap = getattr(model.model, "MIPGap", None)  # 对于 MIP模型, 该属性表示当前的 MIP gap
+        mip_gap = getattr(model.model, "MIPGap", None)  # Current MIP gap.
     except Exception:
         mip_gap = None
 
     try:
-        node_count = getattr(model.model, "NodeCount", None)  # 分支定界法中处理的节点数
+        node_count = getattr(model.model, "NodeCount", None)  # Branch-and-bound nodes.
         if node_count is not None:
             try:
                 node_count = int(node_count)
@@ -145,7 +145,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         node_count = None
 
     try:
-        # 与模型口径保持一致: 车辆数 = sum_{v,t} z[v,t]
+        # Match the model convention: vehicles = sum_{v,t} z[v,t].
         z_vars = getattr(model, "z_lt", None)
         if z_vars is not None:
             vehicle_count = int(
@@ -239,18 +239,18 @@ def run_model_from_paths(input_file_loc=input_loc, output_file_loc=output_loc, d
     return run_model(data, model, time_limit=time_limit, out_dir=os.path.join(output_file_loc, dataset_name),
                      write_outputs=write_outputs)
 
-    # # 创建gurobi求解日志文件的保存路径
+    # Optional Gurobi log-file capture retained as reference code.
     # log_path = os.path.join('solve-logs', 'multiple-periods', 'small', 'dataset_1')
-    # # 如果路径不存在，需要先创建路径
+    # Create the log path if needed.
     # if not os.path.exists(log_path):
     #     os.makedirs(log_path)
-    # # 指定要保存的日志文件
+    # Specify the solver log file.
     # log_file = os.path.join(log_path, 'Windows PowerShell.txt')
-    # # 保存原始的标准输出和错误输出
+    # Preserve the original stdout and stderr streams.
     # origin_stdout = sys.stdout
     # origin_stderr = sys.stderr
     # try:
-    #     # 重定向标准输出和错误输出到文件
+    # Redirect stdout and stderr to the log file.
     #     with open(log_file, 'w') as file:
     #         sys.stdout = sys.stderr = file
     #         model = MonolithicModelMultiple(data=data)
@@ -260,16 +260,15 @@ def run_model_from_paths(input_file_loc=input_loc, output_file_loc=output_loc, d
     #             return False
     #         result_state(r_data=data)
     #         log_printer.print_title(f'The Vehicle Loading Plan is Done! {datetime.datetime.now()}')
-    #         # 强制将缓冲区里面的内容写入到文件
+    # Flush buffered output to disk.
     #         sys.stdout.flush()
     #         sys.stderr.flush()
-    # finally:  # 定义清理行为，无论是否发生异常，finally块中的代码都会被执行
-    #     # 恢复原始的标准输出和错误输出
+    # finally:  # Restore streams even if an exception occurs.
     #     sys.stdout = origin_stdout
     #     sys.stderr = origin_stderr
-    #     # 打印日志文件的保存位置
+    #     # Print the log-file location.
     # log_printer.print(f'Log file has been saved to the location: {log_file}')
-    # # 在finally块中的return语句会覆盖try中的return语句
+    # A return inside finally would override the try-block return value.
     # return flag
 
 
@@ -287,14 +286,14 @@ def output_result(model: MonolithicModelMultiple):
     output_file = os.path.join(model.data.output_file_loc, 'result.csv')
 
     df_result = create_dataframe(model)
-    # header=False表示不将dataframe的列名写入文件
+    # header=False omits the DataFrame column names.
     df_result.to_csv(output_file, mode='a', header=False)
 
 def create_dataframe(model: MonolithicModelMultiple):
     rows = []
-    if model.model.Status == GRB.OPTIMAL:  # 确保只有在模型达到最优时，才访问变量的Xn属性，获得最优解
+    if model.model.Status == GRB.OPTIMAL:  # Read variable values only for an optimal status.
         for (plant, dealer, sku_id, v_id, t), var in model.x_ijklt.items():
-            # 只有在使用车辆 l 且从生产基地 i 到经销商 j 的车辆 l 上装载的SKU k的数量大于0时，才保存结果
+            # Save only positive loaded quantities.
             if var.Xn > 0 and model.z_lt[v_id, t].Xn > 0 and model.y_ijlt[plant, dealer, v_id, t].Xn > 0:
                 rows.append({
                     'day': t,
@@ -340,9 +339,9 @@ def result_state(r_data: InputDataMultiple):
     df_tmp.to_csv(os.path.join(output_location, 'stat1.csv'))
 
     df_tmp = df_tmp.reset_index()
-    # 判断是否所有车辆中装载的SKU体积满足车辆容量约束
+    # Check whether every loaded vehicle satisfies its capacity constraint.
     is_cap_exceed = pd.Series(df_tmp['occupied_size'] <= df_tmp['carry_standard_size'])
-    if is_cap_exceed.all():  # 所有值都为True，则返回True
+    if is_cap_exceed.all():  # True when every vehicle is within capacity.
         log_printer.print("Congratulations! "
                           "The volume of SKUs loaded in each vehicle is equal or smaller than vehicle's capacity.")
     else:

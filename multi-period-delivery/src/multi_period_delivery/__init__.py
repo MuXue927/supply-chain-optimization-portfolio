@@ -1,25 +1,30 @@
 """
-multi_period_delivery 包初始化
+multi_period_delivery package initialization.
 
-模块定位
-    - 使 multi_period_delivery 成为可导入的 Python 包
-    - 提供常用对象的便捷导出（re-export），便于调用方 from multi_period_delivery import X
-    - 保持轻量与健壮：使用惰性/容错导入，避免导入时因可选依赖缺失导致失败
+Module role
+    - Make multi_period_delivery an importable Python package.
+    - Re-export common objects for convenient imports such as
+      `from multi_period_delivery import X`.
+    - Stay lightweight and robust by using lazy/fault-tolerant imports so
+      optional dependency failures do not break the package import.
 
-使用说明
-    - 仅导出常用/稳定接口；若某些子模块依赖重或可能缺失，则采用 try/except 包裹
-    - 导出失败不会影响包的基本可用性（但相应符号不可用）
+Usage notes
+    - Export only common, stable interfaces. Submodules with heavy or optional
+      dependencies are wrapped in try/except.
+    - Export failures do not affect basic package availability, but the
+      corresponding symbol will not be available.
 """
 
-# 采用“按可用性”构建导出清单，避免列出却不可用的符号
+# Build the export list based on availability so it never advertises a symbol
+# that failed to import.
 __all__ = []
 
-# 轻量、常用数据 IO 类
+# Lightweight, commonly used data I/O classes.
 try:
     from .InputDataALNS import DataALNS
     __all__.append("DataALNS")
 except Exception:
-    # 可选依赖缺失或模块内部错误时，跳过该导出
+    # Skip the export if an optional dependency is missing or the module fails.
     pass
 
 try:
@@ -28,23 +33,24 @@ try:
 except Exception:
     pass
 
-# 停止准则组合（含逻辑表达式 AND/OR 辅助构造器）
+# Combined stopping criteria and AND/OR expression helpers.
 try:
     from .combined_stopping import CombinedStoppingCriterion, AND, OR, create_standard_combined_criterion
     __all__ += ["CombinedStoppingCriterion", "AND", "OR", "create_standard_combined_criterion"]
 except Exception:
     pass
 
-# 解决方案一致性检查入口
+# Solution consistency-check entry point.
 try:
     from .check_solution import check_solution
     __all__.append("check_solution")
 except Exception:
     pass
 
-# 配置对象
+# Configuration object.
 try:
-    # 导出兼容旧代码的名为 ALNSConfig 的符号，但实际引用的是模块级 default_config 实例
+    # Export ALNSConfig for backward compatibility while referencing the
+    # module-level default_config instance.
     from .alns_config import default_config as ALNSConfig
     __all__.append("ALNSConfig")
 except Exception:

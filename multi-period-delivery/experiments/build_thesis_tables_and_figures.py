@@ -301,9 +301,9 @@ def plot_small_gap_boxplot(
         patch.set_edgecolor("#8b5e3c")
         patch.set_linewidth(1.4)
 
-    ax.set_xlabel("算法类别", fontsize=13, fontproperties=chinese_font)
+    ax.set_xlabel("Method", fontsize=13, fontproperties=chinese_font)
     ax.set_ylabel(
-        r"相对差异指标$Gap_{a}^{ILP}$(%)", fontsize=13, fontproperties=chinese_font
+        r"Relative gap metric $Gap_{a}^{ILP}$ (%)", fontsize=13, fontproperties=chinese_font
     )
     ax.tick_params(axis="both", labelsize=11)
     for label in ax.get_xticklabels():
@@ -313,14 +313,14 @@ def plot_small_gap_boxplot(
     ax.grid(False)
 
     legend_handles = [
-        Patch(facecolor="#f6c1a5", edgecolor="#8b5e3c", label="箱体"),
-        Line2D([0], [0], color="#666666", linewidth=1.4, label="须线"),
+        Patch(facecolor="#f6c1a5", edgecolor="#8b5e3c", label="Box"),
+        Line2D([0], [0], color="#666666", linewidth=1.4, label="Whisker"),
         Line2D(
             [0],
             [0],
             color="#d97706",
             linewidth=2.0,
-            label="中位数",
+            label="Median",
         ),
         Line2D(
             [0],
@@ -330,7 +330,7 @@ def plot_small_gap_boxplot(
             markerfacecolor="#2ca02c",
             markeredgecolor="#2ca02c",
             markersize=7,
-            label="均值",
+            label="Mean",
         ),
     ]
     ax.legend(
@@ -608,7 +608,7 @@ def main() -> int:
         "notes": [
             "Table 1 uses gap computed against per-instance monolithic objective in small scale.",
             "Table 2 uses improvement_pct from thesis_results_long.csv for medium/large.",
-            "Figure 1 is exported as SVG with Chinese labels, SimSun for Chinese glyphs, and Times New Roman for English/math text.",
+            "Figure 1 is exported as SVG with English labels, SimSun for label text, and Times New Roman for tick and math text.",
             "Figures 4-6 export one Objective.svg per ALNS variant for the three thesis quadruples.",
             "restyle_selected_convergence_svgs.py can be applied afterwards for final thesis styling.",
         ],

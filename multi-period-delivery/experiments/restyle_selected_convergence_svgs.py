@@ -159,7 +159,7 @@ def add_custom_legend(container: ET.Element, x_left: float, y_top: float) -> Non
             "style": "stroke: #1f77b4; stroke-width: 2;",
         },
     )
-    g.append(make_text(lx + 40, ly + 20, "搜索目标", size=11, font="SimSun"))
+    g.append(make_text(lx + 40, ly + 20, "Search objective", size=11, font="SimSun"))
 
     ET.SubElement(
         g,
@@ -172,7 +172,7 @@ def add_custom_legend(container: ET.Element, x_left: float, y_top: float) -> Non
             "style": "stroke: #d62728; stroke-width: 2;",
         },
     )
-    g.append(make_text(lx + 40, ly + 38, "实际目标", size=11, font="SimSun"))
+    g.append(make_text(lx + 40, ly + 38, "Actual objective", size=11, font="SimSun"))
     container.append(g)
 
 
@@ -233,14 +233,14 @@ def restyle_svg(input_path: Path, output_path: Path) -> None:
             x0, x1, y0, y1 = box
             axes.append(
                 make_text(
-                    (x0 + x1) / 2.0, y1 + 30.0, "迭代次数", size=15, font="SimSun"
+                    (x0 + x1) / 2.0, y1 + 30.0, "Iterations", size=15, font="SimSun"
                 )
             )
             axes.append(
                 make_text(
                     x0 - 56.0,
                     (y0 + y1) / 2.0,
-                    "搜索目标值",
+                    "Search objective value",
                     size=14,
                     font="SimSun",
                     rotate=(-90.0, x0 - 56.0, (y0 + y1) / 2.0),
@@ -250,7 +250,7 @@ def restyle_svg(input_path: Path, output_path: Path) -> None:
                 make_text(
                     x1 + 58.0,
                     (y0 + y1) / 2.0,
-                    "实际目标值",
+                    "Actual objective value",
                     size=14,
                     font="SimSun",
                     rotate=(90.0, x1 + 58.0, (y0 + y1) / 2.0),

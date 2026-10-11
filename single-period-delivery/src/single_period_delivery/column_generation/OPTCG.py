@@ -1,4 +1,4 @@
-# 用于执行列生成算法的代码
+# Entry point for running the column-generation algorithm.
 from .OPTLogicCG import run_model
 
 if __name__ == "__main__":

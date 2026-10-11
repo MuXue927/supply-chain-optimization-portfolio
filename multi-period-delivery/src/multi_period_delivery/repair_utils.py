@@ -1,8 +1,10 @@
 """
 repair_utils.py
 
-提取自 multi_period_delivery/repair_operators.py 的辅助/工具函数模块。
-供 repair_operators.py 中的算子调用，保持原实现与文档注释。
+Helper and utility functions extracted from
+multi_period_delivery/repair_operators.py.
+They are used by operators in repair_operators.py and preserve the original
+implementation behavior.
 """
 
 from typing import Dict, List, Tuple, Set, Optional
@@ -141,29 +143,34 @@ def compute_mixed_operator_reward(
 
 
 # ---------------------------
-# 基础资源/需求工具函数
+# Basic resource and demand utilities
 # ---------------------------
 def _construct_resource_availability(
     state: SolutionState, plant: str, sku_id: str, day: int
 ) -> float:
     """
-    返回 (plant, sku_id, day) 的可用库存数量, 不修改 state
+    Return available inventory for (plant, sku_id, day) without modifying state.
 
-    优化说明:
-      - 原实现对每次调用都会遍历 state.vehicles，导致在热点路径被反复调用时开销巨大。
-      - 这里引入一个轻量缓存：state._vehicles_by_plant_day_map
-        它是一个 dict[(plant, day)] -> dict[sku_id] -> used_qty，按需构建并在 state 结构性改变时被清除。
-      - 该缓存能将多次 O(V) 扫描降为一次 O(V) 构建，随后查表为 O(1)。
+    Performance notes:
+      - The original implementation scanned state.vehicles on every call, which
+        was expensive on hot paths.
+      - This implementation uses a lightweight cache stored in
+        state._vehicles_by_plant_day_map:
+        dict[(plant, day)] -> dict[sku_id] -> used_qty. It is built lazily and
+        cleared when state changes structurally.
+      - The cache reduces repeated O(V) scans to one O(V) build followed by
+        O(1) lookups.
     """
-    # 基线库存和产量
+    # Previous-period inventory and current-period production.
     prev_inv = state.s_ikt.get((plant, sku_id, day - 1), 0)
     production = state.data.sku_prod_each_day.get((plant, sku_id, day), 0)
 
-    # 尝试复用缓存的按 (plant, day) 聚合的已装载映射
+    # Reuse the cached loaded-quantity map aggregated by (plant, day).
     vbkey = "_vehicles_by_plant_day_map"
     vehicles_map = getattr(state, vbkey, None)
     if vehicles_map is None:
-        # 构建一次并缓存到 state（由 mark_objective_dirty 在结构变化时清除）
+        # Build once and cache on state; mark_objective_dirty clears it when the
+        # structure changes.
         vehicles_map = {}
         for veh in state.vehicles:
             key = (veh.fact_id, veh.day)
@@ -177,7 +184,8 @@ def _construct_resource_availability(
         try:
             setattr(state, vbkey, vehicles_map)
         except Exception:
-            # 若无法设置属性则继续不缓存（兼容只读对象）
+            # If the attribute cannot be set, continue without caching for
+            # compatibility with read-only objects.
             pass
 
     used_inv = vehicles_map.get((plant, day), {}).get(sku_id, 0)
@@ -188,13 +196,15 @@ def _construct_resource_pool(
     state: SolutionState, data: DataALNS
 ) -> Dict[Tuple[str, str, int], float]:
     """
-    构建资源池, 预先计算 (plant, sku, day) 的可用库存
+    Build a resource pool by precomputing available inventory for
+    (plant, sku, day).
 
-    优化说明:
-      - 使用按-state缓存 (_resource_pool_cache) 避免在短时间内重复构建资源池。
-      - 当 state 结构变化时会由 mark_objective_dirty 清除缓存。
+    Performance notes:
+      - Use a per-state cache (_resource_pool_cache) to avoid rebuilding the
+        resource pool repeatedly in a short period.
+      - mark_objective_dirty clears the cache when state changes structurally.
     """
-    # 尝试复用缓存
+    # Reuse the cache when available.
     cache = getattr(state, "_resource_pool_cache", None)
     if cache is not None:
         return cache
@@ -203,24 +213,28 @@ def _construct_resource_pool(
     try:
         setattr(state, "_resource_pool_cache", pool)
     except Exception:
-        # 如果无法设置属性（只读对象等），则跳过缓存
+        # Skip caching when the attribute cannot be set, such as on read-only
+        # objects.
         pass
     return pool
 
 
 def get_unmet_demand(state: SolutionState) -> Dict[Tuple[str, str], int]:
     """
-    返回当前解state中所有未满足的需求字典:
+    Return all unmet demand entries for the current state:
       key: (dealer, sku_id)
       value: unmet_quantity
 
-    优化说明:
-      - 这是 regret 算子中的热点函数（在短时间内会被频繁调用）。
-      - 引入基于轻量 state snapshot 的缓存（(len(vehicles), last_objective)）以避免
-        在 state 未发生结构性变化时重复调用 compute_shipped() 与遍历 demands。
-      - 缓存存储在 state._unmet_cache，且在 state.mark_objective_dirty() 被调用时应失效
-       （mark_objective_dirty 已在其它修改中实现对相关缓存的清理；若不存在则本函数
-        也会在检测到结构变化后重建缓存）。
+    Performance notes:
+      - This is a hot function in the regret operator and may be called
+        frequently in a short period.
+      - A lightweight state snapshot cache
+        ((len(vehicles), last_objective)) avoids repeated compute_shipped()
+        calls and demand scans when state has not changed structurally.
+      - The cache is stored in state._unmet_cache and should be invalidated
+        when state.mark_objective_dirty() is called. If invalidation is not
+        handled elsewhere, this function rebuilds the cache when it detects a
+        structural change.
     """
     try:
         # lightweight snapshot that changes when vehicles list or objective baseline changes
@@ -262,7 +276,7 @@ def get_unmet_demand(state: SolutionState) -> Dict[Tuple[str, str], int]:
 
 
 # ---------------------------
-# veh_loading wrapper（复用 alnsopt.veh_loading）
+# veh_loading wrapper around alnsopt.veh_loading
 # ---------------------------
 def veh_loading(
     state: SolutionState,
@@ -274,54 +288,63 @@ def veh_loading(
     """
     Wrapper that delegates to multi_period_delivery.alnsopt.veh_loading.
 
-    新增参数:
-      skip_compute_inventory: 当 commit=True 时，若为 True 则临时抑制 state.compute_inventory 的调用，
-        以便在批量场景下减少全表计算次数（调用方负责在批量结束后再调用一次 state.compute_inventory()）。
-        该优化为可选，遇到异常会回退到原始行为。
+    Added parameter:
+      skip_compute_inventory: when commit=True and this flag is True,
+        temporarily suppress calls to state.compute_inventory to reduce full
+        table recomputation in batch scenarios. The caller must invoke
+        state.compute_inventory() once after the batch completes. This
+        optimization is optional and falls back to the original behavior on
+        exceptions.
 
-    注意:
-      - 不修改 alnsopt.veh_loading 的签名；通过在 wrapper 层临时替换 state.compute_inventory 来避免多次全表更新.
-      - 在任何异常或不兼容情况下请务必恢复原 compute_inventory 以保证一致性。
+    Notes:
+      - Do not change the signature of alnsopt.veh_loading. This wrapper
+        temporarily replaces state.compute_inventory to avoid repeated full
+        updates.
+      - Always restore the original compute_inventory function after any
+        exception or incompatible condition to preserve consistency.
     """
     try:
         from . import alnsopt as _alnsopt
     except Exception:
         raise RuntimeError(
-            "无法导入 multi_period_delivery.alnsopt, veh_loading wrapper 无法工作。"
+            "Cannot import multi_period_delivery.alnsopt; the veh_loading "
+            "wrapper cannot work."
         )
 
     if not commit:
-        # 在副本上模拟，不触及真实 state
+        # Simulate on a copy without touching the real state.
         tmp = state.copy()
         _alnsopt.veh_loading(tmp, veh, orders)
         return True
 
-    # commit == True: 尝试在允许的情况下抑制 compute_inventory 以批量更新
+    # commit == True: suppress compute_inventory when possible for batch updates.
     if skip_compute_inventory and hasattr(state, "compute_inventory"):
         orig_compute = getattr(state, "compute_inventory")
         try:
-            # 先建立库存基线，再进入抑制模式，避免在未初始化 s_ikt 上做增量扣减。
+            # Establish the inventory baseline before suppressing updates so
+            # incremental deductions are not applied to uninitialized s_ikt.
             if not getattr(state, "s_initialized", False):
                 orig_compute()
-            # 临时禁用 compute_inventory（简单替换为 no-op）
+            # Temporarily disable compute_inventory with a no-op replacement.
             state.compute_inventory = lambda: None
             _alnsopt.veh_loading(state, veh, orders)
         except Exception:
-            # 若发生任何异常，保证恢复并向上抛出以触发回退逻辑
+            # On any exception, restore the original function and re-raise so
+            # the caller can execute fallback logic.
             try:
                 state.compute_inventory = orig_compute
             except Exception:
                 pass
             raise
         finally:
-            # 恢复原始函数（保护性恢复）
+            # Protectively restore the original function.
             try:
                 state.compute_inventory = orig_compute
             except Exception:
                 pass
         return True
     else:
-        # 原始行为（不抑制 compute_inventory）
+        # Original behavior: do not suppress compute_inventory.
         _alnsopt.veh_loading(state, veh, orders)
         return True
 
@@ -396,19 +419,20 @@ def commit_load_with_tracking(
 
 
 # ---------------------------
-# 预计算与资源池工具（greedy 支持）
+# Precomputation and resource-pool utilities for greedy repair
 # ---------------------------
 def precompute_total_available(
     state: SolutionState, data: DataALNS, supply_chain: Dict[Tuple[str, str], Set[str]]
 ) -> Dict[Tuple[str, str], float]:
     """
-    预计算每个 (dealer, sku_id) 的跨工厂、跨期总的理论可用量（期初库存 + 生产）
-    返回 dict[(dealer, sku_id)] -> total_available (int/float)
+    Precompute theoretical cross-plant, cross-period availability for each
+    (dealer, sku_id) as previous inventory plus production.
+    Return dict[(dealer, sku_id)] -> total_available (int/float).
     """
     total_avail = {}
     for (dealer, sku_id), demand in data.demands.items():
         s = 0
-        # 只汇总能为该 dealer 提供该 sku 的工厂
+        # Aggregate only plants that can supply this SKU to the dealer.
         plants = [
             plant
             for (plant, dealer_key), skus in supply_chain.items()
@@ -505,11 +529,13 @@ class ResourcePool:
 
 def build_resource_pool(state: SolutionState, data: DataALNS):
     """
-    构建资源池 ResourcePool，返回 ResourcePool 对象。
-    兼容旧调用方式（tuple-key get/set），但在内部使用嵌套结构降低 tuple-key 哈希开销。
+    Build and return a ResourcePool object.
+    Preserve compatibility with the legacy tuple-key get/set interface while
+    using a nested structure internally to reduce tuple-key hash overhead.
     """
     pool = ResourcePool()
-    # 采用本地汇总当前 vehicles 使用量以避免在循环中重复遍历 state.vehicles
+    # Aggregate current vehicle usage into a local map to avoid repeatedly
+    # scanning state.vehicles inside the loop.
     vehicles_by_plant_day = {}
     for veh in state.vehicles:
         key = (veh.fact_id, veh.day)
@@ -528,12 +554,13 @@ def build_resource_pool(state: SolutionState, data: DataALNS):
 
 
 # ---------------------------------------------------------------------
-# 获取算子自适应参数 与 批量后处理
+# Adaptive operator parameters and batch post-processing
 # ---------------------------------------------------------------------
 def get_adaptive_parameters(op_name: str, param_tuner: ParamAutoTuner):
     """
-    获取某算子当前动态调参结果(若 ParamAutoTuner 不存在/异常则返回空字典)。
-    :param op_name: 算子名称 (例如 'random_removal')
+    Return the current dynamic tuning parameters for an operator, or an empty
+    dictionary when ParamAutoTuner is unavailable or raises an exception.
+    :param op_name: operator name, such as 'random_removal'
     :return: dict
     """
     if not param_tuner:
@@ -542,7 +569,7 @@ def get_adaptive_parameters(op_name: str, param_tuner: ParamAutoTuner):
         params = param_tuner.get_operator_params(op_name)
         return params if params else {}
     except Exception as e:
-        print(f"[WARNING] get_adaptive_parameters({op_name}) 异常: {e}")
+        print(f"[WARNING] get_adaptive_parameters({op_name}) exception: {e}")
         return {}
 
 
@@ -627,10 +654,12 @@ def post_repair(
     extra: dict = None,
 ):
     """
-    批量修复后的后处理：
-    - 执行一次 state.compute_inventory()
-    - 若发现车辆超载等硬约束违规，尝试回滚本次插入的车辆（按 id 匹配）并再次复核
-    - 计算改进并向 param_tuner / 日志上报，打印简短 JSON 风格日志
+    Post-process a batch repair:
+    - Call state.compute_inventory() once.
+    - If hard-constraint violations such as vehicle overload are found, try to
+      roll back newly inserted vehicles by id and validate again.
+    - Compute improvement, report it to param_tuner and logs, and print a
+      short JSON-style log entry.
     """
     merged_after_repair = 0
     try:
@@ -708,10 +737,12 @@ def post_repair(
         # Defensive: do not let post_repair fail due to inventory checks
         pass
 
-    # 诊断插入车辆摘要（限制采样以避免大量字符串构建/IO 开销）
+    # Build a diagnostic summary of inserted vehicles. Limit sampling to avoid
+    # excessive string construction and I/O overhead.
     try:
         total_inserted = len(inserted) if inserted else 0
-        # 仅采样前 20 辆车辆作为诊断示例，避免在大量插入场景下构建完整列表
+        # Sample only the first 20 vehicles to avoid constructing a large
+        # diagnostic list when many vehicles are inserted.
         inserted_summary = []
         if inserted:
             for v in inserted[:20]:
@@ -728,7 +759,7 @@ def post_repair(
                     )
                 except Exception:
                     inserted_summary.append({"veh": str(v)})
-        # 打印总数与样本摘要（样本最多 20 条）
+        # Print the total count and a sample summary of at most 20 entries.
         try:
             print(
                 f"[DIAG] post_repair op={op_name} inserted_cnt={total_inserted} merged_after={merged_after_repair} sample_cnt={len(inserted_summary)}"
@@ -738,15 +769,18 @@ def post_repair(
     except Exception:
         inserted_summary = []
 
-    # 快速验证当前 state 是否可行；若存在 veh_over_load 则尝试回滚本次插入的车辆
-    # 如果之前已经做过轻量 inserted-only 检查并得出可行 (feasible_tmp)，则复用其结果以避免重复调用
+    # Quickly validate the current state and roll back vehicles inserted by
+    # this operation when vehicle overload is detected. If the lightweight
+    # inserted-only check already produced feasible_tmp, reuse it to avoid
+    # repeated validation calls.
     try:
         strict_mode = bool(
             getattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", True)
             or getattr(ALNSConfig, "VALIDATE_REQUIRE_FULL_DEMAND", True)
         )
         if ("feasible_tmp" in locals()) and (not strict_mode):
-            # 非严格模式下允许复用轻量检查结果，减少重复 validate 开销。
+            # In non-strict mode, reuse the lightweight result to reduce
+            # repeated validation overhead.
             if feasible_tmp:
                 feasible, violations = True, {}
             else:
@@ -778,7 +812,7 @@ def post_repair(
     )
     if not feasible and hard_violation_exists:
         try:
-            # 收集要回滚的车辆 id
+            # Collect vehicle ids to roll back.
             to_rollback_ids = {
                 getattr(v, "id", None)
                 for v in (inserted or [])
@@ -786,14 +820,14 @@ def post_repair(
             }
             if to_rollback_ids:
                 before_cnt = len(state.vehicles)
-                # 保留非本次插入的车辆
+                # Keep vehicles that were not inserted by this operation.
                 state.vehicles = [
                     v
                     for v in state.vehicles
                     if getattr(v, "id", None) not in to_rollback_ids
                 ]
                 rolled_back = True
-                # 使缓存失效并重建基线库存
+                # Invalidate caches and rebuild the baseline inventory.
                 try:
                     state.mark_objective_dirty()
                 except Exception:
@@ -802,7 +836,7 @@ def post_repair(
                     state.compute_inventory()
                 except Exception:
                     pass
-                # 复核
+                # Validate again after rollback.
                 try:
                     feasible_after, violations_after = state.validate()
                 except Exception:
@@ -820,7 +854,9 @@ def post_repair(
             except Exception:
                 pass
 
-    # 计算改进并上报：优先使用本模块的增量/缓存友好 compute_improvement() 以避免不必要的全表重算。
+    # Compute and report improvement. Prefer this module's incremental,
+    # cache-friendly compute_improvement() to avoid unnecessary full
+    # recomputation.
     new_obj = None
     improvement = 0.0
     success_flag = False
@@ -852,7 +888,7 @@ def post_repair(
         improvement = 0.0
         success_flag = False
 
-    # 简短日志输出（JSON 风格）
+    # Emit a short JSON-style log entry.
     elapsed = time.time() - t0 if t0 is not None else None
     try:
         print(
@@ -861,7 +897,8 @@ def post_repair(
     except Exception:
         pass
 
-    # 记录修复算子可行性闭环统计，便于离线分析可行率与失败类型。
+    # Record repair-operator feasibility statistics for offline analysis of
+    # success rates and failure types.
     try:
         if hasattr(state, "record_repair_audit") and callable(
             getattr(state, "record_repair_audit")
@@ -879,7 +916,7 @@ def post_repair(
 
 
 # ---------------------------
-# Smart batch helpers（批处理相关）
+# Smart batch helpers
 # ---------------------------
 def _get_unsatisfied_demands(state: SolutionState, data: DataALNS):
     shipped = state.compute_shipped()
@@ -913,11 +950,13 @@ def _create_smart_batches(unsatisfied_demands, data, batch_size: int):
 
 def _process_demand_batch(state, batch, resource_pool, data, rng):
     """
-    对单个批次进行处理：找到最优分配并通过 veh_loading 提交装载
-    返回: batch_progress (bool) 指示是否有进展（至少一笔装载）
+    Process one batch: find the best allocation and commit loads through
+    veh_loading.
+    Return batch_progress (bool), indicating whether at least one load was
+    committed.
     """
     batch_progress = False
-    inserted_vehicles = []  # 记录本批次插入的车辆, 用于后续可能的日志或分析
+    inserted_vehicles = []  # Vehicles inserted in this batch for logs or analysis.
 
     for demand_info in batch:
         dealer = demand_info["dealer"]
@@ -941,7 +980,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
         plant, day, available_qty = best
         loaded_total = 0
 
-        # 先尝试填充已存在车辆，避免无谓新增车辆
+        # Fill existing vehicles first to avoid creating unnecessary vehicles.
         for existing in find_existing_route_vehicles(state, plant, dealer, day):
             if remain_demand <= 0 or available_qty <= 0:
                 break
@@ -966,7 +1005,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                 inserted_vehicles.extend(new_vs)
             batch_progress = True
 
-        # 再新建车辆补齐剩余需求
+        # Create new vehicles to cover any remaining demand.
         if remain_demand > 0 and available_qty > 0:
             veh_type = _select_optimal_vehicle_type(remain_demand, sku_id, data)
             request_qty = min(remain_demand, available_qty)
@@ -1002,13 +1041,13 @@ def _find_best_allocation(remain_demand, sku_id, available_plants, resource_pool
     best = None
     for plant in available_plants:
         for day in range(1, data.horizons + 1):
-            available_qty = resource_pool.get((plant, sku_id, day), 0)  # 可以用的库存
+            available_qty = resource_pool.get((plant, sku_id, day), 0)  # Available inventory.
             if available_qty <= 0:
                 continue
-            satisfaction_ratio = min(1.0, available_qty / remain_demand)  # 满足比例
+            satisfaction_ratio = min(1.0, available_qty / remain_demand)  # Demand satisfaction ratio.
             efficiency_score = available_qty / max(
                 1, available_qty + remain_demand
-            )  # 可用库存 占比
+            )  # Share of available inventory.
             score = satisfaction_ratio * 0.7 + efficiency_score * 0.3
             if score > best_score:
                 best_score = score
@@ -1023,11 +1062,13 @@ def _select_optimal_vehicle_type(demand_qty, sku_id, data):
 
 def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
     """
-    当主循环未能完全满足所有需求时，尝试以最保守的方式填充剩余需求, 例如最小车辆、首选工厂/日
-    该函数主要作为兜底机制，避免算子超时导致较多遗漏
+    When the main loop cannot fully satisfy all demand, attempt a conservative
+    fill of remaining demand using the smallest suitable vehicles and preferred
+    plant/day choices. This is a fallback mechanism to reduce omissions when an
+    operator reaches its time limit.
     """
     shipped = state.compute_shipped()
-    inserted_vehicles = []  # 记录插入的车辆, 用于日志或分析
+    inserted_vehicles = []  # Vehicles inserted for logs or analysis.
     for (dealer, sku_id), demand in data.demands.items():
         remain = demand - shipped.get((dealer, sku_id), 0)
         if remain <= 0:
@@ -1099,7 +1140,7 @@ def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
 
 
 # ---------------------------
-# 改进计算（快速估算 + 精确评估）
+# Improvement computation: fast estimation and exact evaluation
 # ---------------------------
 def compute_improvement_fast_add_vehicle(
     state: SolutionState,
@@ -1111,18 +1152,22 @@ def compute_improvement_fast_add_vehicle(
     qty: int,
 ):
     """
-    快速近似评估向解中加入一辆 vehicle (只包含单一 SKU 装载 qty) 对目标的影响。
-    说明:
-      - 该函数不修改 state，也不复制整个 SolutionState。
-      - 使用目标函数的结构性信息进行近似估算：
+    Quickly approximate the objective impact of adding one vehicle loaded with
+    a single SKU and quantity qty.
+    Notes:
+      - This function does not modify state or copy the full SolutionState.
+      - Use structural information from the objective for approximation:
           improvement_unscaled ≈ param_pun_factor1 * qty - veh_cost - min_load_penalty
-      - 返回 (new_obj_est, improvement_scaled, success_flag) 三元组。
-    重要优化:
-      - 为避免在候选筛选阶段触发昂贵的 state.objective()/compute_inventory()，本实现
-        不再调用 state.objective()。new_obj_est 返回 None，调用方仅使用 impro_scaled
-        与 success_flag 作为过滤依据；在需要精评时再在副本上运行精确模拟。
-    限制:
-      - 该估算忽略库存溢出/约束导致的实际不可行性，仅作为 cheap filter 使用。
+      - Return (new_obj_est, improvement_scaled, success_flag).
+    Important optimization:
+      - To avoid expensive state.objective()/compute_inventory() calls during
+        candidate filtering, this implementation does not call
+        state.objective(). new_obj_est is None, and callers should use
+        impro_scaled and success_flag only for filtering. Run an exact
+        simulation on a copy when precise evaluation is needed.
+    Limitation:
+      - This estimate ignores infeasibility caused by inventory overflows and
+        other constraints. Use it only as a cheap filter.
     """
     data = state.data
     try:
@@ -1130,14 +1175,15 @@ def compute_improvement_fast_add_vehicle(
     except Exception:
         scale = 1e-3
 
-    # 基本参数
+    # Basic parameters.
     veh_cost = float(data.veh_type_cost.get(veh_type, 0.0))
     try:
         benefit = float(data.param_pun_factor1) * float(qty)
     except Exception:
         benefit = float(qty)
 
-    # 估算最小起运量惩罚（若装载体积不足以满足车辆 min_load）
+    # Estimate the minimum-load penalty when loaded volume is below the
+    # vehicle's min_load.
     sku_size = float(data.sku_sizes.get(sku_id, 0.0))
     load_volume = sku_size * float(qty)
     min_load = float(data.veh_type_min_load.get(veh_type, 0.0))
@@ -1148,13 +1194,14 @@ def compute_improvement_fast_add_vehicle(
         except Exception:
             min_load_penalty = 0.0
 
-    # 估算未缩放的改进值（正表示改进）
+    # Estimate the unscaled improvement, where positive means improvement.
     impro_unscaled = benefit - veh_cost - min_load_penalty
 
-    # 转换到 objective 的缩放尺度
+    # Convert to the objective's scaled units.
     impro_scaled = impro_unscaled * scale
 
-    # 不在此处调用 state.objective() 以避免触发 compute_inventory 等昂贵操作。
+    # Do not call state.objective() here, to avoid expensive operations such as
+    # compute_inventory.
     new_obj_est = None
 
     success = impro_scaled > 0.0
@@ -1247,13 +1294,16 @@ def compute_improvement_delta(
 
 def compute_improvement(state: SolutionState, prev_obj: Optional[float] = None):
     """
-    计算改进量, 返回 (new_obj, improvement, success)
+    Compute improvement and return (new_obj, improvement, success).
 
-    优化说明:
-      - 接受可选的 prev_obj，从调用方传入可以避免重复计算“基线”目标。
-      - 使用 state 上的缓存 (state.last_objective, state.objective_dirty) 避免对同一 state 重复调用
-        state.objective()。在第一次计算后会尝试缓存 new_obj 以供随后复用（低风险、安全回退）。
-      - 行为兼容：如果 prev_obj 为 None，仍然返回 (new_obj, 0.0, False) 以保持现有调用约定。
+    Performance notes:
+      - Accept an optional prev_obj from the caller to avoid recomputing the
+        baseline objective.
+      - Use state.last_objective and state.objective_dirty to avoid repeated
+        state.objective() calls on the same state. Cache new_obj after the
+        first computation for later reuse, with a safe fallback.
+      - Preserve existing behavior: when prev_obj is None, still return
+        (new_obj, 0.0, False).
     """
     try:
         # Prefer cached objective when available to avoid recomputation
@@ -1263,12 +1313,12 @@ def compute_improvement(state: SolutionState, prev_obj: Optional[float] = None):
             new_obj = last_obj
         else:
             new_obj = state.objective()
-            # best-effort cache the computed objective on the state for subsequent calls
+            # Best-effort cache the computed objective for subsequent calls.
             try:
                 state.last_objective = new_obj
                 state.objective_dirty = False
             except Exception:
-                # ignore caching failures (e.g., read-only wrappers)
+                # Ignore caching failures, such as on read-only wrappers.
                 pass
 
         _, improvement, success = compute_mixed_operator_reward(

@@ -1,11 +1,14 @@
 """
 callbacks.py
 
-将 ALNSOptimizer 中的回调逻辑提取到单独模块, 提供工厂函数生成回调并封装注册过程。
-设计要点:
-- 不直接持有重型依赖, 在需要时局部导入
-- 使用 optimizer 实例访问所需上下文 (log_printer, param_tuner, ml_selector, tracker, 等)
-- 对可能缺失的方法/属性做防守性检查和 try/except 捕获
+Callback factories and registration helpers for ``ALNSOptimizer``.
+
+Design notes:
+- Heavy dependencies are imported locally when needed.
+- The optimizer instance provides contextual objects such as ``log_printer``,
+  ``param_tuner``, ``ml_selector``, and ``tracker``.
+- Optional methods and attributes are guarded with defensive checks and
+  exception handling.
 """
 
 from __future__ import annotations
@@ -211,22 +214,22 @@ def is_candidate_better(
         return False
 
     if getattr(ALNSConfig, "ENABLE_VEHICLE_COUNT_PRIORITY", True):
-        # 基于进度的动态阈值调整
-        # 早期(progress < 0.5): 更激进的车辆数削减(允许更大的目标函数恶化)
-        # 中期(0.5-0.8): 标准阈值
-        # 后期(progress >= 0.8): 更保守的阈值(保证质量)
+        # Adjust tolerances by search progress:
+        # early (<0.5): more aggressive fleet reduction;
+        # middle (0.5-0.8): standard tolerance;
+        # late (>=0.8): more conservative tolerance to preserve quality.
         phase_factor = 1.0
         if progress < 0.5:
-            # 早期探索：增加1.5倍的tolerance用于vehicle reduction
+            # Early exploration: allow 1.5x the standard tolerance.
             phase_factor = 1.5
         elif progress >= 0.8:
-            # 后期精化：减少50%的tolerance
+            # Late refinement: reduce tolerance by 50%.
             phase_factor = 0.5
 
         rel_tol = float(getattr(ALNSConfig, "VEHICLE_PRIORITY_OBJ_REL_TOL", 0.005))
         abs_tol = float(getattr(ALNSConfig, "VEHICLE_PRIORITY_OBJ_ABS_TOL", 0.25))
 
-        # 应用进度系数
+        # Apply the progress-dependent factor.
         rel_tol = rel_tol * phase_factor
         abs_tol = abs_tol * phase_factor
 
@@ -444,33 +447,34 @@ def _choose_elite_relink_target(
 
 def _is_best_feasible_solution(state: SolutionState) -> bool:
     """
-    判断当前解是否为最佳可行解的辅助函数。
-    要求: validate() 返回可行, 目标函数值不是inf, 且不存在未满足需求相关的违例。
+    Return whether the state qualifies as a best feasible candidate.
+
+    Requirements: validation succeeds, the objective is finite, and there are no
+    unmet-demand violations.
     """
     if state is None:
         return False
 
-    # 安全调用 compute_inventory, 兼容测试代码
+    # Call compute_inventory defensively for compatibility with tests.
     try:
         if hasattr(state, "compute_inventory") and callable(
             getattr(state, "compute_inventory")
         ):
-            # 强制刷新库存以确保状态一致
+            # Force an inventory refresh so the state is internally consistent.
             state.compute_inventory()
     except Exception:
         pass
 
-    # 检验是否通过validate, 该函数已经修改, 会检查需求满足约束
-    # 如果存在不满足需求的违例, 则 is_feasible 会为 False
+    # Validation includes demand-fulfillment constraints.
     is_feasible, violations = state.validate()
 
     if not is_feasible:
         return False
 
-    # 计算当前解的目标函数值, 如果 obj 为 非有限值, 则返回 False
+    # Reject non-finite objective values.
     obj = _safe_float(state.objective())
 
-    if not isfinite(obj):  # 如果 obj 是 inf
+    if not isfinite(obj):
         return False
 
     return True
@@ -478,8 +482,10 @@ def _is_best_feasible_solution(state: SolutionState) -> bool:
 
 def _record_best_feasible(candidates: List[SolutionState]) -> Optional[SolutionState]:
     """
-    在给定的候选解列表中, 寻找最优的完全可行解 (validate 通过) 并返回。
-    如果没有完全可行解, 则返回 None。
+    Return the best fully feasible state from the candidate list.
+
+    A fully feasible state passes validation. Return ``None`` when no candidate
+    qualifies.
     """
     best_state: Optional[SolutionState] = None
     best_obj: Optional[float] = None
@@ -517,50 +523,50 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
     emits a JSON snapshot for offline debugging.
     """
 
-    # 收集候选：回调态、tracker 已知最优、当前已记录最优
+    # Collect the callback state, tracker best solution, and recorded best state.
     candidates = [state]
 
     tracker = getattr(optimizer, "tracker", None)
     if tracker is not None:
-        # 1. 考虑 tracker.best_solution
+        # 1. Consider tracker.best_solution.
         best_sol_any = getattr(tracker, "best_solution", None)
         if best_sol_any is not None:
             candidates.append(best_sol_any)
 
-    # 2. 优化器中已记录的最优完全可行解
+    # 2. Include the optimizer's recorded best feasible state.
     if optimizer.best_feasible_state is not None:
         candidates.append(optimizer.best_feasible_state)
 
-    # 在候选中寻找最优完全可行解
+    # Find the best fully feasible candidate.
     best = _record_best_feasible(candidates)
 
     if best is None:
-        # 没有比当前记录更好的完全可行解, 直接返回
+        # No better fully feasible state was found.
         return
 
-    # 若已有记录且同一对象或目标未提升，则不更新
+    # Keep the existing record when the objective does not improve.
     prev = optimizer.best_feasible_state
 
-    # 获取之前记录的最优完全可行解的目标值
+    # Objective of the previously recorded best feasible state.
     prev_obj = _safe_float(prev.objective()) if prev is not None else None
     best_obj = None
 
-    # 获取当前找到的最优完全可行解的目标值
+    # Objective of the newly selected best feasible state.
     best_obj = _safe_float(best.objective())
 
     if best_obj is None:
-        return  # 无效目标值, 不更新
+        return  # Invalid objective; keep the previous record.
     best_veh = _used_vehicle_count(best)
     best_profile = build_state_profile(best)
     prev_profile = build_state_profile(prev) if prev is not None else None
 
-    # 是否应该更新记录到的最优完全可行解
-    # 计算当前进度用于动态tolerance调整
+    # Decide whether to update the recorded best feasible state.
+    # Compute progress for dynamic tolerance adjustments.
     progress = 0.0
     try:
         if hasattr(optimizer, "tracker") and optimizer.tracker is not None:
             tracker = optimizer.tracker
-            # 尝试从tracker获取进度信息
+            # Try to read progress information from the tracker.
             if hasattr(tracker, "_iteration_count") and hasattr(
                 tracker, "_max_iterations"
             ):
@@ -577,7 +583,7 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
     )
 
     if should_update:
-        # 记录新的最优完全可行解 (深拷贝)
+        # Record a snapshot of the new best feasible solution.
         optimizer.best_feasible_state = safe_state_snapshot(best)
         optimizer.best_feasible_obj = best_obj if best_obj is not None else float("inf")
 
@@ -598,7 +604,7 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
 
         if best_obj is not None:
             logger.info(
-                "[BEST_FEASIBLE] 记录完全可行解: obj=%.2f, vehicles=%d",
+                "[BEST_FEASIBLE] Recorded fully feasible solution: obj=%.2f, vehicles=%d",
                 best_obj,
                 best_veh,
             )
@@ -609,14 +615,14 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
     else:
         if best_obj is not None and prev_obj is not None:
             logger.info(
-                "[BEST_FEASIBLE] 当前解不是更优完全可行解, 无记录: best_obj=%.2f prev_obj=%.2f",
+                "[BEST_FEASIBLE] Candidate is not better; keeping record: best_obj=%.2f prev_obj=%.2f",
                 best_obj,
                 prev_obj,
             )
 
 
 def make_callback_on_best(optimizer: ALNSOptimizer) -> Callable[..., None]:
-    """返回一个用于 on_best 的回调函数 (轻量代理到 record_best_feasible)。"""
+    """Return an ``on_best`` callback that delegates to record_best_feasible()."""
 
     def callback_on_best(state, rng, **kwargs):
         try:
@@ -631,10 +637,12 @@ def make_callback_on_best(optimizer: ALNSOptimizer) -> Callable[..., None]:
 
 def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int = 1):
     """
-    在不影响主解的前提下进行轻量级试验采样 (在 state.copy() 上执行)。
-    目的: 在早期迭代快速累积 ML 训练样本, 使模型尽快满足最小样本阈值。
-    - budget: 每次调用的试验次数 (每次试验会尝试一次 destroy 和一次 repair)
-    注意: 严格在副本上执行, 所有异常均被捕获以避免影响主循环。
+    Run lightweight exploratory sampling on state copies.
+
+    Purpose: accumulate ML training samples early so the model can reach its
+    minimum sample threshold quickly. ``budget`` controls how many destroy/repair
+    trials are attempted per call. Work is performed only on copies, and all
+    exceptions are caught to avoid disrupting the main ALNS loop.
     """
     if not optimizer.ml_selector or not optimizer.param_tuner:
         return
@@ -643,7 +651,7 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
             tmp_state = safe_state_snapshot(state)
             if tmp_state is None:
                 continue
-            # 先尝试一次 destroy (显式注入 selector 和 tuner, 避免依赖 tmp_state 上的绑定)
+            # Try one destroy operation with explicit selector and tuner inputs.
             try:
                 _ = ml_based_destroy(
                     tmp_state,
@@ -651,9 +659,9 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
                     1,
                 )
             except Exception:
-                # 若 destroy 失败, 不影响后续 repair 尝试
+                # A failed destroy does not prevent the repair attempt.
                 logger.debug("ML warmup: destroy failed on temp state, continuing")
-            # 再尝试一次 repair (显式注入 selector 和 tuner)
+            # Try one repair operation with explicit selector and tuner inputs.
             try:
                 _ = ml_based_repair(
                     tmp_state,
@@ -670,22 +678,26 @@ def make_callback_on_iteration(
     optimizer: ALNSOptimizer, stop: Optional[Any] = None
 ) -> Callable[..., None]:
     """
-    返回 on_iteration 逻辑的回调函数。
-    该回调会:
-      - 检验当前解中是否存在负库存, 若存在尝试自动修复
-      - 做 runtime feasibility guard (必要时回滚到上一次可行解快照)
-      - 每隔若干次迭代打印进度 (安全访问 stop)
-      - 更新 param_tuner 的迭代计数 (若启用)
-      - 触发 ML retrain (后台提交) 与 warmup sampling (如启用)
-      - 委托 tracker.on_iteration (若存在)
-    所有对 optimizer 的访问均做防守性检查以避免破坏主循环。
+    Return an ``on_iteration`` callback.
+
+    The callback:
+      - checks and repairs negative inventory;
+      - runs a runtime feasibility guard and rolls back to the latest feasible
+        snapshot when necessary;
+      - prints periodic progress using ``stop`` when available;
+      - updates the parameter tuner iteration count;
+      - submits ML retraining and warmup sampling when enabled;
+      - delegates to ``tracker.on_iteration`` when present.
+
+    All optimizer access is guarded to avoid disrupting the main ALNS loop.
     """
 
     def callback_on_iteration(state: SolutionState, rng: rnd.Generator, **kwargs):
         fast_mode = bool(getattr(ALNSConfig, "ENABLE_FAST_ALNS_MODE", False))
 
-        # 步骤1: 按配置降频执行完整验证路径, 减少每迭代 validate() 开销。
-        # 注意: 迭代计数在回调末尾递增, 因此这里用 next_iteration 进行判定。
+        # Step 1: throttle full validation according to configuration to reduce
+        # validate() overhead. The callback increments the counter at the end,
+        # so use next_iteration for scheduling decisions.
         next_iteration = (
             optimizer.get_iteration() + 1
             if hasattr(optimizer, "get_iteration")
@@ -715,10 +727,10 @@ def make_callback_on_iteration(
         _guard_viol = {}
 
         if run_full_guard:
-            # 强制重新计算库存, 确保库存装载与发运记录保持一致
+            # Recompute inventory so loads and shipments stay consistent.
             state.compute_inventory()
 
-            # 检查是否存在负库存
+            # Check for negative inventory.
             if (
                 hasattr(state, "inventory_manager")
                 and state.inventory_manager is not None
@@ -729,11 +741,11 @@ def make_callback_on_iteration(
 
             if negative_items:
                 logger.debug(
-                    "[CALLBACK_INV_CHECK] 检测到负库存: count=%d sample=%s",
+                    "[CALLBACK_INV_CHECK] Negative inventory detected: count=%d sample=%s",
                     len(negative_items),
                     negative_items[:5],
                 )
-                # 触发自动修复, 调用inventory_manager.auto_repair_inventory_inconsistency方法
+                # Trigger automatic repair through the inventory manager.
                 if (
                     hasattr(state, "inventory_manager")
                     and state.inventory_manager is not None
@@ -744,41 +756,41 @@ def make_callback_on_iteration(
                         )
                     )
                     if repaired:
-                        logger.debug("[CALLBACK_INV_CHECK] 负库存修复成功")
-                        # 暂时将当前解标记为可行, 后续还会验证
+                        logger.debug("[CALLBACK_INV_CHECK] Negative inventory repaired")
+                        # Mark feasible temporarily; validation follows below.
                         feasible = True
                     else:
-                        logger.debug("[CALLBACK_INV_CHECK] 负库存修复失败")
-                        # 将当前解标记为不可行, 触发Runtime Guard回
+                        logger.debug("[CALLBACK_INV_CHECK] Negative inventory repair failed")
+                        # Mark infeasible to trigger the runtime guard.
                         feasible = False
 
         try:
             if run_full_guard:
-                # 检查当前解的可行性
+                # Validate the current state.
                 feasible, _guard_viol = state.validate()
                 neg_viol = []
                 if isinstance(_guard_viol, dict):
                     neg_viol = list(_guard_viol.get("negative_inventory") or [])
 
-                # 负库存检查：仅当确实存在负库存违例时触发infeasible_repair
+                # Run infeasible_repair only when negative inventory exists.
                 if not feasible and len(neg_viol) > 0:
                     logger.debug(
-                        "[VALIDATION_ERROR] 检测到负库存: count=%d sample=%s",
+                        "[VALIDATION_ERROR] Negative inventory detected: count=%d sample=%s",
                         len(neg_viol),
                         neg_viol[:5],
                     )
 
-                    # 触发infeasible_repair
+                    # Trigger infeasible_repair.
                     from .repair_operators import infeasible_repair
 
                     repaired_state = infeasible_repair(state, rng)
                     if repaired_state is not None:
-                        # 替换当前状态
+                        # Replace the current vehicle set.
                         state.replace_vehicles(repaired_state.vehicles)
-                        logger.info("[INFEASIBLE_REPAIR] 负库存修复成功")
+                        logger.info("[INFEASIBLE_REPAIR] Negative inventory repaired")
 
                 if feasible:
-                    # 增强库存一致性检查
+                    # Perform an additional inventory consistency check.
                     if (
                         hasattr(state, "inventory_manager")
                         and state.inventory_manager is not None
@@ -794,14 +806,17 @@ def make_callback_on_iteration(
                     neg_count = len(negative_items)
 
                     if neg_count > 0:
-                        logger.debug(f"[GUARD_INV] 接受后检测到 {neg_count} 个负库存")
-                        # 标记为不可行, 触发回滚
+                        logger.debug(
+                            f"[GUARD_INV] Detected {neg_count} negative inventory entries after acceptance"
+                        )
+                        # Mark infeasible and trigger rollback.
                         feasible = False
 
-                        # 记录到violations
+                        # Record the violation.
                         if _guard_viol is None:
                             _guard_viol = {}
-                        # 确保 inventory_inconsistency 持有一个列表, 追加诊断条目以保持与 validate() 返回格式一致
+                        # Keep inventory_inconsistency as a list for compatibility
+                        # with validate().
                         _guard_viol.setdefault("inventory_inconsistency", []).append(
                             {"negative_count": neg_count}
                         )
@@ -837,27 +852,28 @@ def make_callback_on_iteration(
                             if feasible_after_rb:
                                 if _callback_console_enabled():
                                     optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][候选迭代#{cand_iter}] 当前候选不可行({reason_text})，已回滚到最近可行快照",
+                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate infeasible ({reason_text}); rolled back to latest feasible snapshot",
                                         color="yellow",
                                     )
                             else:
                                 logger.error(
-                                    "[RUNTIME_GUARD] 回滚后仍不可行，保留当前状态并继续记录诊断"
+                                    "[RUNTIME_GUARD] State remains infeasible after rollback; keeping diagnostics"
                                 )
                                 if _callback_console_enabled():
                                     optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][候选迭代#{cand_iter}] 回滚后仍不可行，保留当前状态并继续记录诊断",
+                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Still infeasible after rollback; keeping diagnostics",
                                         color="bold red",
                                     )
                         except Exception as rb_err:
-                            logger.exception("[RUNTIME_GUARD] 回滚失败: %s", rb_err)
+                            logger.exception("[RUNTIME_GUARD] Rollback failed: %s", rb_err)
                             if _callback_console_enabled():
                                 optimizer.log_printer.print(
-                                    f"[RUNTIME_GUARD] 回滚失败: {rb_err}",
+                                    f"[RUNTIME_GUARD] Rollback failed: {rb_err}",
                                     color="bold red",
                                 )
                     else:
-                        # 早期阶段常见情况：在首次找到可行 incumbent 前，候选因 unmet_demand 暂时不可行。
+                        # Early in the run, candidates may be temporarily infeasible
+                        # because unmet demand exists before the first feasible incumbent.
                         only_unmet = (
                             len(viol_counts) == 1 and "unmet_demand" in viol_counts
                         )
@@ -866,25 +882,24 @@ def make_callback_on_iteration(
                             if only_unmet:
                                 if _callback_console_enabled():
                                     optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][候选迭代#{cand_iter}] 当前候选暂不可行(仅 unmet_demand={int(viol_counts.get('unmet_demand', 0))})，尚无 best_feasible_state；继续搜索可行解",
+                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate temporarily infeasible (unmet_demand={int(viol_counts.get('unmet_demand', 0))}); no best_feasible_state yet, continuing search",
                                         color="yellow",
                                     )
                             else:
                                 if _callback_console_enabled():
                                     optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][候选迭代#{cand_iter}] 当前候选不可行({reason_text})且无 best_feasible_state 可回滚",
+                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate infeasible ({reason_text}) and no best_feasible_state is available for rollback",
                                         color="bold red",
                                     )
 
             # Advance optimizer's internal iteration counter if available (best-effort).
-            # 统一同步：更新 optimizer 内部计数，并同步 ML selector / param_tuner
-            # 递增优化器计数（每次回调一次）
+            # Synchronize the optimizer counter and optional ML components.
             optimizer.increment_iteration()
 
             cur_it = optimizer.get_iteration()
             max_it = optimizer.get_max_iterations()
 
-            # 同步 ML 选择器
+            # Synchronize the ML selector.
             if optimizer.ml_selector is not None:
                 no_improve_iters = 0
                 if optimizer.tracker is not None and hasattr(
@@ -902,7 +917,7 @@ def make_callback_on_iteration(
                     cur_it, max_it, no_improve_iters=no_improve_iters
                 )
 
-            # 同步参数调优器
+            # Synchronize the parameter tuner.
             if (
                 optimizer.param_tuner is not None
                 and hasattr(optimizer.param_tuner, "set_iteration")
@@ -980,7 +995,7 @@ def make_callback_on_iteration(
             # can read optimizer.progress reliably.
             setattr(optimizer, "progress", progress)
 
-            # 停滞门控的轻量并车强化: 低频触发, 从 best_feasible 快照出发做一次短并车。
+            # Stagnation-gated light fleet consolidation from the best feasible snapshot.
             try:
                 if getattr(ALNSConfig, "ENABLE_LIGHT_VEHICLE_INTENSIFY", False):
                     interval = max(
@@ -1140,7 +1155,8 @@ def make_callback_on_iteration(
             except Exception:
                 logger.exception("Light vehicle intensification failed in callback")
 
-            # 精英路径重连: 从结构多样性的精英池中选择目标并尝试一次受控盆地跳跃。
+            # Elite path relinking: select a structurally diverse elite target
+            # and attempt a controlled basin jump.
             try:
                 if getattr(ALNSConfig, "ENABLE_ELITE_PATH_RELINK", False):
                     interval = max(
@@ -1438,14 +1454,14 @@ def make_callback_on_iteration(
             except Exception:
                 logger.exception("Stagnation escape restart failed in callback")
 
-            # 每50次迭代报告一次状态 (如果可用)
+            # Report status every 50 iterations when available.
             if iteration is not None and iteration % 50 == 0:
                 status = (
                     stop.get_status() if (stop and hasattr(stop, "get_status")) else {}
                 )
                 elapsed = status.get("elapsed_time", 0.0)
                 optimizer.log_printer.print(
-                    f"迭代 {iteration}: 运行时间 {elapsed:.1f}s"
+                    f"Iteration {iteration}: elapsed time {elapsed:.1f}s"
                 )
 
             if (
@@ -1469,7 +1485,7 @@ def make_callback_on_iteration(
                     except Exception:
                         logger.exception("Accept stats logging failed")
 
-            # 更新 param_tuner (如果启用)
+            # Update the parameter tuner when enabled.
 
             if getattr(optimizer, "param_tuner", None):
                 # Prefer optimizer.get_max_iterations() when available, then tracker, then config fallback
@@ -1541,17 +1557,17 @@ def make_callback_on_iteration(
                                         )
                                     )
                                     optimizer.log_printer.print(
-                                        f"迭代 {iteration}: ML模型重新训练已提交后台任务"
+                                        f"Iteration {iteration}: ML model retraining submitted to background worker"
                                     )
                             else:
                                 optimizer.log_printer.print(
-                                    f"迭代 {iteration}: 上一次 ML 训练任务仍在运行, 跳过本次提交"
+                                    f"Iteration {iteration}: previous ML training task is still running; skipping submission"
                                 )
 
                         except Exception:
-                            logger.exception("提交 ML 模型训练失败")
+                            logger.exception("Failed to submit ML model training")
 
-                    # warmup sampling if sample不足
+                    # Run warmup sampling when sample counts are insufficient.
                     try:
                         min_samples = max(
                             int(getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20)),
@@ -1576,18 +1592,18 @@ def make_callback_on_iteration(
                         ):
                             ml_warmup_sample(optimizer, state, budget=warmup_budget)
                     except Exception:
-                        logger.exception("Warmup sampling invocation失败")
+                        logger.exception("Warmup sampling invocation failed")
             except Exception:
                 logger.exception("ML selector handling failed in callback")
 
-            # 最后委托 tracker 的 on_iteration (若存在)
+            # Finally delegate to tracker.on_iteration when present.
             try:
                 if optimizer.tracker is not None and hasattr(
                     optimizer.tracker, "on_iteration"
                 ):
                     optimizer.tracker.on_iteration(state, rng, **kwargs)
             except Exception:
-                logger.exception("Tracker on_iteration 调用失败")
+                logger.exception("Tracker on_iteration call failed")
 
         except Exception as e:
             logger.exception("callback_on_iteration unexpected error: %s", e)
@@ -1599,10 +1615,12 @@ def register_callbacks(
     alns_instance: "ALNS", optimizer: ALNSOptimizer, stop: Optional[Any] = None
 ):
     """
-    在 ALNS 实例上注册必要的回调。
-    注册策略与原有实现保持一致: on_best -> combined, on_better/on_accept/on_reject -> on_iteration
+    Register callbacks on the ALNS instance.
+
+    ``on_best`` uses the combined callback, while ``on_better``, ``on_accept``,
+    and ``on_reject`` route through ``on_iteration``.
     """
-    # 获取正确签名的回调实例
+    # Build callbacks with the expected signatures.
     on_best = make_callback_on_best(optimizer)
     on_iter = make_callback_on_iteration(optimizer, stop=stop)
 
@@ -1612,7 +1630,7 @@ def register_callbacks(
         except Exception:
             pass
 
-    # 当发现新全局最优时先执行 on_best，再执行 on_iter（保持与原来行为一致）
+    # On a new global best, run on_best before on_iter to preserve behavior.
     def callback_on_best_combined(state, rng, **kwargs):
         _set_incumbent_snapshot(state)
         try:

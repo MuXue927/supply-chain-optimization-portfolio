@@ -1,8 +1,8 @@
-# 列生成算法的主模型
-# 适用于模型1——分解方法
-# 模型 1 的假设包括：单周期、SKU库存量 > 需求量、生产基地的存储能力无上限
-# 多生产基地、多经销商、多车型、多SKU
-# 每家生产基地可以提供相同的SKU, 不同生产基地提供的SKU之间存在交集
+# Master model for the column-generation algorithm.
+# Intended for Model 1: the decomposition approach.
+# Model 1 assumes a single period, SKU inventory greater than demand, and unlimited storage at production plants.
+# It supports multiple production plants, dealers, vehicle types, and SKUs.
+# Production plants may supply overlapping SKU sets.
 import time
 import random
 from gurobipy import GRB
@@ -13,83 +13,84 @@ from dataclasses import dataclass, field
 from .optutility import LogPrinter, POSITIVEEPS
 from .InputDataCG import InputDataCG
 
-# 创建LogPrinter的实例
+# Create a shared LogPrinter instance.
 log_printer = LogPrinter(time.time())
-# # 通过设置force_plain=True, 强制化使用纯文本输出, 例如在重定向到文件时
+# Set force_plain=True to force plain-text output, for example when redirecting to a file.
 # log_printer.set_output_mode(force_plain=True)
 
 @dataclass
 class MasterModel:
     data: InputDataCG
-    # 对于单周期问题, 默认规划周期长度为 1
+    # Single-period problems use a one-day planning horizon by default.
     horizons = 1
-    # 默认从第一天开始规划
+    # Planning starts on day 1 by default.
     day = 1
 
-    # 设定环境参数
-    # MIP模型的求解gap, 当达到设定的gap后, 模型停止, 默认值为0
+    # Environment parameters.
+    # MIP gap tolerance. Optimization stops once the configured gap is reached; the default is 0.
     param_gap_limit: float = field(init=False)
-    # MIP模型求解的时间限制, 默认值为60
+    # MIP time limit in seconds; the default is 60.
     param_time_limit: float = field(init=False)
-    # 是否输出gurobi的求解日志
+    # Whether to print the Gurobi solver log.
     param_output_flag: int = field(init=False)
 
-    # 装载模式的编号, 只要不重复就好, 用作key的一部分
+    # Load-pattern identifier. It only needs to be unique and is used as part of a key.
     pattern_id = 0
-    # 记录进入主模型中的每一种装载模式, key是装载模式的名称, 用d_xs的变量名表示
-    # value是一种具体的装载模式, 包括装载的SKU及其数量
+    # Records each load pattern added to the master model. The key is the pattern name used by d_xs,
+    # and the value is the concrete SKU loading pattern and its quantities.
     pattern_content = {}
-    # 当前模型中存在多少个装载模式
+    # Number of load patterns currently in the model.
     num_patterns = 0
-    # 裁剪模型的时候, 每次减少多少个装载模式, 当前没有启动
+    # Number of load patterns removed per shrink operation; currently disabled.
     remove_batch = 100
 
-    # 定义需要的数据接口, 看数学模型中的符号定义
-    # 生产基地的集合
+    # Data interfaces corresponding to the symbols in the mathematical model.
+    # Set of production plants.
     plants: Set[str] = field(init=False)
-    # 经销商的集合
+    # Set of dealers.
     dealers: Set[str] = field(init=False)
-    # 所有SKU的集合
+    # Set of all SKUs.
     all_skus: Set[str] = field(init=False)
-    # 所有车辆类型集合
+    # Set of all vehicle types.
     all_veh_types: Set[str] = field(init=False)
 
-    # 每种SKU的体积量化数值 {sku: size}
+    # Volume per unit for each SKU: {sku: size}.
     sku_sizes: Dict[str, float] = field(init=False)
-    # 生产基地中SKU的当前库存 {(plant, sku): qty}
+    # Current SKU inventory at production plants: {(plant, sku): qty}.
     sku_inv: Dict[Tuple[str, str], int] = field(init=False)
-    # 某种SKU的总库存数量 {sku: total_qty}
+    # Total inventory of each SKU: {sku: total_qty}.
     sku_total_inv: Dict[str, int] = field(init=False)
-    # 生产基地可以提供的SKU集合
+    # SKU set that each production plant can supply.
     skus_plant: Dict[str, Set[str]] = field(init=False)
-    # 经销商对SKU的需求 {(dealer, sku): qty}
+    # Dealer demand by SKU: {(dealer, sku): qty}.
     demands: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商需要的SKU集合
+    # SKU set requested by each dealer.
     skus_dealer: Dict[str, Set[str]] = field(init=False)
 
-    # 接下来, 需要定义数学模型、目标函数、人工变量和决策变量
-    # 最后再定义约束条件
-    # 定义主模型
+    # Define the mathematical model, objective function, artificial variables, and decision variables.
+    # Add the constraints after defining those components.
+    # Master model.
     model: gp.Model = field(init=False)
-    # 定义目标函数
+    # Objective function.
     obj: gp.LinExpr = field(init=False)
-    # 人工变量 alpha
+    # Artificial variable alpha.
     d_alpha: gp.tupledict[Tuple[str, str], gp.Var] = field(init=False)    # {(dealer, sku): gp.Var}
-    # 人工变量 beta
+    # Artificial variable beta.
     d_beta: gp.tupledict[str, gp.Var] = field(init=False)     # {sku: gp.Var}
-    # 人工变量 gamma
+    # Artificial variable gamma.
     d_gamma: gp.tupledict[Tuple[str, str], gp.Var] = field(init=False)  # {(plant, sku): gp.Var}
-    # 定义决策变量 x_ijf
-    # 主模型的决策变量, 表示从生产基地 i 到经销商 j 的车辆类型 f 对应的一辆车辆的装载方案的使用数量
+    # Decision variable x_ijf.
+    # Number of vehicles of type f whose loading pattern is used from production plant i to dealer j.
     # {(plant, dealer, v_type, load_pattern_id): gp.Var}
     d_xs: gp.tupledict[Tuple[str, str, str, int], gp.Var] = field(init=False)
 
-    # 定义需要向模型中添加的约束条件
-    # 所有生产基地 i 使用所有车型 f, 运往某个经销商 j 的SKU k 的总量, 等于经销商 j 对SKU k 的需求
+    # Constraints added to the model.
+    # Total quantity of SKU k shipped to dealer j from all plants i using all vehicle types f
+    # must equal dealer j's demand for SKU k.
     cons_dealer_demands: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)   # {(dealer, sku_id): gp.Constr}
-    # 实际运出去的SKU k 的数量不超过SKU k 的 **总库存数量**
+    # Total shipped quantity of SKU k must not exceed its total inventory.
     cons_sku_supply: gp.tupledict[str, gp.Constr] = field(init=False)  # {sku_id: gp.Constr}
-    # 从生产基地 i 运出去的SKU k 的数量, 不超过生产基地 i 拥有的SKU k 的库存
+    # Quantity of SKU k shipped from plant i must not exceed plant i's inventory of SKU k.
     cons_fact_sku_inv: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)    # {(plant, sku_id): gp.Constr}
 
     def __post_init__(self):
@@ -141,11 +142,11 @@ class MasterModel:
             for (plant, sku_id) in duet_plant_sku
         ), name="cons_fact_sku_inv")
 
-        # 启用求解日志
+        # Enable the solver log.
         self.model.setParam('OutputFlag', self.param_output_flag)
-        # 设置模型求解gap
+        # Set the MIP gap tolerance.
         self.model.Params.MIPGap = self.param_gap_limit
-        # 设置求解时间
+        # Set the solver time limit.
         self.model.Params.TimeLimit = self.param_time_limit
 
     def get_alpha_size(self):
@@ -241,10 +242,10 @@ class MasterModel:
         """
         pattern_column = gp.Column()
 
-        # list前面加*, 表示将list unpack成多个独立的参数传入函数
+        # A leading * unpacks a list into separate positional arguments.
         # zip(*iterables, strict=False)
         # Iterate over several iterables in parallel, producing tuples with an item from each one.
-        # dict.items() 返回(键, 值)组成的一个新视图
+        # dict.items() returns a view of (key, value) pairs.
         skus_loaded, load_num = zip(*list(load_pattern.items()))
         skus_loaded = list(skus_loaded)
         load_num = list(load_num)
@@ -289,13 +290,13 @@ class MasterModel:
 
     def initialize_solution(self):
         for (plant, dealer) in self.data.construct_supply_chain():
-            # 取得最大容量的车型
+            # Select the vehicle type with the largest capacity.
             max_veh_type = max(self.all_veh_types, key=float)
             selected_vehicle = Vehicle(plant, dealer, max_veh_type, self.data)
-            # 当前经销商需要的SKU种类和数量
+            # SKU types and quantities requested by the current dealer.
             orders = {sku_id: qty for (dealer_id, sku_id), qty in self.demands.items() if dealer_id == dealer}
             for sku_id, qty in orders.items():
-                # 生产基地可以提供经销商需要的SKU
+                # The production plant can supply the SKU requested by the dealer.
                 if sku_id in self.skus_plant[plant]:
                     while qty > 0:
                         qty = selected_vehicle.load(sku_id, qty)  # type: ignore
@@ -320,7 +321,7 @@ class MasterModel:
             self.model.computeIIS()
             self.model.write("Infeasible_MasterModel.ilp")
 
-            if self.model.IISMinimal:  # 判断 model.computeIIS() 返回的是否是包含不可行约束条件数目最少的IIS
+            if self.model.IISMinimal:  # Check whether computeIIS() returned a minimal irreducible infeasible subsystem.
                 log_printer.print('IIS is minimal \n')
             else:
                 log_printer.print('IIS is not minimal \n')

@@ -1,42 +1,57 @@
 """
-模块: alnstrack
-功能定位:
-    提供 ALNS 求解过程中的统一跟踪(Tracking)与度量(Statistics)支持, 包含:
-      1. 迭代级记录: 当前迭代号 / 当前目标值 / 历史最优值 / gap 序列 / 用时
-      2. 最优解持久化: 自动保存迭代中发现的改进解 (深拷贝状态)
-      3. 度量导出: 可选写入 CSV (便于后续分析/可视化/实验比较)
-      4. ML 支持: 存储特征(feature)与标签(label)样本、训练后的模型与 scaler 缓存
-      5. 外部交互: ParamAutoTuner 读取迭代统计 (total_iterations / max_iterations) 做阶段自适应
+Module: alnstrack
 
-设计要点:
-    - 轻量: 不介入搜索决策逻辑, 仅消费 state (SolutionState) 提供的接口
-    - 解耦: ML/参数调优模块通过 get_statistics()/get_ml_cache_info() 获取所需信息
-    - 容错: CSV 写入失败不应中断主流程 (可扩展 try/except)
-    - 历史裁剪: (可选) 当前特征样本列表 features/labels 维持上限, 防止长期运行内存膨胀
-    - 早停: 维护 no_improve_iters (自上次取得最优以来的迭代数) 与 early_stop_patience (容忍阈值)
-            外部可在主循环中调用 tracker.should_stop() 判断是否提前终止
+Purpose:
+    Provide unified tracking and statistics support for the ALNS search:
+      1. Iteration-level records: current iteration, current objective,
+         historical best objective, gap series, and elapsed time.
+      2. Best-solution persistence: automatically save improved solutions found
+         during the search as copied states.
+      3. Metric export: optionally write CSV records for later analysis,
+         visualization, or experiment comparison.
+      4. ML support: store feature and label samples, trained models, and the
+         scaler cache.
+      5. External integration: ParamAutoTuner reads iteration statistics such as
+         total_iterations and max_iterations for phase adaptation.
 
-Gap 定义:
-    gap = (current_obj - best_obj) / current_obj * 100%
-    说明:
-      - 目标为最小化场景; 当出现新最优时 current_obj == best_obj → gap = 0
-      - 该实现假设 best_obj ≤ current_obj (若出现精度波动导致 best_obj > current_obj,
-        gap 仍为正数; 如需严格单调可在更新前加 min/epsilon 保护)
+Design notes:
+    - Lightweight: the tracker does not participate in search decisions and
+      consumes only the interface exposed by SolutionState.
+    - Decoupled: ML and parameter-tuning modules obtain information through
+      get_statistics() and get_ml_cache_info().
+    - Fault tolerant: CSV write failures do not interrupt the main search and
+      are handled by try/except blocks.
+    - History trimming: feature and label samples are capped to prevent
+      unbounded memory growth in long runs.
+    - Early stopping: no_improve_iters tracks iterations since the last best
+      solution, and early_stop_patience defines the tolerance threshold. The
+      main loop can call tracker.should_stop() to terminate early.
 
-使用流程参考:
+Gap definition:
+    gap = (current_obj - best_obj) / current_obj * 100%.
+
+    Notes:
+      - The objective is minimized. When a new best solution appears,
+        current_obj == best_obj and gap becomes 0.
+      - The implementation assumes best_obj <= current_obj. If numerical noise
+        makes best_obj > current_obj, the gap remains positive. Strict
+        monotonicity would require an additional min/epsilon guard before the
+        update.
+
+Reference workflow:
     tracker = ALNSTracker(output_file='logs/alns_progress.csv')
     for iter in range(MAX):
-        ... # 生成 / 接受新解
+        ... # Generate or accept a new solution.
         tracker.on_iteration(state, rng)
     stats = tracker.get_statistics()
 
-可改进点(未实现):
-    - 引入滑动窗口/指数加权的 gap 平滑指标
-    - 增加 JSON 行日志输出用于更丰富的后处理
+Possible future improvements:
+    - Add sliding-window or exponentially weighted gap smoothing.
+    - Add JSON-lines logs for richer post-processing.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import os
 import csv
@@ -45,31 +60,32 @@ import copy
 from typing import Optional, Any, Tuple, TYPE_CHECKING
 
 # =========================
-# 第三方库
+# Third-party libraries
 # =========================
 import numpy as np
 import numpy.random as rnd
 
 # =========================
-# 项目内部依赖
+# Internal project dependencies
 # =========================
 from .optutility import LogPrinter
 from .alns_config import default_config as ALNSConfig
 
-if TYPE_CHECKING:  # 仅类型检查时导入, 避免循环依赖与运行时开销
+if TYPE_CHECKING:  # Import only for type checking to avoid runtime cycles.
     from .alnsopt import SolutionState
 
-# 默认日志打印器（仅作为兜底，不参与跨 run 共享计时）
+# Default log printer used as a fallback and not shared across runs.
 DEFAULT_LOG_PRINTER = LogPrinter(time.time())
 
 
 class ALNSTracker:
     """
-    ALNS 过程跟踪器:
-    负责记录优化搜索中的关键统计量, 支撑:
-      - 结果分析 (目标值/Gap 曲线)
-      - 阶段判断 (与 ParamAutoTuner 协调)
-      - 机器学习算子特征/标签累积与模型缓存
+    ALNS process tracker.
+
+    Records the key statistics of an optimization run to support:
+      - result analysis through objective and gap curves,
+      - phase decisions coordinated with ParamAutoTuner,
+      - ML operator feature/label accumulation and model caching.
     """
 
     def __init__(
@@ -77,7 +93,7 @@ class ALNSTracker:
         output_file: Optional[str] = None,
         log_printer: Optional[LogPrinter] = None,
     ):
-        # 迭代/目标相关
+        # Iteration and objective state
         self.iteration: int = 0
         self.max_iterations: int = getattr(ALNSConfig, "MAX_ITERATIONS", 1000)
         self.current_obj: float = float("inf")
@@ -88,13 +104,13 @@ class ALNSTracker:
         self.initial_search_obj: float = float("inf")
         self.initial_actual_obj: float = float("inf")
 
-        # 时间 & 历史序列
+        # Time and historical series
         self.start_time: float = time.time()
         self.log_printer: LogPrinter = log_printer or LogPrinter(self.start_time)
         self.objectives: list[float] = []
         self.gaps: list[float] = []
 
-        # 可选结果持久化
+        # Optional result persistence
         self.output_file: Optional[str] = output_file
         if self.output_file:
             os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
@@ -104,25 +120,26 @@ class ALNSTracker:
                     ["Iteration", "Current_Obj", "Best_Obj", "GapVsInitial"]
                 )
 
-        # ML 相关 (learning_based_repair / 未来学习机制)
+        # ML state for learning-based repair and future learning mechanisms
         self.features: list[
             list[float]
-        ] = []  # 每条特征: 例如 [demand, size, day, inv, util, ...]
-        self.labels: list[float] = []  # 对应改进值 improvement
+        ] = []  # Each feature can be [demand, size, day, inventory, utilization, ...].
+        self.labels: list[float] = []  # Corresponding improvement values.
         self._cached_model: Optional[Any] = None
         self._cached_scaler: Optional[Any] = None
         self._last_train_iteration: Optional[int] = None
 
-        # 早停机制相关
-        self.early_stop_patience: int = 500  # 可在外部根据问题规模/期望运行时间调节
-        self.no_improve_iters: int = 0  # 自上次最优改进以来未改善的迭代计数
+        # Early-stopping state
+        self.early_stop_patience: int = 500  # Tunable by problem scale/runtime.
+        self.no_improve_iters: int = 0  # Iterations since the last best update.
         self.best_update_iteration: int = (
-            0  # 最近一次刷新最优解的迭代号 (用于分析改进分布)
+            0  # Iteration of the latest best update, used for improvement analysis.
         )
         self.recent_improvement: float = (
-            0.0  # 最近一次改进幅度 (prev_best - new_best); 未改进迭代置 0
+            0.0  # Latest improvement, prev_best - new_best; 0 when unchanged.
         )
-        # 精英池: 记录若干个结构不同且质量较好的可行解, 供停滞重连/重启使用
+        # Elite pool: store diverse, high-quality feasible solutions for
+        # stagnation relinking or restart strategies.
         self.elite_pool: list[dict[str, Any]] = []
         self.elite_pool_max_size: int = int(
             getattr(ALNSConfig, "ELITE_POOL_MAX_SIZE", 8)
@@ -299,27 +316,30 @@ class ALNSTracker:
         return obj <= existing_best + 1e-9
 
     # -----------------------------------------------------------------
-    # 主迭代回调
+    # Main iteration callback
     # -----------------------------------------------------------------
     def on_iteration(self, state: "SolutionState", rng: rnd.Generator, **kwargs):
         """
-        每次 ALNS 主循环结束后调用, 执行:
-          1. 迭代号自增
-          2. 获取当前解目标值 (内部会利用 objective 缓存)
-          3. 若为可行且优于历史最优则更新 best_solution
-          4. 计算并记录 gap
-          5. 可选写入 CSV (频繁 IO 可根据需要做采样)
-          6. 周期性打印进度 (当前: 每 100 次)
+        Call after each ALNS main-loop iteration.
 
-        参数:
-            state : 当前解 (需提供 objective()/validate())
-            rng   : 随机数生成器 (保留扩展接口; 当前未使用)
-            kwargs: 预留扩展 (例如可传入附加日志/标记)
+        Steps:
+          1. Increment the iteration counter.
+          2. Read the current objective, using the objective cache when valid.
+          3. Update best_solution when the state is feasible and better.
+          4. Compute and record the gap.
+          5. Optionally write a CSV row. Frequent I/O can be sampled if needed.
+          6. Print a periodic overview, currently every 100 iterations.
+
+        Args:
+            state: Current solution, which must provide objective() and validate().
+            rng: Random-number generator retained for interface compatibility;
+                it is not used currently.
+            kwargs: Reserved for future extensions such as extra logs or tags.
         """
         self.iteration += 1
 
-        # 在每次迭代开始时同步更新 ParamAutoTuner 的迭代信息，
-        # 以确保随后对算子参数的采样(get_operator_params)能够读取到最新的 exploration_rate。
+        # Synchronize ParamAutoTuner at the start of each iteration so
+        # get_operator_params can read the latest exploration_rate.
         try:
             if (
                 hasattr(state, "param_tuner")
@@ -334,32 +354,34 @@ class ALNSTracker:
                     no_improve_iters=self.no_improve_iters,
                 )
         except Exception as e:
-            # 保护性容错：若更新失败仅打印警告，不影响主流程
+            # Protective fallback: log a warning without interrupting the main
+            # workflow if the update fails.
             self.log_printer.print(
                 f"[WARN] Failed to update param_tuner iteration: {e}", color="yellow"
             )
 
-        # 当前目标值 (若 objective 缓存有效则为 O(1))
+        # Current objective, O(1) when the objective cache is valid
         current_obj = float(state.objective())
         self.current_obj = current_obj
         self.objectives.append(current_obj)
         current_actual_obj = float(state.calculate_cost())
 
-        # 验证可行性 & 更新最优
+        # Validate feasibility and update the best solution
         is_feasible, _ = state.validate()
         improved = False
         if current_obj < self.best_obj and is_feasible:
             prev_best = self.best_obj
             self.best_obj = current_obj
-            # 深拷贝保存最优状态 (避免后续原地修改污染)
+            # Save a deep copy of the best state so later in-place mutations do
+            # not affect it.
             try:
-                # 优先使用 SolutionState.copy() 以获取轻量快照
+                # Prefer SolutionState.copy() for a lightweight snapshot
                 self.best_solution = state.copy()
             except Exception:
-                # 兼容旧实现：若对象未实现 copy() 回退到 deepcopy
+                # Backward compatibility: fall back to deepcopy.
                 self.best_solution = copy.deepcopy(state)
             improved = True
-            # 记录本次实际改进幅度 (若之前 best 为 inf 则按 0 处理)
+            # Record the actual improvement, treating a previous inf as 0.
             if prev_best != float("inf"):
                 self.recent_improvement = max(0.0, prev_best - current_obj)
             else:
@@ -396,7 +418,8 @@ class ALNSTracker:
             except Exception:
                 pass
 
-        # 按实际目标函数独立维护最优可行解（用于最终业务口径输出）
+        # Maintain a separate best feasible solution under the actual
+        # objective for final reporting.
         if is_feasible and current_actual_obj < self.best_actual_obj:
             self.best_actual_obj = current_actual_obj
             try:
@@ -404,7 +427,7 @@ class ALNSTracker:
             except Exception:
                 self.best_actual_solution = copy.deepcopy(state)
 
-        # 维护一个小型精英池, 供后续 path relinking / stagnation escape 使用。
+        # Maintain a small elite pool for path relinking and stagnation escape.
         try:
             elite_sample_interval = max(
                 1, int(getattr(ALNSConfig, "ELITE_POOL_SAMPLE_INTERVAL", 50))
@@ -416,22 +439,23 @@ class ALNSTracker:
         except Exception:
             pass
 
-        # 维护无改进计数 (早停)
+        # Maintain the no-improvement count for early stopping
         if improved:
             self.no_improve_iters = 0
             self.best_update_iteration = self.iteration
         else:
             self.no_improve_iters += 1
-            # 未取得新最优时 recent_improvement 置 0，表示“最近一次迭代”无改进
+            # Set recent_improvement to 0 when the most recent iteration did not
+            # improve the best solution.
             self.recent_improvement = 0.0
 
-        # 运行过程中使用“相对初始解”的 signed gap
+        # Use the signed gap relative to the initial solution during the run
         gap_vs_initial = self._signed_gap_from_initial(
             current_actual_obj, self.initial_actual_obj
         )
         self.gaps.append(gap_vs_initial)
 
-        # 周期性打印概览
+        # Periodic overview logging
         if self.iteration % 100 == 0:
             self.log_printer.print(
                 f"Iteration: {self.iteration}\tSearch Obj: {self.current_obj:.6f}\t"
@@ -439,7 +463,7 @@ class ALNSTracker:
                 f"Gap vs Initial: {gap_vs_initial:+.2f}%\tBest Search Obj: {self.best_obj:.6f}"
             )
 
-        # 可选持久化
+        # Optional persistence
         if self.output_file:
             try:
                 with open(self.output_file, "a", newline="") as f:
@@ -458,39 +482,45 @@ class ALNSTracker:
                 )
 
     # -----------------------------------------------------------------
-    # ML 数据采集
+    # ML data collection
     # -----------------------------------------------------------------
     def update_ml_data(self, feature: list, label: float) -> Tuple[int, int]:
         """
-        存储一条 (feature, label) 样本。
-        - feature: 自由结构 (约定维度在使用侧保持一致)
-        - label:   通常为目标函数改进值 improvement (正数为好)
+        Store one (feature, label) sample.
 
-        返回:
-            (当前特征样本数, 当前标签样本数)
-        说明:
-            这里设置一个硬上限 1000 (最近样本), 防止长时间运行内存膨胀。
-            可扩展为基于时间/多级缓冲的采样策略。
+        feature: Free-form structure. Its dimensionality is maintained by the
+            consumer.
+        label: Usually the objective improvement; positive values are better.
+
+        Returns:
+            Current feature-sample count and current label-sample count.
+
+        A hard cap of 1000 recent samples prevents unbounded memory growth in
+        long runs. This can later be extended to time-based or multi-level
+        buffering.
         """
         self.features.append(feature)
         self.labels.append(label)
-        if len(self.features) > 1000:  # 滑动窗口机制
+        if len(self.features) > 1000:  # Sliding-window mechanism
             self.features = self.features[-1000:]
             self.labels = self.labels[-1000:]
         return len(self.features), len(self.labels)
 
     # -----------------------------------------------------------------
-    # ML 模型缓存接口
+    # ML model cache interface
     # -----------------------------------------------------------------
     def cache_ml_model(self, model: Any, scaler: Any, iteration: int):
         """
-        缓存训练完成的 ML 模型及其标准化器, 并记录训练迭代号:
-            model   : 已训练模型 (如 RandomForest / Ridge / 自定义)
-            scaler  : 与 model 对应的特征预处理器
-            iteration: 训练时对应的迭代编号
-        用途:
-            - 在后续迭代快速复用模型 (避免频繁重训)
-            - 外部可据 _last_train_iteration 判断是否需要增量更新
+        Cache a trained ML model and its scaler, recording the training
+        iteration.
+
+        model: Trained model such as RandomForest, Ridge, or a custom model.
+        scaler: Feature preprocessor corresponding to model.
+        iteration: Iteration number at training time.
+
+        This allows later iterations to reuse the model without frequent
+        retraining. External callers can inspect _last_train_iteration to decide
+        whether incremental updates are needed.
         """
         self._cached_model = model
         self._cached_scaler = scaler
@@ -499,15 +529,19 @@ class ALNSTracker:
 
     def get_cached_model(self) -> Tuple[Optional[Any], Optional[Any], Optional[int]]:
         """
-        返回缓存 (model, scaler, last_train_iteration) 三元组。
-        若任一为空, 表示尚未缓存或已被清除。
+        Return the (model, scaler, last_train_iteration) cache tuple.
+
+        If any element is None, the cache has not been populated or has been
+        cleared.
         """
         return self._cached_model, self._cached_scaler, self._last_train_iteration
 
     def has_cached_model(self) -> bool:
         """
-        判断当前是否存在有效的模型缓存。
-        条件: model, scaler, last_train_iteration 全部非 None。
+        Return whether a valid model cache exists.
+
+        All three values, model, scaler, and last_train_iteration, must be
+        non-None.
         """
         return (
             self._cached_model is not None
@@ -517,7 +551,7 @@ class ALNSTracker:
 
     def clear_ml_cache(self):
         """
-        清空模型缓存 (释放内存 / 触发重训)。
+        Clear the model cache to release memory or trigger retraining.
         """
         self._cached_model = None
         self._cached_scaler = None
@@ -526,11 +560,12 @@ class ALNSTracker:
 
     def get_ml_cache_info(self) -> dict:
         """
-        返回当前 ML 缓存状态摘要:
-            has_model: 是否有缓存
-            last_train_iteration: 上次训练迭代
-            model_type / scaler_type: 类名 (便于调试)
-            data_samples: 当前特征样本数量
+        Return a summary of the ML cache state.
+
+        has_model: Whether a cache exists.
+        last_train_iteration: Iteration of the last training.
+        model_type / scaler_type: Class names for debugging.
+        data_samples: Current number of feature samples.
         """
         return {
             "has_model": self.has_cached_model(),
@@ -545,39 +580,44 @@ class ALNSTracker:
         }
 
     # -----------------------------------------------------------------
-    # 早停判定
+    # Early-stopping decision
     # -----------------------------------------------------------------
     def should_stop(self) -> bool:
         """
-        早停判定:
-          若自上次取得最优解以来的未改进迭代数 >= early_stop_patience → 返回 True
-        用法 (伪代码):
+        Return True when iterations since the last best solution reach
+        early_stop_patience.
+
+        Usage:
             while not tracker.should_stop():
                 ...
         """
         return self.no_improve_iters >= self.early_stop_patience
 
     # -----------------------------------------------------------------
-    # 汇总统计
+    # Summary statistics
     # -----------------------------------------------------------------
     def get_statistics(self) -> dict:
         """
-        汇总当前追踪器的所有关键信息 (返回浅复制/值复制, 避免外部原地修改):
-            total_iterations :     已完成迭代数
-            max_iterations   :     规划的最大迭代数
-            best_objective   :     历史最优目标值
-            current_objective:     当前解目标值
-            final_gap        :     当前 gap (若尚无历史则为 0)
-            objectives_history:    目标值轨迹 (副本)
-            gaps_history     :     gap 轨迹 (副本)
-            elapsed_time     :     运行秒数
-            best_solution    :     当前最优解 (对象引用; 深度使用需自行 deepcopy)
-            features / labels:     ML 采样数据副本
-            ml_cache_info    :     模型缓存摘要
-            no_improve_iters :     自上次最优改进以来未改善的迭代计数
-            early_stop_patience:   早停容忍阈值
-            best_update_iteration: 最近一次刷新最优解的迭代号
-            recent_improvement:    最近一次改进幅度 (prev_best - new_best); 未改进迭代置 0
+        Summarize all key tracker information. Values are copied or lightly
+        copied to avoid accidental in-place external mutation.
+
+        total_iterations: Completed iteration count.
+        max_iterations: Planned maximum iteration count.
+        best_objective: Historical best objective.
+        current_objective: Current solution objective.
+        final_gap: Current gap, or 0 when no history exists.
+        objectives_history: Objective trajectory copy.
+        gaps_history: Gap trajectory copy.
+        elapsed_time: Elapsed seconds.
+        best_solution: Current best solution object reference. Deep usage
+            should call deepcopy.
+        features / labels: Copies of ML samples.
+        ml_cache_info: Model-cache summary.
+        no_improve_iters: Iterations since the last best improvement.
+        early_stop_patience: Early-stop tolerance threshold.
+        best_update_iteration: Iteration of the latest best update.
+        recent_improvement: Latest improvement, prev_best - new_best; 0 when
+            unchanged.
         """
         return {
             "total_iterations": self.iteration,
@@ -618,14 +658,14 @@ class ALNSTracker:
 
 
 # ---------------------------------------------------------------------
-# Gap 计算函数 (保持与 ALNSTracker 独立, 便于复用/测试)
+# Gap calculation functions kept independent of ALNSTracker for reuse/testing
 # ---------------------------------------------------------------------
 def _is_all_zero(x) -> bool:
     ax = np.asarray(x)
     if ax.size == 1:
-        # 单元素数组或标量: 用 isclose 判定 0
+        # Single-element array or scalar: use isclose to test zero
         return bool(np.isclose(float(ax), 0.0))
-    # 多元素数组: 全部接近 0 则认为为 0 向量
+    # Multi-element array: treat as zero when all values are close to zero
     return bool(np.allclose(ax, 0.0))
 
 
@@ -633,27 +673,30 @@ def _to_scalar_or_mean(x) -> float:
     ax = np.asarray(x)
     if ax.size == 1:
         return float(ax)
-    # 向量化结果退化为均值以保证数值可比性（保守处理）
+    # Reduce vector results to a mean for comparable, conservative values
     return float(np.mean(ax))
 
 
 def calculate_gap(current_obj: float, best_obj: float) -> float:
     """
-    计算 gap:
+    Calculate gap:
         gap = |current_obj - best_obj| / |current_obj| * 100
-    说明:
-      - 兼容 scalar 与 numpy array（单元素或多元素）输入
-      - 边界处理与原实现一致，但避免在 numpy 对象上使用 Python 布尔上下文
+
+    Notes:
+      - Supports scalar and numpy array inputs with one or more elements.
+      - Boundary handling matches the original implementation while avoiding
+        Python boolean contexts on numpy objects.
     """
-    # 两者均为零向量/标量
+    # Both values are zero vectors or scalars
     if _is_all_zero(current_obj) and _is_all_zero(best_obj):
         return 0.0
-    # current == 0 且 best > 0 -> inf
+    # current == 0 and best > 0 -> inf
     if _is_all_zero(current_obj):
         best_val = _to_scalar_or_mean(best_obj)
         if best_val > 0:
             return float("inf")
-    # 将可能的数组退化为标量以做相对差计算（向量以均值衡量）
+    # Reduce possible arrays to scalars for relative-difference calculation;
+    # vectors are measured by their mean.
     cur_val = _to_scalar_or_mean(current_obj)
     best_val = _to_scalar_or_mean(best_obj)
     return abs(cur_val - best_val) / max(1e-12, abs(cur_val)) * 100

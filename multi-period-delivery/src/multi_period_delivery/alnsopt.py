@@ -1,45 +1,60 @@
 """
-模块: alnsopt
-核心职责:
-1. 定义 SolutionState:
-   - 保存车辆集合、逐日逐SKU库存 s_ikt、索引集合、以及用于自适应/ML算子的外部引用
-   - 提供目标函数 (带缓存) + 可行性校验 + 库存计算 + 车辆负载等基础查询
-2. 目标函数缓存机制:
-   - last_objective 保存上一次计算结果
-   - objective_dirty 标记结构是否变动(车辆集合/车辆货物/库存表)
-   - 结构性修改后调用 mark_objective_dirty(), 下次 objective() 触发重算
-3. 库存两种更新路径:
-   A. 全表重算 compute_inventory():
-      - 用递推关系 s_t = s_{t-1} + prod_t - shipped_t
-      - O(V + P*S*H) 复杂度 (V=车辆数, P=工厂数, S=SKU数, H=时间跨度)
-      - 作为“基线”库存视图: 假设当前车辆集合的发运已固定
-   B. 增量扣减 veh_loading():
-      - 针对新增装载 (即 shipped 增加) 直接对 day..H 的 s_ikt 逐期减去 load_qty
-      - 原因: 一条发运在递推式中对所有未来期具有线性链式影响
-      - 避免每次装载后重复全表重算, 将多次局部装载成本降低到 O(Σ( H - day + 1 ))
-      - 需确保 compute_inventory() 已先建立基线 (依赖 s_initialized 标志)
-4. 批量库存更新 batch_update_inventory():
-   - 用于 destroy / repair 后根据被移除/新增车辆一次性回补或扣减库存
-   - 与 veh_loading 的增量策略一致(对 day..H 处理) 但方向相反
-5. 重要不变量 / 一致性:
-   - s_ikt[(plant, sku, 0)] = 期初库存 (来自 historical_s_ikt)
-   - 对任意 (plant, sku, day>0):
-       s_ikt[plant, sku, day] = s_ikt[plant, sku, day-1] + production(plant, sku, day) - shipped(plant, sku, day)
-   - 增量装载保证上述不变量在"基线+增量扣减"组合下仍成立
-6. 典型调用顺序:
-   - 初始: __post_init__ 读入期初库存
-   - 首次需要库存/目标时: compute_inventory() → s_initialized=True
-   - 车辆装载: veh_loading() 若未初始化先全表重算 → 增量扣减库存
-   - 销毁/修复: 直接修改 vehicles → batch_update_inventory 回补/扣减库存
-   - 目标函数: objective() (利用缓存 + validate() 中触发 compute_inventory())
+Core solution state and inventory update utilities for the ALNS model.
 
-维护提示:
-- 新增修改车辆/库存的算子后务必 mark_objective_dirty()
-- 若要引入更细粒度(例如部分 SKU 回退) 需保持“对 day..H 逐日更新”一致性
+Main responsibilities:
+1. Define ``SolutionState``:
+   - Store vehicles, per-period inventory ``s_ikt``, index sets, and optional
+     references to adaptive and machine-learning components.
+   - Provide cached objective evaluation, feasibility validation, inventory
+     recomputation, and vehicle-load queries.
+2. Objective caching:
+   - ``last_objective`` stores the previous result.
+   - ``objective_dirty`` marks structural changes in vehicles, cargo, or inventory.
+   - Call ``mark_objective_dirty()`` after structural changes so the next
+     ``objective()`` call recomputes the value.
+3. Inventory update paths:
+   A. Full recomputation in ``compute_inventory()``:
+      - Uses ``s_t = s_{t-1} + prod_t - shipped_t``.
+      - Has ``O(V + P*S*H)`` complexity, where ``V`` is vehicles, ``P`` is
+        plants, ``S`` is SKUs, and ``H`` is the horizon.
+      - Establishes the baseline inventory view for the current vehicle set.
+   B. Incremental deduction in ``veh_loading()``:
+      - Subtracts ``load_qty`` from ``s_ikt`` for ``day..H`` when new shipments
+        are loaded.
+      - A shipment affects every future period through the inventory recursion.
+      - Avoids a full recomputation after each load and reduces repeated local
+        loading costs to ``O(sum(H - day + 1))``.
+      - Requires a valid baseline established by ``compute_inventory()`` and
+        tracked by ``s_initialized``.
+4. Batch inventory updates in ``batch_update_inventory()``:
+   - Restores or deducts inventory for vehicles removed or added by destroy and
+     repair operators.
+   - Uses the same ``day..H`` incremental logic as ``veh_loading()`` with the
+     opposite sign.
+5. Important invariants:
+   - ``s_ikt[(plant, sku, 0)]`` is the initial inventory from
+     ``historical_s_ikt``.
+   - For ``day > 0``:
+     ``s_ikt[plant, sku, day] = s_ikt[plant, sku, day-1]
+     + production(plant, sku, day) - shipped(plant, sku, day)``.
+   - Incremental loading preserves this invariant when combined with the
+     baseline inventory.
+6. Typical call order:
+   - Initialize initial inventory in ``__post_init__``.
+   - Recompute inventory on first use through ``compute_inventory()``.
+   - Load vehicles through ``veh_loading()``, then update inventory incrementally.
+   - Use ``batch_update_inventory()`` after destroy or repair changes vehicles.
+   - Evaluate ``objective()`` with caching and validation-aware inventory checks.
+
+Maintenance notes:
+- Call ``mark_objective_dirty()`` after any operator that changes vehicles or
+  inventory.
+- Any finer-grained rollback, such as a partial SKU rollback, must preserve the
+  same ``day..H`` update consistency.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -47,13 +62,13 @@ from typing import Any, Dict, List, Tuple, Set, Optional
 import traceback
 
 # =========================
-# 第三方库
+# Third-party libraries
 # =========================
 import numpy as np
 import numpy.random as rnd
 
 # =========================
-# 项目内部模块
+# Internal project modules
 # =========================
 from .alnstrack import ALNSTracker
 from .vehicle import Vehicle
@@ -73,55 +88,49 @@ class SolutionState:
     s_ikt: Dict[Tuple[str, str, int], int] = field(default_factory=dict)
     s_indices: Set[Tuple[str, str, int]] = field(default_factory=set)
     tracker: Optional["ALNSTracker"] = (
-        None  # 引入追踪器, 便于访问迭代历史数据,用于ML训练
+        None  # Optional tracker for iteration history used by ML training.
     )
-    s_initialized: bool = field(default=False)  # 引入标志, 标记 s_ikt 是否已初始化
-    param_tuner: Optional["ParamAutoTuner"] = None  # 参数自动调整器
-    ml_selector: Optional["MLOperatorSelector"] = None  # ML算子选择器
+    s_initialized: bool = field(default=False)  # Whether s_ikt is initialized.
+    param_tuner: Optional["ParamAutoTuner"] = None  # Automatic parameter tuner.
+    ml_selector: Optional["MLOperatorSelector"] = None  # ML operator selector.
     inventory_manager: Optional[Any] = field(default=None, repr=False, compare=False)
     _inventory_cache: Optional[Any] = field(default=None, repr=False, compare=False)
     _suppress_compute_inventory: bool = field(default=False, repr=False, compare=False)
     repair_audit: Dict[str, Dict[str, Any]] = field(
         default_factory=dict, repr=False, compare=False
     )
-    # ---- 目标函数缓存相关 ----
+    # ---- Objective cache ----
     shipped_cache: Optional[Dict[Tuple[str, str], int]] = field(
         default=None
     )  # cache for compute_shipped
-    last_objective: Optional[float] = field(default=None)  # 上一次计算的目标值
+    last_objective: Optional[float] = field(default=None)  # Last objective value.
     objective_dirty: bool = field(
         default=True
-    )  # 标记当前解结构是否发生变动(车辆/库存等)需要重新计算
+    )  # Whether vehicle or inventory changes require objective recomputation.
 
     def __post_init__(self):
         self.vehicles = []
         self.s_ikt = {}
         self.s_indices = self.construct_indices()
-        self._iteration_count = 0  # 迭代计数器, 用于ALNSTracker
+        self._iteration_count = 0  # Iteration counter used by ALNSTracker.
         if self.inventory_manager is None:
             self.inventory_manager = UnifiedInventoryManager()
 
-        # 对s_ikt进行初始化, s_ik0表示期初库存
+        # Initialize inventory; day zero stores the initial inventory.
         for (plant, sku_id, day), inv in self.data.historical_s_ikt.items():
             if day == 0:
                 self.s_ikt[plant, sku_id, day] = inv
 
     def set_tracker(self, tracker: "ALNSTracker"):
-        """
-        设置tracker引用, 用于ML-based operators访问迭代历史数据
-        """
+        """Set the tracker reference used by ML-based operators."""
         self.tracker = tracker
 
     def set_param_tuner(self, param_tuner: "ParamAutoTuner"):
-        """
-        设置参数自动调整器引用
-        """
+        """Set the automatic parameter tuner reference."""
         self.param_tuner = param_tuner
 
     def set_ml_selector(self, ml_selector: "MLOperatorSelector"):
-        """
-        设置ML算子选择器引用
-        """
+        """Set the ML operator selector reference."""
         self.ml_selector = ml_selector
 
     def iter_used_vehicles(self):
@@ -144,27 +153,28 @@ class SolutionState:
         self.s_initialized = False
         self.mark_objective_dirty()
 
-    # ---------------- compute_inventory 抑制机制（用于批量/模拟场景以避免不必要全表重算） ----------------
+    # ---- compute_inventory suppression for batch and simulation scenarios ----
     def suppress_compute_inventory(self):
         """
-        启用抑制：后续对 validate()/objective() 的调用不会触发 compute_inventory()。
-        调用者在批量修改结束后应显式调用 resume_compute_inventory() 或在退出上下文时恢复。
+        Suppress inventory recomputation in later validate() and objective() calls.
+
+        Callers should call resume_compute_inventory() after batch changes or use
+        the context manager so suppression is restored automatically.
         """
         setattr(self, "_suppress_compute_inventory", True)
 
     def resume_compute_inventory(self):
-        """
-        取消抑制：恢复 validate()/objective() 中的正常 compute_inventory() 调用行为。
-        """
+        """Restore normal compute_inventory() calls in validate() and objective()."""
         setattr(self, "_suppress_compute_inventory", False)
 
     def suppress_inventory_ctx(self):
         """
-        返回一个简易上下文管理器，用于临时抑制 compute_inventory()。
-        用法:
+        Return a context manager that temporarily suppresses compute_inventory().
+
+        Usage:
             with state.suppress_inventory_ctx():
-                ... 批量修改 state, 不会在 validate/objective 中触发 compute_inventory ...
-            # 退出上下文后自动恢复
+                ... batch changes will not trigger compute_inventory ...
+            # Suppression is restored when the context exits.
         """
 
         class _Ctx:
@@ -183,22 +193,24 @@ class SolutionState:
 
         return _Ctx(self)
 
-    # ---------------- 目标值缓存/失效控制 ----------------
+    # ---- Objective cache invalidation ----
     def mark_objective_dirty(self, clear_shipped: bool = True):
         """
-        标记当前解的目标值缓存失效。
+        Mark the current objective cache as stale.
 
-        参数:
-          clear_shipped: bool
-            当 True（默认）时同时清除 shipped_cache（保持向后兼容）。
-            当 False 时只失效目标缓存/其他按-state 缓存，但保留 shipped_cache 以启用增量维护。
+        Parameters
+        ----------
+        clear_shipped : bool
+            When True, also clear ``shipped_cache`` for backward compatibility.
+            When False, invalidate the objective and related state caches while
+            preserving ``shipped_cache`` for incremental maintenance.
         """
         self.objective_dirty = True
-        # 清除上一次计算结果（目标缓存）; shipped_cache 根据参数决定是否清除
+        # Clear the last objective; shipped_cache is controlled by clear_shipped.
         self.last_objective = None
         if clear_shipped:
             self.shipped_cache = None
-        # 清除与资源/车辆聚合相关的按-state 缓存，保证下次重建数据一致性
+        # Clear state-dependent aggregation caches so they are rebuilt consistently.
         try:
             if hasattr(self, "_vehicles_by_plant_day_map"):
                 delattr(self, "_vehicles_by_plant_day_map")
@@ -258,12 +270,16 @@ class SolutionState:
 
     def validate(self):
         """
-        验证解是否为可行解, 无副作用。
-        返回 (is_feasible, violations) 元组:
-        - is_feasible: bool, 是否可行
-        - violations: dict, 包含各类违反项的详细信息
+        Validate solution feasibility without mutating solution content.
+
+        Returns
+        -------
+        tuple
+            ``(is_feasible, violations)`` where ``is_feasible`` is a boolean and
+            ``violations`` contains detailed constraint violations.
         """
-        # 在严格可行性模式下，validate始终重算库存，避免抑制标志导致的陈旧库存被误判为可行。
+        # In strict feasibility mode, always recompute inventory so suppressed
+        # updates cannot leave stale inventory that is incorrectly accepted.
         force_recompute = bool(
             getattr(ALNSConfig, "VALIDATE_FORCE_RECOMPUTE_INVENTORY", True)
             or getattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", True)
@@ -277,16 +293,16 @@ class SolutionState:
             "unmet_demand": [],
         }
 
-        # 尝试使用 ndarray（NumPy/Numba）加速负库存与工厂日合计检查；失败时回退到 dict 迭代
+        # Use NumPy/Numba arrays when available; otherwise fall back to dict iteration.
         try:
             from . import inventory_numba
 
             maps = getattr(self, "_inventory_maps", None)
             if maps is None:
                 maps = inventory_numba.build_index_maps(self.data)
-            # 使用 state_to_inventory_arrays 生成 s_arr（shape P,S,H+1）
+            # Build s_arr with shape (P, S, H + 1).
             s_arr, _, _ = inventory_numba.state_to_inventory_arrays(self, maps)
-            # 负库存索引查找
+            # Locate negative inventory entries.
             neg_idx = np.where(s_arr < 0)
             for pi, si, d in zip(*neg_idx):
                 plant = maps.idx_to_plant[pi]
@@ -294,12 +310,12 @@ class SolutionState:
                 inv = float(s_arr[pi, si, d])
                 violations["negative_inventory"].append(((plant, sku, int(d)), inv))
         except Exception:
-            # 回退到原有的 dict 遍历方式
+            # Fall back to direct dict traversal.
             for key, inv in self.s_ikt.items():
                 if inv < 0:
                     violations["negative_inventory"].append((key, inv))
 
-        # 检查车辆容量是否超限
+        # Check vehicle capacity limits.
         for veh in self.vehicles:
             try:
                 loaded = self.compute_veh_load(veh)
@@ -326,8 +342,8 @@ class SolutionState:
                 except Exception:
                     pass
 
-        # 检查在每个周期内, 生产基地中的库存是否超过限制
-        # 尝试使用 ndarray 聚合（按 plant 汇总 day），失败时回退到 dict 聚合
+        # Check whether plant inventory exceeds its limit in any period.
+        # Aggregate with arrays when possible and fall back to dict aggregation.
         try:
             from . import inventory_numba
 
@@ -367,7 +383,7 @@ class SolutionState:
                         }
                     )
 
-        # 严格模式下，将“完全满足需求”视为硬可行性条件。
+        # In strict mode, fully satisfying demand is a hard feasibility condition.
         require_full_demand = bool(
             getattr(ALNSConfig, "VALIDATE_REQUIRE_FULL_DEMAND", True)
             or getattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", True)
@@ -386,7 +402,7 @@ class SolutionState:
                         }
                     )
 
-        # 综合判断解的可行性
+        # Combine all violation categories into the final feasibility decision.
         is_feasible = not (
             violations["negative_inventory"]
             or violations["veh_over_load"]
@@ -398,18 +414,19 @@ class SolutionState:
 
     def objective(self) -> float:
         """
-        搜索目标函数(带缓存)：
-        - 用于 ALNS 搜索引导和接受准则。
-        - 由“实际目标”作为基底，再叠加搜索阶段的引导惩罚（如缺货惩罚、车数惩罚、欠载差额惩罚）。
-        - 注意：这不是对外评估口径；对外评估请使用 actual_objective()。
+        Return the cached search objective used by ALNS guidance and acceptance.
+
+        The value starts from the actual objective and adds search-time guidance
+        penalties for unmet demand, fleet size, and underloaded vehicles. This is
+        not the external evaluation metric; use ``actual_objective()`` for that.
         """
-        # 若缓存可用直接返回
+        # Return the cached value when it is still valid.
         if (not self.objective_dirty) and (self.last_objective is not None):
             return self.last_objective
 
         scale_factor = float(getattr(ALNSConfig, "SCALE_FACTOR", 1e-3))
 
-        # validate 内部会在必要时触发 compute_inventory()
+        # validate() triggers compute_inventory() when needed.
         feasibility, _ = self.validate()
         if not feasibility:
             self.last_objective = float("inf")
@@ -418,10 +435,11 @@ class SolutionState:
 
         data = self.data
 
-        # ---- 基底：实际目标（与 Gurobi 口径对齐）----
+        # ---- Base term: actual objective aligned with the Gurobi metric ----
         actual_base = self.actual_objective()
 
-        # 根据进度做分阶段权重：前期更激进压缩车辆数，后期回归综合成本
+        # Use phase-dependent weights: compress fleet size early and return to
+        # the composite cost later.
         progress = 0.0
         if bool(getattr(ALNSConfig, "SEARCH_PHASED_VEHICLE_PRIORITY", True)):
             try:
@@ -466,7 +484,7 @@ class SolutionState:
                 getattr(ALNSConfig, "SEARCH_PHASE3_FLEET_WEIGHT", 1.00)
             )
 
-        # ---- 引导项1：未满足需求惩罚（用于搜索引导）----
+        # ---- Guidance term 1: unmet-demand penalty for search guidance ----
         demand_penalty = 0.0
         unmet_total = 0.0
         demand_total = 0.0
@@ -481,13 +499,13 @@ class SolutionState:
                     demand_penalty += data.param_pun_factor1 * gap
             demand_penalty *= demand_weight
 
-        # ---- 引导项2：最小起运量“差额”惩罚（用于搜索引导）----
+        # ---- Guidance term 2: minimum-load gap penalty for search guidance ----
         underload_gap_penalty = 0.0
         if bool(getattr(ALNSConfig, "SEARCH_USE_UNDERLOAD_GAP_PENALTY", True)):
             _, _, underload_gap_penalty = self._vehicle_cost_components()
             underload_gap_penalty *= underload_weight
 
-        # ---- 引导项3：显式车辆数惩罚（用于引导更少车辆）----
+        # ---- Guidance term 3: explicit fleet-size penalty ----
         fleet_size_penalty = 0.0
         if bool(getattr(ALNSConfig, "ENABLE_FLEET_SIZE_PENALTY", True)):
             fleet_size = len(self.vehicles)
@@ -533,7 +551,7 @@ class SolutionState:
         return float(self.last_objective)
 
     def _vehicle_cost_components(self) -> Tuple[float, int, float]:
-        """单次遍历车辆成本组件：固定成本、欠载车辆数、欠载差额惩罚（体积差额）。"""
+        """Return fixed cost, underloaded count, and underload gap penalty."""
         data = self.data
         fixed_cost = 0.0
         underload_vehicle_count = 0
@@ -560,9 +578,10 @@ class SolutionState:
 
     def actual_objective(self) -> float:
         """
-        实际目标函数（与 Gurobi 评估口径一致）：
-        = 车辆固定成本 + 欠载车辆惩罚成本
-        其中欠载车辆惩罚按“欠载车辆数量 * param_pun_objective”计算。
+        Return the actual objective aligned with the Gurobi evaluation metric.
+
+        The value equals vehicle fixed cost plus the underloaded-vehicle penalty,
+        where the latter is ``underloaded_vehicle_count * param_pun_objective``.
         """
         feasibility, _ = self.validate()
         if not feasibility:
@@ -575,11 +594,11 @@ class SolutionState:
         return float(fixed_cost + punishment_cost)
 
     def calculate_cost(self) -> float:
-        """兼容旧接口：返回与 Gurobi 口径一致的实际目标值。"""
+        """Backward-compatible alias for the Gurobi-aligned actual objective."""
         return float(self.actual_objective())
 
     def punish_non_fulfill_demand(self, obj: float):
-        """检查是否满足经销商的需求, 如果不满足, 需要再目标函数中添加惩罚项"""
+        """Add unmet-demand penalties to the supplied objective value."""
         shipped = self.compute_shipped()
         for (dealer, sku_id), demand in self.data.demands.items():
             shipped_qty = shipped.get((dealer, sku_id), 0)
@@ -588,19 +607,19 @@ class SolutionState:
         return obj
 
     def compute_veh_load(self, veh: Vehicle) -> float:
-        """计算当前车辆装载量。优先使用 Vehicle._loaded_volume 缓存以避免遍历 cargo。"""
-        # 优先使用 Vehicle 上的已装载体积缓存（若算子/改动已维护该缓存）
+        """Return the vehicle load, using the ``_loaded_volume`` cache when valid."""
+        # Prefer the cached loaded volume maintained by operators when available.
         loaded = getattr(veh, "_loaded_volume", None)
         if loaded is not None:
             return loaded
-        # 回退：遍历 cargo 计算体积（兼容未维护缓存的 Vehicle 实例）
+        # Fall back to cargo traversal for vehicles without a maintained cache.
         total_volume = 0
         for (sku_id, day), qty in veh.cargo.items():
             total_volume += self.data.sku_sizes[sku_id] * qty
         return total_volume
 
     def punish_deficient_veh_min_load(self, obj: float):
-        """判断当前车辆是否满足最小起运量, 如果不满足, 需要再目标函数中添加惩罚项"""
+        """Add penalties for vehicles below their minimum load requirement."""
         for veh in self.vehicles:
             total_volume = self.compute_veh_load(veh)
             min_load = self.data.veh_type_min_load[veh.type]
@@ -610,11 +629,12 @@ class SolutionState:
 
     def compute_shipped(self) -> Dict[Tuple[str, str], int]:
         """
-        计算在所有周期内, 满足经销商 j 对 SKU k 的需求量
+        Compute shipped quantity for each dealer and SKU across all periods.
 
-        优化说明:
-          - 使用 local defaultdict 聚合，避免在热路径中大量调用 dict.get。
-          - 避免不必要的 dict.copy()，只在缓存时将结果转换为常规 dict 存储。
+        Optimization notes:
+          - Aggregate with a local defaultdict to reduce dict.get calls in hot paths.
+          - Avoid unnecessary dict.copy() calls and convert to a regular dict only
+            when storing the cache.
         """
         if (
             getattr(self, "shipped_cache", None) is not None
@@ -625,16 +645,16 @@ class SolutionState:
                 return {}
             return shipped_cache
 
-        # 使用局部变量和 defaultdict 加速聚合
+        # Use local variables and defaultdict to speed up aggregation.
         shipped_agg = defaultdict(int)
         vehicles = self.vehicles  # local ref for speed
         for veh in vehicles:
             dealer = veh.dealer_id
-            # micro-opt: avoid tuple allocations inside inner loop where possible
+            # Micro-optimization: avoid tuple allocations in the inner loop.
             for (sku_id, day), qty in veh.cargo.items():
                 shipped_agg[(dealer, sku_id)] += qty
 
-        # 将结果转换为普通 dict 并缓存
+        # Convert to a regular dict and cache the result.
         self.shipped_cache = dict(shipped_agg)
         return self.shipped_cache if self.shipped_cache is not None else {}
 
@@ -664,8 +684,10 @@ class SolutionState:
 
     def compute_inventory(self):
         """
-        全表库存重算: 优先尝试数组化/Numba 加速实现 (若可用)，在失败时回退到 Python 实现。
-        目的：无缝替换以获得加速，同时保持原有行为与语义。
+        Recompute the full inventory table.
+
+        Use the array/Numba path when available and fall back to the pure-Python
+        implementation without changing behavior or semantics.
         """
         # Try fast path using multi_period_delivery.inventory_numba.compute_inventory_fast if available.
         try:
@@ -687,42 +709,43 @@ class SolutionState:
                 pass
 
             # --- Pure-Python baseline (original implementation) ---
-            # 1) 预计算每个 (plant, sku, day) 的当日发运量，避免在每个索引上扫描车辆列表
+            # 1) Precompute same-day shipments by (plant, sku, day) to avoid
+            # scanning the vehicle list for every inventory index.
             shipped_by_plant_sku_day = defaultdict(int)
             for veh in self.vehicles:
                 fact = veh.fact_id
                 d = veh.day
                 for (sku_id, day_k), q in veh.cargo.items():
-                    # 只计当日发运
+                    # Count same-day shipments only.
                     if day_k == d:
                         shipped_by_plant_sku_day[(fact, sku_id, day_k)] += q
 
-            # 为保证递推（s_t = s_{t-1} + prod_t - shipped_t）正确、稳定，按 (plant, sku)
-            # 分组并对 day 升序迭代，而不是依赖 self.s_indices 的无序迭代。否则当 day
-            # 的前驱 day-1 尚未计算时会得到错误的 prev_inventory=0。
+            # To keep the recursion correct, iterate by (plant, sku) in ascending
+            # day order instead of relying on unordered self.s_indices. Otherwise
+            # day-1 may be unavailable and produce an incorrect prev_inventory=0.
             plant_sku_pairs = {(plant, sku) for (plant, sku, d) in self.s_indices}
             for plant, sku_id in plant_sku_pairs:
-                for day in range(1, self.data.horizons + 1):  # 只处理 day>0 的情况
-                    # 直接从预计算表查询当日发运量
+                for day in range(1, self.data.horizons + 1):  # Only day > 0.
+                    # Read same-day shipments from the precomputed table.
                     shipped_from_plant = shipped_by_plant_sku_day.get(
                         (plant, sku_id, day), 0
                     )
 
-                    # 获取前一天的库存, 确保期初库存被正确考虑
+                    # Use the previous period inventory, including initial stock.
                     prev_inventory = self.s_ikt.get((plant, sku_id, day - 1), 0)
 
-                    # 获取当天的生产量
+                    # Read same-day production.
                     production = self.data.sku_prod_each_day.get(
                         (plant, sku_id, day), 0
                     )
 
-                    # 计算当前库存: 前一天库存 + 当天生产 - 当天发出
+                    # current = previous inventory + production - shipments.
                     current_inventory = prev_inventory + production - shipped_from_plant
 
-                    # 更新库存
+                    # Store the updated inventory.
                     self.s_ikt[(plant, sku_id, day)] = current_inventory
 
-            # 完成全表重算后标记 s_ikt 已初始化 (future periods 已计算完)
+            # Mark s_ikt as initialized after all future periods are computed.
             self.s_initialized = True
             return True
         finally:
@@ -785,51 +808,57 @@ class SolutionState:
 
 def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
     """
-    车辆装载 + 增量库存更新 (核心性能优化点)
+    Load a vehicle and update inventory incrementally.
 
-    核心思想:
-    - 不在每次“装一段货”后整体调用 compute_inventory()
-    - 利用线性递推链条: 当某 (plant, sku) 在 day 发运量 +q 时
-        对所有 d >= day 的 s_ikt(plant, sku, d) 都应 -q
-      因此可以一次性对 day..H 区间做逐日扣减，等价于完整递推更新的累积效果。
+    Core idea:
+    - Avoid calling compute_inventory() after every partial load.
+    - A shipment of ``q`` units for a ``(plant, sku)`` on ``day`` reduces all
+      ``s_ikt(plant, sku, d)`` entries for ``d >= day`` by ``q``.
+    - Updating ``day..H`` once is equivalent to the cumulative effect of the
+      full inventory recursion and avoids a full-table recomputation.
 
-    步骤:
-    1. 若基线库存尚未初始化 (s_initialized=False) → compute_inventory()
-    2. 针对每个订单 SKU:
-       a. 计算可用库存 available = s_{day-1} + production_day - 已装载(同厂同日累计)
-       b. 计算车辆容量上限转化为可装 SKU 数量
-       c. 得到实际装载量 load_qty = min(订单剩余, available, 容量允许)
-       d. veh.load() 记录货物, 更新 used_inv
-       e. 对 day..H 的 s_ikt 逐日扣减 load_qty (增量反映链式影响)
-       f. 若车辆装满继续以同样逻辑创建新车 (保持拆车粒度一致)
-    3. 末尾将非空车辆加入解；标记 objective 缓存失效
+    Steps:
+    1. If the inventory baseline is not initialized, call compute_inventory().
+    2. For each ordered SKU:
+       a. Compute available inventory as
+          ``s[day-1] + production[day] - already_loaded_same_plant_day``.
+       b. Convert vehicle capacity into the maximum quantity of this SKU.
+       c. Set ``load_qty = min(remaining_order, available, capacity_limit)``.
+       d. Call ``veh.load()`` and update ``used_inv``.
+       e. Subtract ``load_qty`` from ``s_ikt`` for ``day..H``.
+       f. Create another vehicle when the current one is full.
+    3. Add non-empty vehicles to the solution and invalidate the objective cache.
 
-    复杂度对比:
-    - 传统: 每次装载后全表 O(P*S*H) 重算 → 多次装载代价巨大
-    - 现方案: 单次装载 O(H - day + 1) 扣减；若装载发生在后期 day 接近 H 成本更低
-    - 典型情形下大幅降低初始解生成与修复算子阶段的计算开销
+    Complexity:
+    - The previous approach recomputed ``O(P*S*H)`` inventory after each load.
+    - This approach performs an ``O(H - day + 1)`` update per load.
+    - This substantially reduces initial-solution and repair costs.
 
-    正确性依赖:
-    - compute_inventory() 提供正确基线 (包含之前所有车辆发运量)
-    - 增量扣减严格遵循递推链 (所有未来期同步调整)
-    - destroy/repair 引起的车辆移除/新增用 batch_update_inventory 做对称加减
+    Correctness depends on:
+    - A baseline from compute_inventory() that includes all existing shipments.
+    - Incremental deductions that update every future period consistently.
+    - Symmetric batch updates when destroy/repair remove or add vehicles.
 
-    注意:
-    - 不处理跨日装载：cargo 中 day_k 必须等于车辆出车日 veh.day
-    - available 计算基于“前一日库存 + 当日产出 - 已装载”，不直接看 s_ikt[day] 避免双重扣减
-    - 若未来引入部分退货/回滚，需要提供与本逻辑对称的“增量加回”实现
+    Notes:
+    - Cross-day loading is not supported; every cargo day must equal ``veh.day``.
+    - Available inventory is computed from the previous period, current
+      production, and already loaded quantity to avoid double deduction.
+    - Any future partial rollback feature should provide a symmetric incremental
+      add-back implementation.
 
-    返回:
-    - True 表示装载流程正常完成
+    Returns
+    -------
+    bool
+        True when the loading process completes successfully.
     """
     data = state.data
     fact_id, dealer_id, veh_type, day = veh.fact_id, veh.dealer_id, veh.type, veh.day
 
-    # 必须先建立库存基线，再做增量扣减；否则会出现双重扣减或从未初始化库存直接扣减。
+    # Establish the inventory baseline before incremental deductions.
     if not state.s_initialized:
         state.compute_inventory()
 
-    # 合并遍历：一次遍历构建 used_inv 和 vehicle_ids（减少两次循环开销）
+    # Build used_inv and vehicle_ids in one pass.
     used_inv = {}
     vehicles_list = state.vehicles
     vehicle_ids = set()
@@ -853,7 +882,7 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
         remain_qty = order_qty
 
         while remain_qty > 0:
-            # 计算可用库存
+            # Compute available inventory.
             prev_inv = s_ikt.get((fact_id, sku_id, day - 1), 0)
             production = prod_get((fact_id, sku_id, day), 0)
             used_qty = used_inv.get(sku_id, 0)
@@ -861,14 +890,14 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
             if available <= 0:
                 break
 
-            # 直接使用 veh.capacity 作为剩余可用体积，避免重复计算 current_load
+            # Use veh.capacity as remaining volume to avoid recomputing current_load.
             sku_size = sku_sizes[sku_id]
-            max_qty_by_cap = veh.capacity // sku_size  # veh最多能装载的该SKU数量
-            # 实际需要的装载量, 这里考虑剩余订单量、可用库存和车辆容量
+            max_qty_by_cap = veh.capacity // sku_size  # Max SKU quantity by capacity.
+            # Residual demand, available inventory, and capacity bound the load.
             load_qty = int(min(remain_qty, available, max_qty_by_cap))
 
             if load_qty <= 0:
-                # 当前车辆已满, 加入队列, 换新车
+                # The current vehicle is full; store it and switch to a new one.
                 if not veh.is_empty():
                     if veh.id not in vehicle_ids:
                         state.vehicles.append(veh)
@@ -880,18 +909,18 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
             used_inv[sku_id] = used_inv.get(sku_id, 0) + load_qty
             remain_qty -= load_qty
 
-            # 将该次装载量从装运当天及之后的库存中扣减
+            # Deduct this load from the shipment day and all future periods.
             for d in range(day, horizons + 1):
                 key = (fact_id, sku_id, d)
                 s_ikt[key] = int(s_ikt.get(key, 0) - load_qty)
 
-        # 最后一次循环后, 若veh有货且未加入, 则加入（用 id 集合避免昂贵的 eq 比较）
+        # Add the final non-empty vehicle once, using IDs to avoid costly equality checks.
         if not veh.is_empty() and veh.id not in vehicle_ids:
             state.vehicles.append(veh)
 
-    # 增量更新已在装载时完成，不再进行全表 recompute 以减少开销
+    # Incremental updates are complete, so no full recomputation is needed.
 
-    # 装载操作已改变车辆与库存结构, 目标缓存失效
+    # Loading changed vehicles and inventory, so invalidate the objective cache.
     state.mark_objective_dirty()
     # Clear inventory fast-path cache to ensure next compute_inventory rebuilds arrays
     try:
@@ -904,28 +933,35 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
 
 def batch_update_inventory(state: SolutionState, vehicles: List[Vehicle], op_type: str):
     """
-    批量更新库存并返回应用的更新摘要。
-    返回值:
-      inventory_updates: dict{(plant, sku, day): delta_applied}
-    目的:
-      - 让调用者能够校验实际应用的回补/扣减是否与预期一致
-      - 在发生异常或不一致时便于记录/回退/诊断
-    备注:
-      - 对于 destroy: 将 removed 车辆的 cargo 按 day..H 加回库存 (delta 为正)
-      - 对于 repair : 将新增车辆的 cargo 按 day..H 减去库存 (delta 为负)
+    Batch-update inventory and return a summary of applied changes.
+
+    Returns
+    -------
+    dict
+        Mapping ``(plant, sku, day)`` to the applied inventory delta.
+
+    Purpose:
+    - Allow callers to verify that applied additions or deductions match intent.
+    - Support logging, rollback, or diagnostics when an inconsistency occurs.
+
+    Notes:
+    - For ``destroy``, add removed vehicle cargo back to inventory for
+      ``day..H`` using positive deltas.
+    - For ``repair``, deduct new vehicle cargo from inventory for ``day..H``
+      using negative deltas.
     """
     inventory_updates = defaultdict(int)
     if not vehicles:
         return inventory_updates
 
-    # 确保库存已经初始化
+    # Ensure inventory has been initialized.
     if not state.s_initialized:
         state.compute_inventory()
 
-    # 聚合所有待更新的 (plant, sku, day) -> delta
+    # Aggregate all (plant, sku, day) inventory deltas.
     for veh in vehicles:
         for (sku_id, d_shipped), qty in veh.cargo.items():
-            # 收集所有需要更新的库存变化
+            # Collect every inventory change that must be applied.
             for d in range(d_shipped, state.data.horizons + 1):
                 key = (veh.fact_id, sku_id, d)
                 if op_type == "destroy":
@@ -933,12 +969,12 @@ def batch_update_inventory(state: SolutionState, vehicles: List[Vehicle], op_typ
                 elif op_type == "repair":
                     inventory_updates[key] -= qty
 
-    # 应用所有更新并记录最终实际应用量（写入 state.s_ikt）
+    # Apply all updates to state.s_ikt.
     s_ikt_get = state.s_ikt.get
     for key, delta in inventory_updates.items():
         state.s_ikt[key] = s_ikt_get(key, 0) + delta
 
-    # 库存被批量改写, 使目标缓存失效
+    # Batch inventory changes invalidate the objective cache.
     state.mark_objective_dirty()
     # Clear inventory fast-path cache to ensure next compute_inventory rebuilds arrays
     try:
@@ -947,7 +983,7 @@ def batch_update_inventory(state: SolutionState, vehicles: List[Vehicle], op_typ
     except Exception:
         pass
 
-    # 返回摘要，供调用方进行比对/记录
+    # Return the summary for caller verification and logging.
     return dict(inventory_updates)
 
 

@@ -1,8 +1,9 @@
-# 多周期数学模型的gurobi代码
-# 需要实现模型 2 中定义的数学模型
-# 模型 2 的假设包括：多周期、SKU供给量 = 期初库存 + 生产数量 ≥ 需求量、生产基地的存储能力有上限
-# 多生产基地、多经销商、多车型、多SKU
-# 每家生产基地可以提供相同的SKU，不同生产基地提供的SKU之间存在交集
+# Gurobi formulation of the multi-period mathematical model.
+# This module implements the model defined as Model 2.
+# Model 2 assumes multiple periods, SKU supply = initial inventory + production >=
+# demand, and a finite storage capacity at each production plant.
+# It supports multiple plants, dealers, vehicle types, and SKUs.
+# Each plant can supply the same SKUs, and different plants' SKU sets may overlap.
 import os
 import time
 from gurobipy import GRB
@@ -13,163 +14,172 @@ from .optutility import LogPrinter
 from .InputDataMultiple import InputDataMultiple
 
 
-# 创建LogPrinter的实例
+# Create a LogPrinter instance.
 log_printer = LogPrinter(time.time())
-# # 通过设置force_plain=True，强制化使用纯文本输出，例如在重定向到文件时
-# # 如果需要显示格式化文本，例如字体颜色等，可以注释掉这行，并且关闭重定向
-# # 需要修改optLogicMultiple.py文件中的run_model方法，启用注释部分的代码，并注释掉相对应部分的现有代码
+# Set force_plain=True to force plain-text output, for example when redirecting to a file.
+# To display formatted text such as colored output, comment out this line and disable redirection.
+# You must also update run_model in optLogicMultiple.py by enabling the commented block
+# and disabling the corresponding active block.
 # log_printer.set_output_mode(force_plain=True)
 
 
 @dataclass
 class MonolithicModelMultiple:
     data: InputDataMultiple
-    # 对于多周期问题，默认规划周期长度为 1
-    # 具体数值是warehouse_production.csv文件中produce_date这一列的最大值
+    # Default planning horizon for multi-period instances.
+    # The actual value is the maximum produce_date in warehouse_production.csv.
     horizons = 1
-    # # 当前的规划周期，默认值为 1
-    # # 需要特别注意， day = 0 表示期初
-    # # 即 day = 0, 1, ..., horizons
+    # Current planning period; the default is 1.
+    # In particular, day = 0 represents the initial state, so day = 0, 1, ..., horizons.
     # day = 1
 
-    # 设定环境参数
-    # 模型中的惩罚系数 Alpha
+    # Environment parameters.
+    # Penalty coefficient Alpha used in the model.
     param_alpha: float = field(init=False)
-    # 模型中的 M
+    # Big-M constant used in the model.
     param_BIG_NUM: int = field(init=False)
-    # MIP模型的求解gap，当达到设定的gap后，模型停止，默认值为0
+    # MIP optimality gap. The solver stops when this gap is reached; the default is 0.
     param_gap_limit: float = field(init=False)
-    # MIP模型求解的时间限制，默认值为60
+    # MIP solver time limit; the default is 60 seconds.
     param_time_limit: float = field(init=False)
-    # 是否输出gurobi的求解日志
+    # Whether to output Gurobi solver logs.
     param_output_flag: int = field(init=False)
 
-    # 定义需要的数据接口，看数学模型中的符号定义
-    # 生产基地的集合
+    # Data interfaces aligned with the notation in the mathematical model.
+    # Set of production plants.
     plants: Set[str] = field(init=False)
-    # 经销商的集合
+    # Set of dealers.
     dealers: Set[str] = field(init=False)
-    # 所有SKU的集合
+    # Set of all SKUs.
     all_skus: Set[str] = field(init=False)
-    # 所有车辆编号的集合
+    # Set of all vehicle IDs.
     all_vehicles: Set[int] = field(init=False)
-    # 规划周期 t 的集合
+    # Set of planning periods t.
     periods: Set[int] = field(init=False)
 
-    # 每种SKU的体积量化数值 {sku: size}
+    # Volume per SKU {sku: size}.
     sku_sizes: Dict[str, float] = field(init=False)
-    # 在每个周期 t 内，生产基地计划生产的SKU数量 {(plant, sku, day): qty}
+    # Planned SKU production at each plant in period t {(plant, sku, day): qty}.
     sku_prod_each_day: Dict[Tuple[str, str, int], int] = field(init=False)
-    # 生产基地中SKU的期初库存数量 {(plant, sku): qty}
+    # Initial SKU inventory at each plant {(plant, sku): qty}.
     sku_initial_inv: Dict[Tuple[str, str], int] = field(init=False)
-    # 生产基地可以提供的SKU集合
+    # SKUs that each plant can supply.
     skus_plant: Dict[str, Set[str]] = field(init=False)
 
-    # 经销商对SKU的需求 {(dealer, sku): qty}
+    # Dealer demand for each SKU {(dealer, sku): qty}.
     demands: Dict[Tuple[str, str], int] = field(init=False)
-    # 经销商需要的SKU集合
+    # SKUs required by each dealer.
     skus_dealer: Dict[str, Set[str]] = field(init=False)
 
-    # 每一辆车的使用成本 {v_id: cost}
+    # Use cost for each vehicle {v_id: cost}.
     veh_cost: Dict[int, float] = field(init=False)
-    # 每一辆车的容量上限 {v_id: capacity}
+    # Capacity upper bound for each vehicle {v_id: capacity}.
     veh_cap: Dict[int, float] = field(init=False)
-    # 每一辆车的最小起运量 {v_id: min_load}
+    # Minimum load for each vehicle {v_id: min_load}.
     veh_min_load: Dict[int, float] = field(init=False)
-    # 每个生产基地的库存上限 {plant: max_cap}
+    # Inventory capacity upper bound for each plant {plant: max_cap}.
     plant_inv_limit: Dict[str, float] = field(init=False)
 
-    # 所有车辆类型
+    # All vehicle types.
     all_veh_types: List[str] = field(init=False)
-    # 有了车辆编号，还需要在车辆编号和车辆类型之间建立联系
-    # 告诉我任意一辆车的编号，通过查看这辆车的类型，就能知道
-    # 这辆车的所有信息，包括使用成本、容量上限、最小起运量
+    # Vehicle IDs must be linked to vehicle types.
+    # Given a vehicle ID, its type identifies all relevant vehicle attributes,
+    # including use cost, capacity, and minimum load.
     # {v_id: v_type}
     veh_type: Dict[int, str] = field(init=False)
-    # 同理，告诉我任意一种车辆的类型，我能知道这种车辆类型拥有哪些编号的车辆 {v_type: {v_id}}
+    # Conversely, each vehicle type identifies its vehicle IDs {v_type: {v_id}}.
     veh_ids: Dict[str, Set[int]] = field(init=False)
 
-    # 生产基地和经销商之间的供需关系映射 {(plant, dealer): {sku}}
+    # Supply relationships between plants and dealers {(plant, dealer): {sku}}.
     supply_chain: Dict[Tuple[str, str], Set[str]] = field(init=False)
-    # 到这里，多周期优化问题需要的所有数据接口，已经定义完毕
+    # All data interfaces required by the multi-period optimization problem are defined.
 
-    # 接下来，需要定义数学模型、目标函数、各种辅助变量和决策变量
-    # 最后再定义约束条件
-    # 定义gurobi模型
+    # Next, define the mathematical model, objective function, auxiliary variables,
+    # decision variables, and finally the constraints.
+    # Gurobi model.
     model: gp.Model = field(init=False)
-    # 定义目标函数
+    # Objective function.
     obj: gp.LinExpr = field(init=False)
 
-    # 定义辅助变量
-    # 在周期 t 内是否使用车辆 l {(v_id, day): gp.Var}，使用 = 1，不使用 = 0
+    # Auxiliary variables.
+    # Whether vehicle l is used in period t {(v_id, day): gp.Var}; 1 = used, 0 = unused.
     z_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
-    # 在周期 t 内车辆 l 的实际装载体积是否低于最小起运量， {(v_id, day): gp.Var}，低于 = 1， 不低于 = 0
+    # Whether vehicle l's actual load in period t is below its minimum load
+    # {(v_id, day): gp.Var}; 1 = below, 0 = not below.
     zz_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
-    # 在周期 t 内车辆 l 最小起运量的惩罚标识变量，{(v_id, day): gp.Var}，惩罚 = 1，不惩罚 = 0
-    # 只有当使用车辆 l 时，如果车辆 l 的实际装载体积是否低于最小起运量，才惩罚，否则不惩罚
-    # 如果没有使用车辆 l，则不惩罚
+    # Penalty indicator for vehicle l's minimum-load violation in period t
+    # {(v_id, day): gp.Var}; 1 = penalized, 0 = not penalized.
+    # A used vehicle is penalized only when its actual load is below its minimum load.
+    # An unused vehicle is not penalized.
     p_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
 
-    # 定义决策变量
-    # 在周期 t 内是否使用车辆 l 配送从生产基地 i 到经销商 j 的商品，配送 = 1， 不配送 = 0 {(plant, dealer, v_id, day): gp.Var}
+    # Decision variables.
+    # Whether vehicle l delivers goods from plant i to dealer j in period t
+    # {(plant, dealer, v_id, day): gp.Var}; 1 = used, 0 = unused.
     y_ijlt: gp.tupledict[Tuple[str, str, int, int], gp.Var] = field(init=False)
-    # 生产基地 i 中SKU k 的库存转移到周期 t 的数量，其中 t = 0, 1, ..., T-1。
-    # 特别地，s_ik0表示生产基地 i 中SKU k 的期初库存。 {(plant, sku_id, day): gp.Var}
+    # Inventory of SKU k at plant i carried into period t, where t = 0, 1, ..., T-1.
+    # In particular, s_ik0 is the initial inventory of SKU k at plant i.
+    # {(plant, sku_id, day): gp.Var}
     s_ikt: gp.tupledict[Tuple[str, str, int], gp.Var] = field(init=False)
-    # 在周期 t 内从生产基地 i 运往经销商 j 的车辆 l 中装载SKU k 的数量  {(plant, dealer, sku_id, v_id, day): gp.Var}
+    # Quantity of SKU k loaded onto vehicle l for shipment from plant i to dealer j in period t
+    # {(plant, dealer, sku_id, v_id, day): gp.Var}
     x_ijklt: gp.tupledict[Tuple[str, str, str, int, int], gp.Var] = field(init=False)
 
-    # 变量的下标
+    # Variable index sets.
     auxi_indices: List[Tuple[int, int]] = field(init=False)
     y_indices: List[Tuple[str, str, int, int]] = field(init=False)
     s_indices: List[Tuple[str, str, int]] = field(init=False)
     x_indices: List[Tuple[str, str, str, int, int]] = field(init=False)
     new_triple_ikt: Set[Tuple[str, str, int]] = field(init=False)
 
-    # 定义需要向模型中添加的约束条件
-    # 约束 1 -- 对于所有生产基地 i 和经销商 j 构成的有序对 (i, j)
-    # 只要生产基地 i 在周期 t 内使用车辆 l 为经销商 j 配送商品，那么就代表车辆 l 已经被使用
+    # Constraints added to the model.
+    # Constraint 1: for every ordered pair (i, j) of plant i and dealer j,
+    # if plant i uses vehicle l to deliver goods to dealer j in period t,
+    # then vehicle l is considered used.
     cons_veh_use: gp.tupledict[Tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
-    # 约束2 -- 在周期 t 内只有在使用车辆 l 时，才能将商品装载到车辆 l 上
+    # Constraint 2: in period t, goods can be loaded onto vehicle l only if it is used.
     cons_sku_load: gp.tupledict[Tuple[str, str, int, int], gp.Constr] = field(
         init=False
     )  # {(plant, dealer, v_id, day): gp.Constr}
-    # 约束3 -- 在周期 t 内车辆 l 的实际装载体积不小于该车辆的最小起运量
+    # Constraint 3: in period t, vehicle l's actual load must be at least its minimum load.
     cons_veh_min_load: gp.tupledict[Tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
-    # 约束4 -- 在周期 t 内车辆 l 最小起运量的惩罚标识变量 p_lt，与车辆 l 的使用状态变量 z_lt
-    # 以及车辆 l 是否满足最小起运量的状态变量 zz_lt，三者之间应该满足的关系
+    # Constraint 4: relationship among the minimum-load penalty indicator p_lt,
+    # the vehicle-use variable z_lt, and the minimum-load satisfaction variable zz_lt.
     cons_auxi_relation: gp.tupledict[Tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
-    # 约束5 -- 在周期 t 内车辆 l 的实际装载体积不超过该车辆的最大装载能力
+    # Constraint 5: in period t, vehicle l's actual load must not exceed its capacity.
     cons_veh_cap_limit: gp.tupledict[Tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
-    # 约束6 -- 在搜有周期 t 内所有生产基地 i 使用所有车辆 l，运往某个经销商 j 的SKU k 的总量，等于经销商 j 对SKU k 的需求
+    # Constraint 6: across all periods t, the total quantity of SKU k shipped to dealer j
+    # from all plants i using all vehicles l must equal dealer j's demand for SKU k.
     cons_dealer_demands: gp.tupledict[Tuple[str, str], gp.Constr] = field(
         init=False
     )  # {(dealer, sku_id): gp.Constr}
-    # 约束7 -- 在周期 t 内，从某个生产基地 i 运往所有经销商 j 的SKU k 的总量，等于生产基地 i 中SKU k 的库存转移到周期 t-1 的数量，
-    # 加上在周期 t 内，生产基地 i 的SKU k 的生产数量，再减去生产基地 i 中SKU k 的库存转移到周期 t 的数量。
+    # Constraint 7: in period t, the total quantity of SKU k shipped from plant i to all
+    # dealers j equals the inventory carried from period t-1 plus production in period t
+    # minus the inventory carried into period t.
     # {(plant, sku_id, day): gp.Constr}
     cons_sku_inv_transfer: gp.tupledict[Tuple[str, str, int], gp.Constr] = field(
         init=False
     )
-    # 约束8 -- 在周期 t 内，生产基地 i 中剩余的所有商品数量不超过该基地的最大存储能力。
+    # Constraint 8: in period t, the total remaining inventory at plant i must not
+    # exceed the plant's maximum storage capacity.
     cons_plant_inv_limit: gp.tupledict[Tuple[str, int], gp.Constr] = field(
         init=False
     )  # {(plant, day): gp.Constr}
 
-    # 约束9 -- 添加对称性割，用于破除模型中存在的对称性，缩减解空间
+    # Constraint 9: add symmetry-breaking cuts to reduce model symmetry and solution space.
     # {(v_type, v_id, v_di_1, day): gp.Constr}
     # cons_symmetry_break: gp.tupledict[Tuple[str, int, int, int], gp.Constr] = field(init=False)
 
-    # 至此，多周期优化模型的所有相关属性都已经定义完毕
-    # 接下来，要做的事情是实例化这些属性
+    # All attributes of the multi-period optimization model are defined.
+    # The next step is to instantiate them.
 
     def __post_init__(self):
         self.horizons = self.data.horizons
@@ -202,7 +212,7 @@ class MonolithicModelMultiple:
         self.model = gp.Model()
         self.obj = gp.LinExpr()
 
-        # 添加辅助变量
+        # Add auxiliary variables.
         self.periods = {t for t in range(1, self.horizons + 1)}
         self.auxi_indices = [
             (v_id, t) for v_id in self.all_vehicles for t in self.periods
@@ -217,7 +227,7 @@ class MonolithicModelMultiple:
             self.auxi_indices, lb=0, ub=1, vtype=GRB.BINARY, name="p_lt"
         )
 
-        # 添加决策变量
+        # Add decision variables.
         self.y_indices = [
             (plant, dealer, v_id, t)
             for (plant, dealer) in self.supply_chain
@@ -227,11 +237,11 @@ class MonolithicModelMultiple:
             self.y_indices, lb=0, ub=1, vtype=GRB.BINARY, name="y"
         )
 
-        # 构建 (plant, dealer, sku_id) 的集合，代表生产基地 i 可以向经销商 j 提供 SKU k
-        # 锁定某个经销商 j
-        # 为什么要用集合？因为必须保证每个变量的下标是唯一确定的，所以要强制去除重复元素，用集合最保险
-        # 在此之前，需要先计算出生产基地 i 可以提供的SKU k 的集合，包括 库存 + 生产，这个信息在skus_plant中
-        # 但是是以字典保存的，需要转换为我们需要的形式
+        # Build the set of (plant, dealer, sku_id) triples where plant i can supply SKU k to dealer j.
+        # Fix a dealer j.
+        # A set is used to guarantee unique variable indices by removing duplicates.
+        # First derive the SKUs available from each plant, including inventory and production,
+        # from skus_plant. The source data is stored as a dictionary, so convert it to the required form.
         duet_ik = {
             (plant, sku_id)
             for plant, skus in self.skus_plant.items()
@@ -267,8 +277,8 @@ class MonolithicModelMultiple:
         self.s_ikt = self.model.addVars(
             self.s_indices, lb=0, vtype=GRB.INTEGER, name="s"
         )
-        # 由于s_ik0代表的是生产基地 i 中拥有的SKU k 的期初库存，所以需要 **固定** 这部分变量的取值
-        # 如何实现？同时设定这部分变量的上界和下界为某个常数
+        # Since s_ik0 represents the initial inventory of SKU k at plant i, fix this variable.
+        # Set both its lower and upper bounds to the same constant value.
         for plant, sku_id, t in self.s_indices:
             if t == 0 and (plant, sku_id) in self.sku_initial_inv:
                 self.s_ikt[plant, sku_id, t].setAttr(
@@ -278,19 +288,20 @@ class MonolithicModelMultiple:
                     "UB", self.sku_initial_inv[plant, sku_id]
                 )
 
-        # 构建目标函数
+        # Build the objective function.
         self.obj = gp.quicksum(
             self.veh_cost[v_id] * self.z_lt[v_id, t] for (v_id, t) in self.auxi_indices
         ) + gp.quicksum(
             self.param_alpha * self.veh_cost[v_id] * self.p_lt[v_id, t]
             for (v_id, t) in self.auxi_indices
         )
-        # 设定目标函数的优化方向
+        # Set the optimization direction of the objective function.
         self.model.setObjective(self.obj, sense=GRB.MINIMIZE)
 
-        # 添加约束条件
-        # 约束 1 -- 对于所有生产基地 i 和经销商 j 构成的有序对 (i, j)
-        # 只要生产基地 i 在周期 t 内使用车辆 l 为经销商 j 配送商品，那么就代表车辆 l 已经被使用
+        # Add constraints.
+        # Constraint 1: for every ordered pair (i, j) of plant i and dealer j,
+        # if plant i uses vehicle l to deliver goods to dealer j in period t,
+        # then vehicle l is considered used.
         # Create cons_veh_use with explicit unique names to avoid duplicate-name warnings
         _cons_veh_use_tmp = {}
         for v_id, t in self.auxi_indices:
@@ -310,7 +321,7 @@ class MonolithicModelMultiple:
                 .replace("-", "_")
             )
 
-        # 约束2 -- 在周期 t 内只有在使用车辆 l 时，才能将商品装载到车辆 l 上
+        # Constraint 2: in period t, goods can be loaded onto vehicle l only if it is used.
         _cons_sku_load_tmp = {}
         for plant, dealer, v_id, t in self.y_indices:
             cname = f"cons_sku_load_{_sanitize_part(plant)}_{_sanitize_part(dealer)}_{v_id}_{t}"
@@ -321,7 +332,7 @@ class MonolithicModelMultiple:
             )
         self.cons_sku_load = gp.tupledict(_cons_sku_load_tmp)
 
-        # 约束3 -- 在周期 t 内车辆 l 的实际装载体积不小于该车辆的最小起运量
+        # Constraint 3: in period t, vehicle l's actual load must be at least its minimum load.
         _cons_veh_min_load_tmp = {}
         for v_id, t in self.auxi_indices:
             cname = f"cons_veh_min_load_{v_id}_{t}"
@@ -336,8 +347,8 @@ class MonolithicModelMultiple:
             )
         self.cons_veh_min_load = gp.tupledict(_cons_veh_min_load_tmp)
 
-        # 约束4 -- 在周期 t 内车辆 l 最小起运量的惩罚标识变量 p_lt，与车辆 l 的使用状态变量 z_lt
-        # 以及车辆 l 是否满足最小起运量的状态变量 zz_lt，三者之间应该满足的关系
+        # Constraint 4: relationship among the minimum-load penalty indicator p_lt,
+        # the vehicle-use variable z_lt, and the minimum-load satisfaction variable zz_lt.
         _cons_auxi_relation_tmp = {}
         for v_id, t in self.auxi_indices:
             cname = f"cons_auxi_relation_{v_id}_{t}"
@@ -347,7 +358,7 @@ class MonolithicModelMultiple:
             )
         self.cons_auxi_relation = gp.tupledict(_cons_auxi_relation_tmp)
 
-        # 约束5 -- 在周期 t 内车辆 l 的实际装载体积不超过该车辆的最大装载能力
+        # Constraint 5: in period t, vehicle l's actual load must not exceed its capacity.
         _cons_veh_cap_limit_tmp = {}
         for v_id, t in self.auxi_indices:
             cname = f"cons_veh_cap_limit_{v_id}_{t}"
@@ -361,7 +372,8 @@ class MonolithicModelMultiple:
             )
         self.cons_veh_cap_limit = gp.tupledict(_cons_veh_cap_limit_tmp)
 
-        # 约束6 -- 在搜有周期 t 内所有生产基地 i 使用所有车辆 l，运往某个经销商 j 的SKU k 的总量，等于经销商 j 对SKU k 的需求
+        # Constraint 6: across all periods t, the total quantity of SKU k shipped to dealer j
+        # from all plants i using all vehicles l must equal dealer j's demand for SKU k.
         _cons_dealer_demands_tmp = {}
         for dealer, sku_id in self.demands:
             cname = (
@@ -374,8 +386,9 @@ class MonolithicModelMultiple:
             )
         self.cons_dealer_demands = gp.tupledict(_cons_dealer_demands_tmp)
 
-        # 约束7 -- 在周期 t 内，从某个生产基地 i 运往所有经销商 j 的SKU k 的总量，等于生产基地 i 中SKU k 的库存转移到周期 t-1 的数量，
-        # 加上在周期 t 内，生产基地 i 的SKU k 的生产数量，再减去生产基地 i 中SKU k 的库存转移到周期 t 的数量。
+        # Constraint 7: in period t, the total quantity of SKU k shipped from plant i to all
+        # dealers j equals the inventory carried from period t-1 plus production in period t
+        # minus the inventory carried into period t.
         _cons_sku_inv_transfer_tmp = {}
         for plant, sku_id, t in self.new_triple_ikt:
             cname = f"cons_sku_inv_transfer_{_sanitize_part(plant)}_{_sanitize_part(sku_id)}_{t}"
@@ -388,7 +401,8 @@ class MonolithicModelMultiple:
             )
         self.cons_sku_inv_transfer = gp.tupledict(_cons_sku_inv_transfer_tmp)
 
-        # 约束8 -- 在周期 t 内，生产基地 i 中剩余的所有商品数量不超过该基地的最大存储能力。
+        # Constraint 8: in period t, the total remaining inventory at plant i must not
+        # exceed the plant's maximum storage capacity.
         _cons_plant_inv_limit_tmp = {}
         for plant in self.plants:
             for t in self.periods:
@@ -399,9 +413,9 @@ class MonolithicModelMultiple:
                 )
         self.cons_plant_inv_limit = gp.tupledict(_cons_plant_inv_limit_tmp)
 
-        # 约束9 -- 添加的对称性割，用于破除模型中存在的对称性
-        # Gurobi会自动检测模型中的对称性, 并进行处理, 所以这里的对称性割可以不添加
-        # 在添加时, 需要考虑对求解效率的影响
+        # Constraint 9: add symmetry-breaking cuts to reduce model symmetry.
+        # Gurobi detects and handles symmetry automatically, so these cuts are optional.
+        # If added, evaluate their effect on solver efficiency.
         # self.cons_symmetry_break = self.model.addConstrs((
         #     self.z_lt[v_id, t] <= self.z_lt[v_id_1, t]
         #     for v_type in self.all_veh_types
@@ -409,21 +423,22 @@ class MonolithicModelMultiple:
         #     for t in self.periods
         # ), name="cons_symmetry_break")
 
-        # 启用求解日志
+        # Enable solver logs.
         self.model.setParam("OutputFlag", self.param_output_flag)
-        # 设置模型求解gap
+        # Set the MIP optimality gap.
         self.model.Params.MIPGap = self.param_gap_limit
-        # 设置求解时间
+        # Set the solver time limit.
         self.model.Params.TimeLimit = self.param_time_limit
 
     def run(self):
-        # 如果发现，模型在求解过程中BestBd移动缓慢，甚至一点也不变化，做法如下
-        # 如果要用于算法对比实验, 不建议启用下面的参数设置, 只设置TimeLimit和MIPGap即可
-        # # self.model.Params.MIPFocus = 3    # 专注于bound提升
-        # self.model.Params.MIPFocus = 2    # 专注于证明最优
-        # self.model.Params.Cuts = 2        # 生成更多的切平面
+        # If BestBd improves slowly or not at all during optimization, try the following
+        # parameter settings. For algorithm comparison experiments, it is generally better
+        # to set only TimeLimit and MIPGap.
+        # self.model.Params.MIPFocus = 3    # Focus on improving the bound.
+        # self.model.Params.MIPFocus = 2    # Focus on proving optimality.
+        # self.model.Params.Cuts = 2        # Generate more cutting planes.
 
-        # 收集模型求解的状态信息
+        # Collect solver status information.
         meta = {}
 
         # Helper to read variable value (compatible with .X / .Xn)
@@ -534,7 +549,7 @@ class MonolithicModelMultiple:
 
             if (
                 self.model.IISMinimal
-            ):  # 判断 model.computeIIS() 返回的是否是包含不可行约束条件数最少的IIS
+            ):  # Check whether computeIIS() returned a minimal irreducible infeasible subsystem.
                 log_printer.print("IIS is minimal \n")
             else:
                 log_printer.print("IIS is not minimal \n")
@@ -580,9 +595,9 @@ class MonolithicModelMultiple:
 
     def save_feasible_sol(self):
         """
-        将Gurobi找到的可行解以json格式保存到文件中,
-        该函数在模型求解状态为TIME_LIMIT时调用, 但可能会非常耗时
-        批量运行时不建议启用该函数
+        Save the feasible solution found by Gurobi to a JSON file.
+        This function is called when the solver status is TIME_LIMIT, but it can be
+        very time-consuming and is not recommended for batch runs.
         """
         sol_file_loc = os.path.join(self.data.output_file_loc, self.data.dataset_name)
         if not os.path.exists(sol_file_loc):

@@ -2,23 +2,29 @@
 ml_destroy_selection
 ====================
 
-模块定位
-    基于机器学习 (MLOperatorSelector) 的“自适应破坏算子选择”入口封装。
-    通过读取当前解的特征 + 历史 (特征, 算子, 改进值) 样本，预测各破坏算子的期望改进，
-    自动挑选合适的破坏算子执行；当训练数据不足时回退到随机选择策略。
+Purpose
+    Provide the adaptive destroy-operator selection entry point backed by
+    MLOperatorSelector. It reads current-state features and historical
+    (feature, operator, improvement) samples, predicts the expected improvement
+    of each destroy operator, and selects one automatically. If training data
+    is insufficient, it falls back to random selection.
 
-核心流程
-    1. 复制当前解 (保持函数纯度，外部原状态不被直接修改)。
-    2. 若未绑定 ML 选择器 (state.ml_selector 为 None) → 回退 random_removal。
-    3. 若 destroy 特征样本数 < min_sample_size → 随机算子 + 记录 (特征, 改进)。
-    4. 否则：
-         a. 调用 ml_selector.train_models() （内部按间隔、样本阈值决定是否训练）
-         b. select_best_operator(..., op_type='destroy')
-         c. 执行所选算子并评估改进
-         d. 记录改进样本 + 调整算子参数 (ParamAutoTuner 存在时)
-    5. 返回更新后的新解副本
+Core flow
+    1. Copy the current solution so the caller's state is not modified.
+    2. If no ML selector is attached (state.ml_selector is None), fall back to
+       random_removal.
+    3. If destroy feature count < min_sample_size, choose a random operator and
+       record (feature, improvement).
+    4. Otherwise:
+         a. Call ml_selector.train_models(); internal interval and sample
+            thresholds decide whether training occurs.
+         b. Call select_best_operator(..., op_type='destroy').
+         c. Execute the selected operator and evaluate improvement.
+         d. Record the improvement sample and tune operator parameters when a
+            ParamAutoTuner is present.
+    5. Return the updated solution copy.
 
-算子集 (保持与 MLOperatorSelector.destroy_op_map 一致)
+Operator set, kept consistent with MLOperatorSelector.destroy_op_map
     - random_removal
     - shaw_removal
     - periodic_shaw_removal
@@ -27,47 +33,45 @@ ml_destroy_selection
     - infeasible_removal
     - surplus_inventory_removal
 
-命名说明
-    函数名为：
-        select_and_apply_destroy_operator
-    以突出：函数既“选择”又“执行”破坏算子。
+Performance and safety
+    - Operate only on the state.copy() result.
+    - objective() relies on caching and incremental inventory updates for
+      efficiency.
+    - Logging is lightweight and can later be connected to a global log switch.
 
-性能与安全
-    - 仅对 state.copy() 副本进行操作
-    - objective() 调用依赖缓存与增量库存保持高效
-    - 日志轻量，可按需后续接入全局日志开关
-
-后续可选增强
-    - 引入算子失败/跳过的异常捕获与退化策略
-    - 将 min_sample_size 外化为配置 (ALNSConfig) 便于不同数据规模调参
-    - 记录算子执行耗时并纳入特征，建立“成本感知”模型
+Optional future enhancements
+    - Add exception handling and fallback behavior for failed or skipped
+      operators.
+    - Expose min_sample_size through ALNSConfig for easier tuning across data
+      scales.
+    - Record operator runtime as a feature for a cost-aware model.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import time
 import math
 from typing import Dict, List, Any, Optional
 
 # =========================
-# 第三方库
+# Third-party libraries
 # =========================
 import numpy as np
 import numpy.random as rnd
 from collections import (
     defaultdict,
-)  # （当前文件未直接使用，但可能在扩展中需要，可保留或后续清理）
+)  # Not currently used directly, but may be useful for extensions.
 
 # =========================
-# 项目内部
+# Internal project dependencies
 # =========================
 from .alnsopt import SolutionState
 from .ml_operator_selector import MLOperatorSelector
 from .alns_config import default_config as ALNSConfig
 from .repair_utils import compute_mixed_operator_reward
 
-# 破坏算子集合
+# Destroy operator collection
 from .destroy_operators import (
     random_removal,
     worst_removal,
@@ -82,7 +86,8 @@ from .destroy_operators import (
 )
 
 # ---------------------------------------------------------------------
-# 内部：算子映射构造（lambda 包装保持统一调用签名）
+# Internal: operator map construction. Lambda wrappers preserve the call
+# signature.
 # ---------------------------------------------------------------------
 _DESTROY_OPERATORS: Dict[str, callable] = {
     "random_removal": lambda s, r, **kw: random_removal(s, r, **kw),
@@ -131,7 +136,7 @@ def _sanitize_destroy_params(op_name: str, params: Dict[str, Any]) -> Dict[str, 
 
 
 # ---------------------------------------------------------------------
-# 公共函数：自适应破坏算子选择与执行
+# Public function: adaptive destroy-operator selection and execution
 # ---------------------------------------------------------------------
 def ml_based_destroy(
     current: SolutionState,
@@ -139,38 +144,44 @@ def ml_based_destroy(
     min_sample_size: Optional[int] = None,
 ) -> SolutionState:
     """
-    自适应（ML + 回退策略）破坏算子选择与执行。
+    Select and execute a destroy operator with ML prediction and fallback
+    behavior.
 
-    参数:
-        current          SolutionState  当前解（不在原对象上原地修改）
-        rng              numpy.random.Generator 随机源
-        min_sample_size  int  destroy 模型最小训练样本阈值，低于则随机探索
+    Args:
+        current: Current solution. The original object is not modified in place.
+        rng: Random source.
+        min_sample_size: Minimum training-sample threshold for the destroy
+            model. Below this threshold, the function explores randomly.
 
-    返回:
-        new_state        SolutionState  应用破坏算子后的新解副本
+    Returns:
+        A new solution copy after applying the destroy operator.
 
-    流程:
-        1. 若未配置 ML 选择器 → random_removal
-        2. destroy 样本 < min_sample_size → 随机探索 + 记录样本
-        3. 否则使用 ML 模型预测并 ε-贪心选择算子
-        4. 执行算子 → 计算改进值 → 记录样本 → 调整参数
+    Flow:
+        1. If no ML selector is configured, use random_removal.
+        2. If destroy samples < min_sample_size, explore randomly and record
+           the sample.
+        3. Otherwise, use the ML model and epsilon-greedy operator selection.
+        4. Execute the operator, compute improvement, record the sample, and
+           tune parameters.
 
-    改进值定义:
+    Improvement definition:
         improvement = prev_obj - new_obj
-        >0 代表目标下降（改进），<=0 代表未改进或恶化
+        Values above 0 indicate improvement in the minimized objective; values
+        at or below 0 indicate no improvement or degradation.
 
-    数值稳定:
-        - NaN → 0
-        - +inf → 1e6
-        - -inf → -1e6
+    Numerical stability:
+        - NaN -> 0
+        - +inf -> 1e6
+        - -inf -> -1e6
     """
     t_start = time.time()
     state = current.copy()
 
-    print("[OPLOG][Destroy-ML] 开始执行 adaptive destroy 选择")
-    ml_selector: Optional[MLOperatorSelector] = state.ml_selector  # 可能为 None
+    print("[OPLOG][Destroy-ML] Starting adaptive destroy selection")
+    ml_selector: Optional[MLOperatorSelector] = state.ml_selector  # May be None.
 
-    # 若未显式传入 min_sample_size，则从集中配置中读取默认值（向后兼容）
+    # If min_sample_size is not supplied, read the default from centralized
+    # configuration for backward compatibility.
     if min_sample_size is None:
         min_samples_int = int(getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20))
     else:
@@ -189,12 +200,12 @@ def ml_based_destroy(
 
     effective_min_sample_size = max(min_samples_int, takeover_min)
 
-    # 回退：无 ML 选择器
+    # Fallback: no ML selector
     if ml_selector is None:
-        print("[OPLOG][Destroy-ML] 未绑定 ML 选择器 → 回退 random_removal")
+        print("[OPLOG][Destroy-ML] No ML selector attached; falling back to random_removal")
         return random_removal(state, rng)
 
-    # 回退：样本不足
+    # Fallback: insufficient samples
     use_ml = False
     if hasattr(ml_selector, "should_use_ml"):
         use_ml = bool(
@@ -228,15 +239,18 @@ def ml_based_destroy(
             ml_selector.update_op_feedback("destroy", improvement)
 
         print(
-            f"[OPLOG][Destroy-ML] 使用随机回退(samples={len(ml_selector.destroy_features)}/{effective_min_sample_size}) "
-            f"随机选择 {op_name} 改进 {improvement:.4f} 用时 {time.time() - t_start:.4f}s"
+            f"[OPLOG][Destroy-ML] Using random fallback "
+            f"(samples={len(ml_selector.destroy_features)}/{effective_min_sample_size}); "
+            f"selected {op_name}; improvement {improvement:.4f}; "
+            f"elapsed {time.time() - t_start:.4f}s"
         )
         return new_state
 
-    # 模型端：尝试训练（内部有节流逻辑，满足间隔与样本才实际训练）
+    # Model side: attempt training. Internal throttling trains only when the
+    # interval and sample requirements are satisfied.
     ml_selector.train_models()
 
-    # ML 选择
+    # ML selection
     op_name, params = ml_selector.select_best_operator(
         state,
         op_type="destroy",
@@ -261,6 +275,7 @@ def ml_based_destroy(
         ml_selector.update_op_feedback("destroy", improvement)
 
     print(
-        f"[OPLOG][Destroy-ML] 选择 {op_name} 改进 {improvement:.4f} 用时 {time.time() - t_start:.4f}s"
+        f"[OPLOG][Destroy-ML] Selected {op_name}; improvement {improvement:.4f}; "
+        f"elapsed {time.time() - t_start:.4f}s"
     )
     return new_state

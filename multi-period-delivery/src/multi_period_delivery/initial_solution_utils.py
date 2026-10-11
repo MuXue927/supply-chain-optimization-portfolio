@@ -1,109 +1,107 @@
 """
-initial_solution_utils
-======================
+High-performance utilities for constructing an initial ALNS solution.
 
-模块定位:
-    为 ALNS 求解生成初始可行解 (initial feasible solution) 的一组高性能实用函数。
-    该模块已经通过 pytest 与多轮性能测试确认稳定性与正确性——本次整理仅限:
-      * import 语句分组与精简（未删除功能相关引用）
-      * 注释与文档统一风格、补充细节
-      * 不改动任何运行逻辑 / 变量名 / 控制流程
+Overall approach in ``improved_initial_solution``:
+    1. Initialize a resource pool of available inventory across plants, SKUs,
+       and periods.
+    2. Prioritize demands by scarcity, supply-demand ratio, and demand size.
+    3. Allocate demands sequentially to vehicles.
+    4. Repair inventory, remove empty vehicles, and merge small vehicles.
+    5. Return a feasible solution after recomputing inventory.
 
-总体方法 (improved_initial_solution):
-    使用多阶段策略:
-      1. 初始化资源池 (跨工厂/SKU/天的可用库存累积)
-      2. 基于稀缺性 + 供需比 + 需求规模的优先级排序
-      3. 顺序分配需求到车辆
-      4. 修复阶段 (库存/车辆精简/合并)
-      5. 返回可行解 (调用 compute_inventory 确认库存一致性)
+Key performance characteristics:
+    - Local variable caching reduces repeated attribute lookups.
+    - Plants are ranked by available inventory to improve allocation matches.
+    - Timeout checks prevent initialization from stalling.
+    - Vehicle merging groups by ``(plant, dealer, day)`` to limit combinations.
+    - Negative-inventory repair uses local incremental adjustments.
 
-关键性能优化点 (保持原实现，不修改):
-    - 多处使用局部变量缓存 (函数内 get / dict / range 引用) 降低属性查找成本
-    - 分配时按库存总量对工厂排序，提高匹配成功率
-    - 需求处理与修复阶段均使用“提前超时”策略，防止初始化阶段卡死
-    - 车辆合并阶段按 (工厂, 经销商, 天) 分组减少组合复杂度
-    - 负库存修复采取局部增量调整而非全局重算
+Function overview:
+    improved_initial_solution : Entry point for the five-stage process.
+    _initialize_resource_pool : Build cumulative ``(plant, sku, day)`` supply.
+    _prioritize_demands       : Compute and sort demand priorities.
+    _sequential_allocation    : Allocate demands to vehicles.
+    _repair_solution          : Repair inventory, empty vehicles, and small loads.
+    _merge_small_vehicles     : Merge small vehicles to reduce fleet size.
+    _select_best_vehicle      : Select the vehicle type that best fits capacity.
 
-函数速览:
-    improved_initial_solution : 入口函数, 组织整体五阶段流程
-    _initialize_resource_pool : 生成 (plant, sku, day) → 累积可用库存
-    _prioritize_demands       : 计算并排序需求优先级
-    _sequential_allocation    : 顺序方式分配需求 → 车辆
-    _repair_solution          : 负库存修复 + 空车移除 + 小车合并
-    _merge_small_vehicles     : 小车辆合并以减少数量
-    _select_best_vehicle      : 选择最契合容量的车型
+Notes:
+    - Local imports from ``.alnsopt`` avoid circular dependencies.
+    - The top-level Vehicle import is retained for the existing dependency
+      structure and compatibility.
 
-注意:
-    - 为避免循环依赖, 局部 import (.alnsopt 中的 veh_loading / SolutionState) 保留原位置
-    - Vehicle 顶层 import 与函数内重复 import 不移除 (兼容现有依赖结构)
-
-维护建议:
-    - 若后续扩展新初始解策略, 可在本文件新增函数并在 improved_initial_solution 中加策略分支
-    - 统计扩展(已实现):
-        * initial_build_stats 挂载到解对象:
-              {
-                'resource_pool_time': float,
-                'prioritize_time': float,
-                'allocation_time': float,
-                'repair_time': float,
-                'parallel_used': bool,
-                'repair_iterations': int
-              }
+Maintenance:
+    - New initial-solution strategies can be added as functions and selected in
+      ``improved_initial_solution``.
+    - ``initial_build_stats`` is attached to the solution:
+          {
+            'resource_pool_time': float,
+            'prioritize_time': float,
+            'allocation_time': float,
+            'repair_time': float,
+            'parallel_used': bool,
+            'repair_iterations': int
+          }
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import time
 from collections import defaultdict
 
 # =========================
-# 项目内部
+# Internal project modules
 # =========================
-from .vehicle import Vehicle  # 顶层引用 (函数内仍有局部 import 以避免循环依赖)
+from .vehicle import Vehicle  # Top-level reference; local imports avoid cycles.
 from .alns_config import default_config as ALNSConfig
 
 
 def improved_initial_solution(state, rng):
     """
-    入口: 构造初始可行解 (多阶段 + 超时保护)
+    Construct an initial feasible solution through a timed multi-stage process.
 
-    阶段:
-        1) 资源池初始化 (累积库存轨迹)
-        2) 需求优先级排序 (稀缺性/供需比/需求量综合评分)
-        3) 顺序分配
-        4) 修复阶段 (负库存 / 空车 / 小车合并)
-        5) 生成最终库存 (compute_inventory)
+    Stages:
+        1) Initialize the resource pool.
+        2) Prioritize demands.
+        3) Allocate sequentially.
+        4) Repair negative inventory, empty vehicles, and small vehicles.
+        5) Recompute final inventory.
 
-    参数:
-        state : SolutionState 初始状态对象 (外部构造)
-        rng   : numpy.random.Generator 随机数生成器 (保留接口, 当前实现未大量使用)
+    Parameters
+    ----------
+    state : SolutionState
+        Initial state created by the caller.
+    rng : numpy.random.Generator
+        Random number generator retained for interface compatibility.
 
-    返回:
-        SolutionState (可行初始解)
+    Returns
+    -------
+    SolutionState
+        Feasible initial solution.
     """
     data = state.data
 
-    # 动态超时: 基于需求条目规模 (可通过 ALNSConfig 调整)
+    # Dynamic timeout based on demand size; configurable through ALNSConfig.
     min_timeout = getattr(ALNSConfig, "MIN_INIT_TIMEOUT", 30)
     max_timeout = getattr(ALNSConfig, "MAX_INIT_TIMEOUT", 120)
     per_demand = getattr(ALNSConfig, "INIT_TIMEOUT_PER_DEMAND", 0.05)
     timeout = min(max_timeout, max(min_timeout, len(data.demands) * per_demand))
     t_start = time.time()
 
-    # 1. 资源池
+    # 1. Resource pool.
     print("Initializing resource pool...")
     t0 = time.time()
     resource_pool = _initialize_resource_pool(data)
     print(f" Resource pool initialized in {time.time() - t0:.2f} seconds.")
 
-    # 2. 需求优先级
+    # 2. Demand priority.
     print("Prioritizing demands...")
     t0 = time.time()
     prioritized_demands = _prioritize_demands(data)
     print(f" Demands prioritized in {time.time() - t0:.2f} seconds.")
 
-    # 3. 顺序分配
+    # 3. Sequential allocation.
     print("Using sequential allocation...")
     t0 = time.time()
     stats = {}
@@ -115,50 +113,52 @@ def improved_initial_solution(state, rng):
         f" Sequential allocation completed in {stats['allocation_time']:.2f} seconds."
     )
 
-    # 4. 修复阶段
+    # 4. Repair stage.
     print("Repairing solution if necessary...")
     t0 = time.time()
-    # 统计修复阶段开始时间
+    # Track the repair-stage start time.
     repair_start = time.time()
     _repair_solution(sol, timeout - (time.time() - t_start), stats=stats)
     repair_time = time.time() - repair_start
     print(f" Repair completed in {time.time() - t0:.2f} seconds.")
 
-    # 5. 最终库存计算
+    # 5. Final inventory computation.
     sol.compute_inventory()
 
-    # 严格可行性收尾：在初始解阶段做少量确定性修复，尽可能输出严格可行解。
+    # Strict-feasibility finalization: apply a few deterministic repairs.
     _finalize_strict_initial_feasibility(sol, rng, timeout - (time.time() - t_start))
 
-    # 汇总阶段统计信息 (不改变原逻辑)
-    # 资源池与优先级阶段用已有打印时间差；为确保一致, 重新计算近似耗时
+    # Aggregate stage statistics without changing the original logic.
+    # Resource-pool and priority timings are intentionally left as None because
+    # the original implementation only printed them.
     stats.setdefault("repair_iterations", 0)
     stats["parallel_used"] = False
     if "allocation_time" not in stats:
         stats["allocation_time"] = None
-    stats["resource_pool_time"] = None  # 原实现仅打印，不重新测量避免重复逻辑
+    stats["resource_pool_time"] = None  # The original implementation only printed timing.
     stats["prioritize_time"] = None
     stats["repair_time"] = repair_time
 
-    # 挂载到解对象，供外部分析
+    # Attach the statistics to the solution for external analysis.
     sol.initial_build_stats = stats
     return sol
 
 
 def _initialize_resource_pool(data):
     """
-    构建资源池: 记录 (plant, sku, day) → 当日可用累计库存
-    规则:
-        day=0 使用初始库存
-        day>=1 递推: prev(day-1) + 当日生产
+    Build cumulative available inventory for each ``(plant, sku, day)``.
+
+    Rules:
+        day=0 uses initial inventory.
+        day>=1 adds same-day production to the previous period total.
     """
     resource_pool = {}
 
-    # 初始库存
+    # Initial inventory.
     for (plant, sku), inv in data.sku_initial_inv.items():
         resource_pool[(plant, sku, 0)] = inv
 
-    # 按日累积
+    # Accumulate by day.
     for day in range(1, data.horizons + 1):
         for plant in data.plants:
             for sku in data.skus_plant.get(plant, []):
@@ -171,29 +171,32 @@ def _initialize_resource_pool(data):
 
 def _prioritize_demands(data):
     """
-    计算需求优先级:
-        指标:
-            scarcity_score      = 1 / (供需比)
-            supply_chain_score  = 1 / (可供应工厂数量)
-            volume_score        = 需求量归一化
-        综合:
-            priority = 0.5*scarcity + 0.3*supply_chain + 0.2*volume
-    返回:
-        [( (dealer, sku), demand, priority_score ), ...] 降序
+    Compute demand priorities.
+
+    Metrics:
+        scarcity_score      = 1 / supply-demand ratio
+        supply_chain_score  = 1 / number of available plants
+        volume_score        = normalized demand size
+        priority = 0.5*scarcity + 0.3*supply_chain + 0.2*volume
+
+    Returns
+    -------
+    list
+        ``[((dealer, sku), demand, priority_score), ...]`` in descending order.
     """
-    # SKU 总供应量 (生产 + 初始库存)
+    # Total SKU supply from production and initial inventory.
     sku_total_supply = defaultdict(int)
     for (_, sku, _), qty in data.sku_prod_each_day.items():
         sku_total_supply[sku] += qty
     for (_, sku), inv in data.sku_initial_inv.items():
         sku_total_supply[sku] += inv
 
-    # SKU 总需求量
+    # Total SKU demand.
     sku_total_demand = defaultdict(int)
     for (_, sku), demand in data.demands.items():
         sku_total_demand[sku] += demand
 
-    # 供需比
+    # Supply-demand ratio.
     sku_supply_demand_ratio = {}
     for sku in data.all_skus:
         supply = sku_total_supply.get(sku, 0)
@@ -229,12 +232,13 @@ def _prioritize_demands(data):
 
 def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeout):
     """
-    顺序分配需求 → 车辆（经销商聚合 + 跨期累计约束）
-    策略:
-        - 将需求按经销商分组，按经销商平均优先级排序
-        - 主分配阶段: 同时受 resource_pool 与 cumulative_map 约束
-        - 补分配阶段: 若仍有未满足需求，仅受 resource_pool 约束
-        - 成功装载后同步更新 resource_pool 与 cumulative_map
+    Allocate demands sequentially with dealer grouping and cumulative limits.
+
+    Strategy:
+        - Group demands by dealer and sort by average priority.
+        - Main allocation respects both the resource pool and cumulative map.
+        - Supplemental allocation uses only the resource pool to fill unmet demand.
+        - Successful loads update both the resource pool and cumulative map.
     """
     data = state.data
     from .alnsopt import veh_loading
@@ -267,7 +271,7 @@ def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeo
         getattr(ALNSConfig, "INITIAL_ENABLE_RELAXED_REALLOCATION", True)
     )
 
-    # 主分配阶段: 累计约束 + 物理资源池双约束。
+    # Main allocation: cumulative and physical resource constraints.
     for dealer, sku_demands, _avg_priority in dealer_groups:
         if time.time() - t_start > timeout:
             break
@@ -285,7 +289,7 @@ def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeo
             veh_loading=veh_loading,
         )
 
-    # 补分配阶段: 放宽累计约束，尽量补齐未满足需求。
+    # Supplemental allocation relaxes cumulative constraints to fill unmet demand.
     if enable_relaxed and time.time() - t_start <= timeout:
         unmet_groups = []
         for dealer, sku_demands, avg_priority in dealer_groups:
@@ -578,10 +582,11 @@ def _allocate_dealer_demands(
 
 def _select_best_vehicle(qty, sku, data):
     """
-    根据待发送 sku 数量选择车辆类型:
-        - 计算需求总体积 = qty * sku_size
-        - 选择能容纳且容量最接近的车辆
-        - 若无车型完全容纳 → 选择最大容量车型 (后续可能再补车)
+    Select a vehicle type for the quantity of a SKU.
+
+    Compute required volume as ``qty * sku_size``. Choose the smallest vehicle
+    that fits. If no vehicle type fits, choose the largest available type so the
+    remaining quantity can be handled by additional vehicles.
     """
     required_volume = qty * data.sku_sizes[sku]
     suitable_types = [
@@ -594,13 +599,16 @@ def _select_best_vehicle(qty, sku, data):
 
 def _repair_solution(sol, timeout, stats=None):
     """
-    修复初始解:
-        1. 负库存调整 (多轮迭代, 减少车辆装载)
-        2. 移除空车辆
-        3. 合并小车辆 (减少解规模)
-    注意:
-        - 逻辑保持不变，仅增强注释说明
-        - current_inventory 在循环中增量更新, 最终一次性写回
+    Repair the initial solution.
+
+    Steps:
+        1. Adjust negative inventory across multiple iterations by reducing loads.
+        2. Remove empty vehicles.
+        3. Merge small vehicles to reduce solution size.
+
+    Notes:
+        - Inventory is recomputed from current cargo before each correction pass.
+        - The repair loop exits early on timeout or when no correction is possible.
     """
     t_start = time.time()
     max_iter = getattr(ALNSConfig, "INITIAL_REPAIR_MAX_ITER", 5)
@@ -611,17 +619,17 @@ def _repair_solution(sol, timeout, stats=None):
         if time.time() - t_start > timeout:
             break
 
-        # 每轮都基于最新 cargo 重算库存，避免使用旧快照造成错误修复。
+        # Recompute from current cargo each pass to avoid repairing stale state.
         sol.compute_inventory()
         neg_inv = [(k, v) for k, v in sol.s_ikt.items() if v < 0]
         if not neg_inv:
             break
 
         changed = False
-        # 先修更早天，减少后续天累计库存误差放大。
+        # Repair earlier periods first to avoid amplifying later-period errors.
         neg_inv.sort(key=lambda x: x[0][2])
         for (plant, sku, day), _neg_val in neg_inv:
-            # 每个负库存点都基于当前最新 cargo 重算，避免同轮重复过削减。
+            # Recompute for each negative point to avoid over-reduction in one pass.
             sol.compute_inventory()
             current_short = sol.s_ikt.get((plant, sku, day), 0)
             if current_short >= 0:
@@ -700,10 +708,11 @@ def _repair_solution(sol, timeout, stats=None):
 
 def _merge_small_vehicles(sol, timeout):
     """
-    合并同 (工厂, 经销商, 天) 下小车辆:
-        - 车辆按当前装载体积升序
-        - 尝试将最小车合并入容量够的目标车
-        - 超时提前退出并保留剩余车辆
+    Merge small vehicles with the same ``(plant, dealer, day)`` key.
+
+    Sort vehicles by current loaded volume, merge the smallest vehicle into the
+    first target with sufficient capacity, and retain remaining vehicles when the
+    timeout is reached.
     """
     data = sol.data
     t_start = time.time()
@@ -755,11 +764,15 @@ def _merge_small_vehicles(sol, timeout):
 
 def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
     """
-    在初始解构造结束后，进行少量严格可行性收尾修复：
-      1) validate 若已可行则直接返回
-      2) 若存在 unmet_demand，优先调用 inventory_balance_repair
-      3) 若存在负库存/容量等硬违例，再调用 _repair_solution 与 infeasible_repair
-    该阶段仅在严格模式启用，且受 timeout 与最大轮次约束。
+    Apply final strict-feasibility repairs after initial construction.
+
+    Steps:
+      1) Return immediately when validation succeeds.
+      2) Repair unmet demand with ``inventory_balance_repair`` first.
+      3) Repair hard violations such as negative inventory or overloads with
+         ``_repair_solution`` and ``infeasible_repair``.
+
+    This stage runs only in strict mode and is bounded by timeout and pass count.
     """
     if not bool(getattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", True)):
         return
@@ -779,7 +792,7 @@ def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
         if feasible:
             return
 
-        # unmet_demand 优先修复，符合严格可行定义
+        # Repair unmet demand first because it is part of strict feasibility.
         if violations.get("unmet_demand"):
             try:
                 from .repair_operators import inventory_balance_repair
@@ -788,7 +801,8 @@ def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
             except Exception:
                 pass
 
-        # 负库存/超载/工厂容量等违例走库存与不可行修复
+        # Route negative inventory, overload, and plant-capacity violations
+        # through inventory and infeasibility repair.
         hard_bad = bool(
             violations.get("negative_inventory")
             or violations.get("veh_over_load")
@@ -808,5 +822,5 @@ def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
             except Exception:
                 pass
 
-    # 最后一次强制重算，保证库存状态与车辆状态一致
+    # Force one final recomputation to align inventory with vehicles.
     sol.compute_inventory()

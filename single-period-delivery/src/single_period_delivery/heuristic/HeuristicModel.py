@@ -10,57 +10,57 @@ from .optutility import POSITIVEEPS
 class HeuristicModel:
     data: InputDataHeuristic
     
-    # 生产基地 i 向经销商 j 供给的SKU种类及数量的集合 X_ij
+    # Set X_ij of SKU types and quantities supplied from production plant i to dealer j.
     X_ij: Dict[Tuple[str, str], Set[Tuple[str, int]]] = field(default_factory=dict)
     
-    # 生产基地 i 向经销商 j 供给的SKU k 的数量 {(i, j, k): qty}
+    # Quantity of SKU k supplied from production plant i to dealer j: {(i, j, k): qty}.
     supply: Dict[Tuple[str, str, str], int] = field(default_factory=dict)
     
-    # 记录已经考虑过的经销商 j 需要的SKU集合
+    # SKUs already considered for each dealer j.
     SKUs_considered: Dict[str, Set[str]] = field(default_factory=dict)
     
-    # 车型 f 的车辆 l 的集合 L_f
+    # Set L_f of vehicle identifiers l assigned to vehicle type f.
     Veh_type_sets: Dict[str, Set[int]] = field(default_factory=dict)
     
-    # 车型 f 使用的车辆数量 N_f
+    # Number N_f of vehicles used for vehicle type f.
     N_f: Dict[str, int] = field(default_factory=dict)
     
-    # 记录每个生产基地 i 和经销商 j 使用车型 f 的车辆数量
+    # Number of vehicles of type f used for each production plant i and dealer j.
     Nums_veh_used: Dict[Tuple[str, str, str], int] = field(default_factory=dict)
     
-    # 用于记录可行解
-    # 生产基地 i 使用车型 f 的车辆 l 向经销商 j 供给 SKU k 的数量 x_k
+    # Records for the feasible solution.
+    # Quantity x_k of SKU k supplied from production plant i to dealer j by vehicle l of type f.
     Vehicles: List[Vehicle] = field(default_factory=list)
     X_full: Dict[Tuple[str, str, str, str, int], int] = field(default_factory=dict)
     
-    # 记录生产基地 i 和经销商 j 之间已经装载的SKU集合
+    # SKUs already loaded for the route between production plant i and dealer j.
     SKUs_loaded: Dict[Tuple[str, str], Set[str]] = field(default_factory=dict)
     
     def optimize_stage_1(self):
         
-        # 由于需要更新需求和库存，所以需要深拷贝
+        # Deep-copy demand and inventory because both are updated during the heuristic.
         demands = deepcopy(self.data.demands)
         sku_inv = deepcopy(self.data.sku_inv)
         
-        # 初始化 X_ij
+        # Initialize X_ij.
         for (plant, dealer) in self.data.construct_supply_chain().keys():
             self.X_ij[plant, dealer] = set()
         
         # =====================================================================================
-        # 初始化 SKUs_considered
+        # Initialize SKUs_considered.
         for dealer in self.data.dealers:
             self.SKUs_considered[dealer] = set()
         
         for (plant, dealer), skus_set in self.data.construct_supply_chain().items():
             for sku_id in skus_set:
-                # 如果经销商 j 需要的SKU k 已经被考虑过，则跳过
+                # Skip SKU k if it has already been considered for dealer j.
                 if sku_id in self.SKUs_considered[dealer]:
                     continue
                 
-                # 获取经销商 j 对SKU k 的需求
+                # Retrieve dealer j's demand for SKU k.
                 demand = demands[dealer, sku_id]
                 
-                # 遍历所有生产基地 i，直到满足需求
+                # Iterate over production plants i until the demand is satisfied.
                 while demand > 0:
                     for fact_id in self.data.plants:
                         if sku_id in self.data.skus_plant[fact_id]:
@@ -68,9 +68,9 @@ class HeuristicModel:
                             if inv > 0:
                                 demand, inv = self.get_partial_solution(fact_id, dealer, sku_id, demand, inv)
                                 
-                                # 更新库存
+                                # Update inventory.
                                 sku_inv[fact_id, sku_id] = inv 
-                                # 更新需求
+                                # Update demand.
                                 demands[dealer, sku_id] = demand
                                 
                                 if demand == 0:
@@ -95,7 +95,7 @@ class HeuristicModel:
         return demand, inv
         
     def select_vehicle_type(self):
-        # 随机选择车型
+        # Randomly select a vehicle type.
         veh_type = random.choice(list(self.data.all_veh_types))
         return veh_type
                     
@@ -106,7 +106,7 @@ class HeuristicModel:
         return self.supply
     
     def check_fulfill(self):
-        # 检查第一阶段获得的部分解, 是否满足每个经销商的需求
+        # Check whether the partial solution from Stage 1 satisfies each dealer's demand.
         
         fulfill = {}
         for (dealer, sku) in self.data.demands.keys():
@@ -124,9 +124,9 @@ class HeuristicModel:
     
     
     def update_X_ij(self):
-        # 清空 X_ij
+        # Clear X_ij.
         self.X_ij.clear()
-        # 初始化 X_ij
+        # Initialize X_ij.
         for (plant, dealer, sku_id), qty in self.supply.items():
             self.X_ij[plant, dealer] = set()
         
@@ -138,23 +138,23 @@ class HeuristicModel:
     def optimize_stage_2(self):
         
         for (plant, dealer) in self.X_ij.keys():
-            # 初始化生产基地 i 和经销商 j 的已装载SKU集合
+            # Initialize the loaded-SKU set for production plant i and dealer j.
             self.SKUs_loaded[(plant, dealer)] = set()
         
-        # 创建剩余装载量字典，追踪每个SKU的剩余未装载数量
+        # Create a dictionary that tracks the remaining unloaded quantity for each SKU.
         remaining_to_load = deepcopy(self.supply)
         
         for (plant, dealer) in self.X_ij.keys():
             
-            # 为生产基地 i 和经销商 j 随机选择车型 f_rnd
+            # Randomly select vehicle type f_rnd for production plant i and dealer j.
             veh_type_rnd = self.select_vehicle_type()
             
-            # 使用贪心装载策略：不预先计算车辆数量，而是按需创建车辆
-            vehicles_for_route = []  # 当前路线使用的车辆列表
+            # Use a greedy loading strategy: create vehicles as needed rather than precomputing their count.
+            vehicles_for_route = []  # Vehicles used on the current route.
             
-            # 持续装载直到所有SKU都被装载完毕
+            # Keep loading until every remaining SKU has been assigned.
             while True:
-                # 检查是否还有SKU需要装载
+                # Check whether any SKU remains to be loaded.
                 has_remaining = False
                 for (fact_id, dealer_id, sku_id), qty in remaining_to_load.items():
                     if fact_id == plant and dealer_id == dealer and qty > 0:
@@ -164,39 +164,39 @@ class HeuristicModel:
                 if not has_remaining:
                     break
                 
-                # 创建新车辆
+                # Create a new vehicle.
                 vehicle = Vehicle(fact_id=plant, dealer_id=dealer, type=veh_type_rnd, data=self.data)
                 vehicles_for_route.append(vehicle)
                 self.Vehicles.append(vehicle)
                 
-                # 标记当前车辆是否装载了货物
+                # Track whether the current vehicle receives any cargo.
                 vehicle_loaded = False
                 
-                # 尝试将所有剩余的SKU装载到当前车辆
+                # Try to load all remaining SKUs onto the current vehicle.
                 for (fact_id, dealer_id, sku_id), qty in list(remaining_to_load.items()):
                     if fact_id == plant and dealer_id == dealer and qty > 0:
                         
                         original_qty = qty
                         qty = vehicle.load(sku_id, qty)
                         
-                        # 更新剩余装载量
+                        # Update the remaining quantity.
                         remaining_to_load[fact_id, dealer_id, sku_id] = qty
                         
                         if qty == 0:
-                            # 如果当前SKU已经装载完毕，记录已经装载的SKU
+                            # Record the SKU once it has been fully loaded.
                             self.SKUs_loaded[plant, dealer].add(sku_id)
                         
-                        if original_qty > qty:  # 如果有SKU被装载
+                        if original_qty > qty:  # At least part of the SKU was loaded.
                             vehicle_loaded = True
                 
-                # 如果当前车辆没有装载任何SKU
+                # If the current vehicle receives no SKU,
                 if not vehicle_loaded:
-                    # 移除这个空车辆
+                    # Remove the empty vehicle.
                     vehicles_for_route.pop()
                     self.Vehicles.pop()
-                    break  # 退出循环，结束当前路线的装载
+                    break  # Exit the loop and finish loading for the current route.
             
-            # 记录当前路线使用的车辆数量
+            # Record the number of vehicles used on the current route.
             veh_nums = len(vehicles_for_route)
             if veh_nums > 0:
                 self.Nums_veh_used[plant, dealer, veh_type_rnd] = veh_nums
@@ -205,7 +205,7 @@ class HeuristicModel:
                 
         
     def cal_vehicle_type_nums(self):
-        # 计算每种车型 f 的车辆数量
+        # Compute the number of vehicles for each vehicle type f.
         for veh_type in self.data.all_veh_types:
             self.N_f[veh_type] = 0
         
@@ -241,30 +241,30 @@ class HeuristicModel:
         
     
     def calculate_solution(self):
-        # 计算完整的可行解 X_full
-        # 为每种车型维护一个车辆编号计数器
+        # Compute the complete feasible solution X_full.
+        # Maintain a separate vehicle-ID counter for each vehicle type.
         vehicle_id_counters = {veh_type: 1 for veh_type in self.data.all_veh_types}
         
-        # 直接遍历所有车辆，为每辆车分配编号
+        # Iterate over all vehicles and assign identifiers directly.
         for vehicle in self.Vehicles:
-            if vehicle.cargo:  # 只处理有装载货物的车辆
+            if vehicle.cargo:  # Process only vehicles carrying cargo.
                 veh_type = vehicle.type
                 plant = vehicle.fact_id
                 dealer = vehicle.dealer_id
                 
-                # 分配车辆编号
+                # Assign the vehicle identifier.
                 veh_id = vehicle_id_counters[veh_type]
                 vehicle_id_counters[veh_type] += 1
                 
-                # 遍历车辆上装载的SKU
+                # Iterate over the SKUs loaded on the vehicle.
                 for sku_id, qty in vehicle.cargo.items():
-                    # 将车辆编号和SKU装载数量添加到完整解 X_full 中
+                    # Add the vehicle identifier and loaded SKU quantity to X_full.
                     self.X_full[(plant, dealer, sku_id, veh_type, veh_id)] = qty
      
         return self.X_full
     
     def check_solution(self):
-        # 检查第二阶段获得的完整可行解, 是否满足每个经销商的需求
+        # Check whether the complete solution from Stage 2 satisfies each dealer's demand.
         order_fulfill = {}
         for (dealer, sku_id), qty in self.data.demands.items():
             order_fulfill[dealer, sku_id] = 0

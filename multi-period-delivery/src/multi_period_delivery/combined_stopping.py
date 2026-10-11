@@ -2,40 +2,52 @@
 combined_stopping
 =================
 
-模块定位
-    封装可组合的停止准则 `CombinedStoppingCriterion`，用于在 ALNS/其他迭代式启发式中
-    监控多个停止条件。支持两种使用方式：
-    - 标准 OR 组合：传入若干单一准则，任一触发即停止。
-    - 逻辑表达式组合：用 AND/OR 构造任意嵌套表达式，如 (A AND B) OR C。
+Module role
+    Provides `CombinedStoppingCriterion`, a composable stopping criterion for
+    ALNS and other iterative heuristics that monitors multiple stopping
+    conditions. Two usage modes are supported:
+    - Standard OR combination: pass several criteria; stop when any one fires.
+    - Logical expression: compose arbitrary nested AND/OR expressions such as
+      (A AND B) OR C.
 
-依赖 (来自 alns.stop)
+Dependencies (from alns.stop)
     - MaxRuntime
     - MaxIterations
     - NoImprovement
-    以上对象均实现可调用协议：criterion(rng, best_state, current_state) -> bool
+    These objects follow the callable protocol:
+    criterion(rng, best_state, current_state) -> bool.
 
-核心特性
-    - 接受任意数量的单一准则 ( *criteria )；在未提供表达式时按 OR 逻辑评估。
-    - expr 参数支持逻辑表达式树：('AND', a, b, ...) / ('OR', x, y, ...)，叶子为可调用准则。
-    - 提供 AND(*nodes)/OR(*nodes) 辅助构造器以便直观地构建表达式。
-    - 首次调用时开始计时，内部记录 _start_time；触发时输出触发者与耗时。
-    - get_status 为“安全版”，仅返回 elapsed_time / triggered / criteria_types，避免读取第三方私有字段。
+Core features
+    - Accept any number of individual criteria (*criteria) and evaluate them
+      with OR semantics when no expression is provided.
+    - The expr argument accepts a logical expression tree:
+      ('AND', a, b, ...) / ('OR', x, y, ...), with callable criteria as leaves.
+    - AND(*nodes) and OR(*nodes) helpers make expression construction explicit.
+    - Start timing on the first call and record it in _start_time; report the
+      triggering criterion and elapsed time when stopping.
+    - get_status is a safe snapshot that returns only elapsed_time, triggered,
+      and criteria_types, avoiding private fields from third-party objects.
 
-设计注意
-    1) 表达式优先：若提供 expr，则优先评估表达式树；否则回退为对 *criteria 的 OR 评估。
-    2) 触发记录：在表达式求值过程中，一旦某叶子返回 True，会记录其类型名到 triggered。
-    3) 线程安全：当前未做并发保护，多线程下请在外部加锁或串行化访问。
-    4) 日志输出：默认使用 print；如需统一日志体系可替换为 logging 或注入回调。
-    5) 可扩展性：如需更多运算符 (NOT/XOR) 或回调 on_stop，可在现有结构上扩展。
+Design notes
+    1) Expression precedence: if expr is provided, evaluate the expression tree;
+       otherwise fall back to OR evaluation over *criteria.
+    2) Trigger tracking: whenever a leaf returns True during expression
+       evaluation, record its type name in triggered.
+    3) Thread safety: no concurrency protection is provided. Use external
+       locking or serialize access when sharing across threads.
+    4) Logging: print is used by default. Replace it with logging or a callback
+       when a unified logging system is required.
+    5) Extensibility: additional operators (NOT/XOR) or an on_stop callback can
+       be added to the existing structure.
 
-使用示例
-    1) 标准 OR 组合：
+Usage examples
+    1) Standard OR combination:
         stop = create_standard_combined_criterion(max_iterations=500, max_runtime=600, max_no_improvement=120)
         while not stop(rng, best_state, cur_state):
             ...
         print(stop.get_status())
 
-    2) 逻辑表达式：(MaxIterations AND NoImprovement) OR MaxRuntime
+    2) Logical expression: (MaxIterations AND NoImprovement) OR MaxRuntime
         from alns.stop import MaxIterations, NoImprovement, MaxRuntime
         from multi_period_delivery.combined_stopping import (
             CombinedStoppingCriterion,
@@ -50,25 +62,28 @@ combined_stopping
         expr = OR(AND(A, B), C)
         stop = CombinedStoppingCriterion(expr=expr)
 
-兼容性
-    - 旧用法保持不变：不提供 expr 时，等价于对 *criteria 做 OR 运算。
-    - 对外 API：CombinedStoppingCriterion(*criteria, expr=None), add_criterion, __call__, get_status
-    - 工厂函数：create_standard_combined_criterion 提供常用“迭代+时间[+无改进]”组合
+Compatibility
+    - Existing behavior is unchanged: without expr, *criteria are combined
+      with OR semantics.
+    - Public API: CombinedStoppingCriterion(*criteria, expr=None),
+      add_criterion, __call__, get_status.
+    - Factory function: create_standard_combined_criterion builds the common
+      iterations + runtime [+ no-improvement] combination.
 """
 
 # =========================
-# 标准库
+# Standard library
 # =========================
 import time
 from typing import Any, Dict, List, Optional
 
 # =========================
-# 第三方类型
+# Third-party types
 # =========================
 from numpy.random import Generator
 
 # =========================
-# 外部库 (ALNS)
+# External library (ALNS)
 # =========================
 from alns.State import State
 from alns.stop import MaxRuntime, MaxIterations, NoImprovement
@@ -76,41 +91,46 @@ from alns.stop import MaxRuntime, MaxIterations, NoImprovement
 
 class CombinedStoppingCriterion:
     """
-    组合停止准则：
-        - 默认：对传入的单一停止准则执行 OR 逻辑
-        - 扩展：支持通过 expr 传入逻辑表达式树 (AND/OR 嵌套)，如 ('OR', ('AND', A, B), C)
+    Combined stopping criterion:
+        - Default: apply OR logic to the supplied individual criteria.
+        - Extended: pass a nested AND/OR expression tree through expr, such as
+          ('OR', ('AND', A, B), C).
     """
 
     def __init__(self, *criteria: Any, expr: Any = None):
         """
-        参数
-        ----
+        Parameters
+        ----------
         *criteria :
-            任意数量的停止准则对象。典型包括：
+            Any number of stopping criterion objects. Typical examples:
               - MaxRuntime(max_runtime=...)
               - MaxIterations(max_iterations=...)
               - NoImprovement(max_iterations=...)
-            只要对象实现 __call__(rng, best, current)->bool 即可。
+            Any object implementing __call__(rng, best, current) -> bool is
+            accepted.
         expr :
-            逻辑表达式树，可为:
+            Logical expression tree, one of:
               - ('AND', a, b, ...) / ('OR', x, y, ...)
-              - 列表形式 ['AND', a, b] 亦可
-              - 叶子节点为可调用的单一准则对象
-            若为 None，则对 *criteria 采用 OR 逻辑。
+              - list form ['AND', a, b] is also accepted
+              - leaves are callable criterion objects
+            If None, *criteria are evaluated with OR semantics.
         """
         if not criteria and expr is None:
-            raise ValueError("至少需要提供一个停止准则或表达式 (criteria/expr 皆为空)")
+            raise ValueError(
+                "At least one stopping criterion or expression is required "
+                "(criteria and expr are both empty)"
+            )
 
         self.criteria: List[Any] = list(criteria)
         self.expr: Any = expr
-        self._start_time: Optional[float] = None  # 首次调用开始计时
-        self._triggered: Optional[str] = None  # 记录触发的准则名称
+        self._start_time: Optional[float] = None  # Start timing on first call.
+        self._triggered: Optional[str] = None  # Name of the triggering criterion.
 
     # ------------------------------------------------------------------
-    # 扩展：动态添加准则
+    # Extension: dynamically add criteria.
     # ------------------------------------------------------------------
     def add_criterion(self, criterion: Any) -> None:
-        """追加一个新的停止准则"""
+        """Append a new stopping criterion."""
         self.criteria.append(criterion)
 
     def get_max_iterations(self) -> Optional[int]:
@@ -147,12 +167,12 @@ class CombinedStoppingCriterion:
         self, node: Any, rng: Generator, best: State, current: State
     ) -> bool:
         """
-        递归求值逻辑表达式:
-            - 叶子为单一准则 (可调用) → 返回其结果
-            - ('AND', a, b, ...) → 所有子节点为 True
-            - ('OR', x, y, ...)  → 任一子节点为 True
+        Recursively evaluate a logical expression:
+            - A callable leaf returns its own result.
+            - ('AND', a, b, ...) returns True when all children are True.
+            - ('OR', x, y, ...) returns True when any child is True.
         """
-        # 叶子：单一准则
+        # Leaf: individual criterion.
         if callable(getattr(node, "__call__", None)) and not isinstance(
             node, (tuple, list)
         ):
@@ -161,7 +181,7 @@ class CombinedStoppingCriterion:
                 self._triggered = type(node).__name__
             return res
 
-        # 复合：列表/元组 [op, *args]
+        # Compound node: list/tuple [op, *args].
         if isinstance(node, (tuple, list)) and node:
             op = str(node[0]).upper()
             args = node[1:]
@@ -179,60 +199,69 @@ class CombinedStoppingCriterion:
         return False
 
     # ------------------------------------------------------------------
-    # 主调用：检查是否应停止
+    # Main call: determine whether to stop.
     # ------------------------------------------------------------------
     def __call__(self, rng: Generator, best: State, current: State) -> bool:
         """
-        执行停止条件检查。
-        返回
-        ----
+        Evaluate the stopping conditions.
+
+        Returns
+        -------
         bool :
-            任一准则满足则 True；否则 False
+            True when any criterion is satisfied; False otherwise.
         """
-        # 初始化全局计时
+        # Initialize global timing.
         if self._start_time is None:
             self._start_time = time.perf_counter()
 
-        # 使用表达式树 (若提供)
+        # Use the expression tree when provided.
         if self.expr is not None:
             try:
                 if self._eval_expr(self.expr, rng, best, current):
                     elapsed = time.perf_counter() - self._start_time
                     print(
-                        f"[STOP] 逻辑表达式触发停止 (triggered={self._triggered}, elapsed={elapsed:.2f}s)"
+                        f"[STOP] logical expression triggered stop "
+                        f"(triggered={self._triggered}, elapsed={elapsed:.2f}s)"
                     )
                     return True
             except Exception as e:
-                print(f"[WARNING] 评估逻辑表达式失败: {e}")
+                print(f"[WARNING] Failed to evaluate logical expression: {e}")
                 return False
 
-        # 否则：回退为对 criteria 的 OR 评估
+        # Otherwise, fall back to OR evaluation over criteria.
         for criterion in self.criteria:
             try:
                 if criterion(rng, best, current):
                     self._triggered = type(criterion).__name__
                     elapsed = time.perf_counter() - self._start_time
-                    print(f"[STOP] {self._triggered} 触发停止 (elapsed={elapsed:.2f}s)")
+                    print(
+                        f"[STOP] {self._triggered} triggered stop "
+                        f"(elapsed={elapsed:.2f}s)"
+                    )
                     return True
             except Exception as e:
-                print(f"[WARNING] 停止准则 {type(criterion).__name__} 评估失败: {e}")
+                print(
+                    f"[WARNING] Stopping criterion {type(criterion).__name__} "
+                    f"failed during evaluation: {e}"
+                )
                 continue
 
         return False
 
     # ------------------------------------------------------------------
-    # 状态快照
+    # Status snapshot.
     # ------------------------------------------------------------------
     def get_status(self) -> Dict[str, Any]:
         """
-        返回当前停止准则集合状态快照 (安全版)。
-        仅提供：
-            - 总耗时
-            - 已触发准则名称 (若有)
-            - 准则类型列表
-        不再读取第三方准则的私有/内部字段 (如 _current_iteration, _start_runtime)，
-        避免对外部库内部实现产生脆弱依赖。
-        若需要详细进度，请在自定义准则中添加公开属性或显式 status() 方法。
+        Return a safe status snapshot for the stopping criterion collection.
+        The snapshot contains only:
+            - total elapsed time
+            - the triggering criterion name, if any
+            - the list of criterion types
+        It does not read private/internal fields from third-party criteria,
+        such as _current_iteration or _start_runtime, which avoids brittle
+        dependencies on external implementation details. For detailed progress,
+        add public attributes or an explicit status() method to custom criteria.
         """
         elapsed_time = (
             time.perf_counter() - self._start_time if self._start_time else 0.0
@@ -247,20 +276,20 @@ class CombinedStoppingCriterion:
 
 
 # ----------------------------------------------------------------------
-# 逻辑表达式辅助构造器
+# Logical expression helper constructors.
 # ----------------------------------------------------------------------
 def AND(*args):
-    """构造 AND 表达式节点: AND(a,b,...) -> ('AND', a, b, ...)"""
+    """Build an AND expression node: AND(a, b, ...) -> ('AND', a, b, ...)."""
     return ("AND",) + args
 
 
 def OR(*args):
-    """构造 OR 表达式节点: OR(x,y,...) -> ('OR', x, y, ...)"""
+    """Build an OR expression node: OR(x, y, ...) -> ('OR', x, y, ...)."""
     return ("OR",) + args
 
 
 # ----------------------------------------------------------------------
-# 工厂方法
+# Factory method.
 # ----------------------------------------------------------------------
 def create_standard_combined_criterion(
     max_iterations: int = 300,
@@ -268,21 +297,23 @@ def create_standard_combined_criterion(
     max_no_improvement: Optional[int] = None,
 ) -> CombinedStoppingCriterion:
     """
-    创建一组常用组合停止准则 (迭代 + 运行时 [+ 无改进])。
+    Create a common combined stopping criterion
+    (iterations + runtime [+ no improvement]).
 
-    参数
-    ----
+    Parameters
+    ----------
     max_iterations : int
-        最大迭代次数
+        Maximum number of iterations.
     max_runtime : float
-        最大运行时间 (秒)
+        Maximum runtime in seconds.
     max_no_improvement : int | None
-        若提供：添加 NoImprovement 停止准则 (参数 = 无改进迭代上限)
+        If provided, add a NoImprovement criterion whose parameter is the
+        no-improvement iteration limit.
 
-    返回
-    ----
+    Returns
+    -------
     CombinedStoppingCriterion
-        配置好的组合对象
+        Configured combined criterion.
     """
     criteria: List[Any] = [
         MaxIterations(max_iterations=max_iterations),
@@ -294,17 +325,18 @@ def create_standard_combined_criterion(
 
 
 # ----------------------------------------------------------------------
-# 简单命令行测试
+# Simple command-line test.
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    print("=== 组合停止准则测试 ===")
+    print("=== Combined stopping criterion test ===")
     combined_stop = create_standard_combined_criterion(
         max_iterations=300,
-        max_runtime=5,  # 缩短演示用
+        max_runtime=5,  # Short runtime for demonstration.
         max_no_improvement=100,
     )
     print(
-        f"创建组合停止准则: {', '.join(type(c).__name__ for c in combined_stop.criteria)}"
+        f"Created combined stopping criterion: "
+        f"{', '.join(type(c).__name__ for c in combined_stop.criteria)}"
     )
-    # 这里只演示状态输出；不运行完整 ALNS 循环
-    print("初始状态:", combined_stop.get_status())
+    # Only demonstrate status output here; do not run a full ALNS loop.
+    print("Initial status:", combined_stop.get_status())

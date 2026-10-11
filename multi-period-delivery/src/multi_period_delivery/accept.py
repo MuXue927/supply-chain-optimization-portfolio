@@ -1,13 +1,12 @@
 """
-模块: accept.py
-职责:
-- 提供一个用于在候选解目标值上施加未满足需求惩罚的包装器（DemandConstraintAccept）
-- 通过 CandidateProxy 在不破坏原始 state 接口的前提下调整 objective() 返回值
-- 统计调用/接受次数与累计惩罚，便于日志/调试/参数调整
+Acceptance policy helpers.
 
-注:
-- 注释风格与项目中 multi_period_delivery/alnsopt.py 保持一致，采用详细中文说明与设计意图注释，
-  目的是便于维护者理解实现细节和为何采用这种实现方式。
+Responsibilities:
+- Provide ``DemandConstraintAccept`` to add unmet-demand penalties to candidate
+  objective values.
+- Adjust ``objective()`` through ``_CandidateProxy`` without changing the
+  original state interface.
+- Track calls, acceptances, and accumulated penalties for diagnostics and tuning.
 """
 
 from typing import Any, Dict
@@ -27,12 +26,16 @@ def _safe_float(value: Any, default: float = float("inf")) -> float:
 
 class _CandidateProxy:
     """
-    候选解代理（Proxy）:
-    - 将原始候选状态包装起来，覆盖 objective() 方法以在原始目标上加上计算得到的惩罚
-    - 其它属性/方法委托给原始对象，以保持兼容性（例如 validate(), compute_shipped() 等）
-    设计动机:
-    - 不修改原始 candidate_state 对象的实现，仅在接受判定时临时改变 objective 行为
-    - 便于将违约惩罚与任意基础接收准则（如 SimulatedAnnealing 等）组合使用
+    Proxy for a candidate state.
+
+    The proxy wraps the original object, overrides ``objective()`` to add the
+    computed penalty, and delegates all other attribute access for compatibility.
+
+    Design rationale:
+    - The original candidate state remains unchanged.
+    - Objective behavior is adjusted only during the acceptance decision.
+    - Constraint penalties can be combined with any base acceptor, such as
+      simulated annealing.
     """
 
     def __init__(self, original, penalty: float):
@@ -41,10 +44,11 @@ class _CandidateProxy:
 
     def objective(self):
         """
-        返回被惩罚后的目标值:
-        - 尝试从原始对象获取目标值并转为 float
-        - 若原始目标不可计算（异常或非有限），则保留该值（例如 inf）
-        - 否则在原始目标上加上事先计算的惩罚值并返回
+        Return the penalized objective value.
+
+        The original objective is converted to float when possible. Exceptions
+        and non-finite values are preserved, and finite values are increased by
+        the precomputed penalty.
         """
         try:
             base = float(self._orig.objective())
@@ -55,14 +59,15 @@ class _CandidateProxy:
         return base + self._penalty
 
     def validate(self):
-        """直接委托 validate 调用，保持行为一致性。"""
+        """Delegate validation to preserve the original behavior."""
         return self._orig.validate()
 
     def compute_shipped(self):
         """
-        保持与现有测试与调用的兼容性：
-        - 某些状态对象可能实现 compute_shipped()，外部测试会直接查询该方法
-        - 若包装的原始对象实现了该方法，则委托执行；否则返回空字典
+        Preserve compatibility with existing tests and callers.
+
+        If the wrapped object implements ``compute_shipped()``, delegate to it;
+        otherwise return an empty dictionary.
         """
         if hasattr(self._orig, "compute_shipped"):
             return self._orig.compute_shipped()
@@ -70,43 +75,52 @@ class _CandidateProxy:
 
     def __getattr__(self, name: str) -> Any:
         """
-        对未显式覆盖的属性访问进行委托：
-        - 例如 .vehicles, .s_ikt 或其它方法/属性均由原始对象提供
-        - 该实现确保代理对象在绝大多数上下文中可替代原始对象
+        Delegate attributes that are not explicitly overridden.
+
+        This includes ``vehicles``, ``s_ikt``, and other methods or attributes
+        provided by the wrapped object, allowing the proxy to substitute for it
+        in most contexts.
         """
         return getattr(self._orig, name)
 
 
 class DemandConstraintAccept:
     """
-    包装式接收判定器（Acceptor）:
-    - 在将候选态传递给基础接收器之前, 检测并基于未满足的需求计算惩罚
-    - 将候选态替换为 _CandidateProxy，从而在不修改原始状态对象的前提下影响 objective 返回值
-    - 兼容现有的基础接收器接口（例如 SimulatedAnnealing），并记录统计信息用于分析
+    Wrapper acceptor that adds unmet-demand penalties.
 
-    最小接口契约（被测试代码所期待）:
-      - 对象为可调用: (rng, best_state, current_state, candidate_state) -> bool
-      - get_statistics() -> dict
+    Before delegating to the base acceptor, this class inspects the candidate's
+    validation result and computes a penalty. It then wraps the candidate in
+    ``_CandidateProxy`` so ``objective()`` includes the penalty without changing
+    the original state object. Statistics are collected for later analysis.
 
-    惩罚计算规则:
-      - 首先尝试调用 candidate_state.validate() 获取 (feasible, violations)
-      - 若 infeasible 且 violations 中包含 "unmet_demand" 且为列表:
-          * 尝试对 unmet_list 中每个元素以 (demand - shipped) 聚合求和 unmet_total
-          * 惩罚 penalty = penalty_factor * unmet_total
-      - 否则:
-          * 退化为 penalty = penalty_factor * len(unmet_list) （或 1.0 作为兜底）
+    Minimum interface contract expected by tests:
+      - Callable:
+        ``(rng, best_state, current_state, candidate_state) -> bool``
+      - ``get_statistics() -> dict``
+
+    Penalty calculation:
+      - Call ``candidate_state.validate()`` to obtain feasibility and violations.
+      - If infeasible and ``violations["unmet_demand"]`` is a list:
+          * Sum ``max(0, demand - shipped)`` across list entries.
+          * Apply ``penalty = penalty_factor * unmet_total``.
+      - Otherwise, use the number of entries or a fallback value of 1.0.
     """
 
     def __init__(self, base_acceptor, data, penalty_factor: float = 1000.0):
         """
-        参数:
-          - base_acceptor: 基础接收准则（callable 或具有相应调用签名的对象）
-          - data: 问题数据引用（用于可能的额外统计/日志）
-          - penalty_factor: 将 unmet demand 数量/量级映射到目标值尺度上的放大系数
-        统计:
-          - _calls: 被调用的次数
-          - _accepted: 被接受的次数
-          - _total_penalty: 累积应用的惩罚，用于计算平均惩罚等
+        Parameters
+        ----------
+        base_acceptor
+            Base acceptance policy or callable object.
+        data
+            Reference to the problem data for optional diagnostics.
+        penalty_factor : float
+            Scaling factor that maps unmet demand to the objective scale.
+
+        Statistics:
+          - ``_calls``: number of calls.
+          - ``_accepted``: number of accepted candidates.
+          - ``_total_penalty``: accumulated penalty for averages and diagnostics.
         """
         self.base = base_acceptor
         self.data = data
@@ -209,7 +223,8 @@ class DemandConstraintAccept:
             )
 
             if cand_veh < cur_veh:
-                # 后期对更少车辆给予硬偏好：允许少量 actual 波动，但仍约束 search 不大幅变差。
+                # Late in the search, favor fewer vehicles while limiting actual
+                # objective movement and preventing a large search degradation.
                 return (
                     candidate_actual <= current_actual + allowed_actual_worse
                     and candidate_search <= current_search + 2.0 * search_tol
@@ -225,17 +240,18 @@ class DemandConstraintAccept:
 
     def __call__(self, rng, best_state, current_state, candidate_state) -> bool:
         """
-        被调用执行接受判定:
-        1) 增加调用计数
-        2) 通过 candidate_state.validate() 判断可行性及获取违约信息（兼容异常）
-        3) 依据 violations 计算 penalty
-        4) 用 _CandidateProxy 包装 candidate_state，使 objective() 返回值带上惩罚
-        5) 委托给基础接收器进行接受判定（兼容多种调用签名）
-        6) 记录接受统计并返回结果
+        Execute the acceptance decision.
+
+        1) Increment the call counter.
+        2) Validate the candidate and collect violations.
+        3) Compute the penalty from the violations.
+        4) Wrap the candidate so ``objective()`` includes the penalty.
+        5) Delegate to the base acceptor with signature fallbacks.
+        6) Update acceptance statistics and return the result.
         """
         self._calls += 1
 
-        # 尝试获取可行性与违约详情; 若 validate 抛异常则认为可行且无违约
+        # If validation raises, treat the candidate as feasible without violations.
         try:
             feasible, violations = candidate_state.validate()
         except Exception:
@@ -243,10 +259,10 @@ class DemandConstraintAccept:
 
         penalty = 0.0
         if not feasible:
-            # 关注 unmet_demand 条目（如果存在）
+            # Inspect unmet-demand entries when present.
             unmet = violations.get("unmet_demand", [])
             if isinstance(unmet, list) and unmet:
-                # 尝试解析每个违约项的 'demand' 与 'shipped' 字段以计算未满足总量
+                # Parse demand and shipped fields to compute the unmet total.
                 unmet_total = 0.0
                 for it in unmet:
                     try:
@@ -254,16 +270,16 @@ class DemandConstraintAccept:
                         s = float(it.get("shipped", 0))
                         unmet_total += max(0.0, d - s)
                     except Exception:
-                        # 若无法解析具体数值, 退化为按条目计数
+                        # Fall back to counting the entry when values are invalid.
                         unmet_total += 1.0
                 penalty = self.penalty_factor * unmet_total
             else:
-                # 兜底策略: 若 unmet 不是非空列表, 则按条目数量或默认 1.0 计惩罚
+                # Fall back to list length or a default penalty of 1.0.
                 penalty = self.penalty_factor * (
                     len(unmet) if isinstance(unmet, list) else 1.0
                 )
 
-        # 记录用于统计的惩罚累计值
+        # Accumulate the penalty for reporting.
         self._total_penalty += float(penalty)
 
         progress = self._resolve_progress(current_state, candidate_state, best_state)
@@ -281,22 +297,22 @@ class DemandConstraintAccept:
                 self._accepted += 1
             return accepted
 
-        # 使用代理对象包装候选解，使其 objective() 返回 base + penalty
+        # Wrap the candidate so objective() returns base + penalty.
         proxy = _CandidateProxy(candidate_state, penalty)
 
         # Delegate to base acceptor (most acceptors follow signature used in tests)
-        # 兼容多种可能的基础接收器签名: 首先尝试常见四参数签名, 若 TypeError 则尝试回退签名
+        # Try the common four-argument signature, then a fallback signature.
         try:
             accepted = bool(self.base(rng, best_state, current_state, proxy))
         except TypeError:
-            # 某些实现可能使用 (best_state, current_state, candidate_state) 之类的签名
+            # Some implementations may use a three-argument signature.
             try:
                 accepted = bool(self.base(best_state, current_state, proxy))
             except Exception:
-                # 若仍然失败, 将接受视为 False（保守策略）
+                # Treat repeated failures as rejection.
                 accepted = False
         except Exception:
-            # 其它异常统一捕获并视为不接受
+            # Treat other exceptions as rejection.
             accepted = False
 
         if accepted:
@@ -305,13 +321,14 @@ class DemandConstraintAccept:
 
     def get_statistics(self) -> Dict[str, float]:
         """
-        返回统计信息摘要:
-          - calls: 总调用次数
-          - accepted: 被接受次数
-          - accept_rate: 接受率
-          - avg_penalty: 平均每次调用应用的惩罚
-          - total_penalty: 累计惩罚
-        该信息可用于调试、调参或记录日志。
+        Return acceptance statistics.
+
+        Keys:
+          - ``calls``: total calls.
+          - ``accepted``: accepted candidates.
+          - ``accept_rate``: accepted candidates divided by calls.
+          - ``avg_penalty``: average penalty per call.
+          - ``total_penalty``: accumulated penalty.
         """
         calls = self._calls
         accepted = self._accepted
