@@ -1,0 +1,43 @@
+# 不依赖任何原始数据的输入，生成全新的数据集
+# 要求该程序对外开放一些接口，表示生成数据集需要的关键参数
+# 需要的关键参数包括：规划周期、数据集规模的大小、运行一次程序可以生成的数据集的数量
+# 规划周期 -- horizons 默认值为1
+# 数据集规模的大小 -- dataset_size [0, 1, 2] 0表示小规模  1表示中规模  2表示大规模
+# 运行一次程序可以生成的数据集的数量 -- dataset_nums 默认值为1
+# 上述这些参数，要求可以在通过命令行调用py文件时，跟随在脚本文件名称的后面
+# 使用命令示例如下：
+# python GeneratingData.py -h
+# 上述命令可以显示帮助信息
+# python GeneratingData.py 1 0 3
+# 上述命令表示，生成3个单周期的小规模数据集
+
+# 对于单周期的问题，需要生成的csv文件包括：
+# 1）order.csv文件
+# 该文件包含三列，分别是client_code、product_code、volume
+# 2）product_size.csv文件
+# 该文件包含两列，分别是product_code、standard_size
+# 3）vehicle.csv文件
+# 该文件需要包含四列，分别是vehicle_type、carry_standard_size、min_standard_size、cost_to_use
+# 4）warehouse_storage.csv文件
+# 该文件需要包含三列，分别是plant_code、product_code、volume
+# 注意，需要让每家生产基地可以提供相同的SKU
+
+# 对于多周期的问题，需要生成的csv文件包括：
+# 1）order.csv文件
+# 该文件包含三列，分别是client_code、product_code、volume
+# 2）product_size.csv文件
+# 该文件包含两列，分别是product_code、standard_size
+# 3）vehicle.csv文件
+# 该文件需要包含四列，分别是vehicle_type、carry_standard_size、min_standard_size、cost_to_use
+# 4）warehouse_storage.csv文件
+# 该文件需要包含三列，分别是plant_code、product_code、volume
+# 注意，需要让每家生产基地可以提供相同的SKU
+# 5）plant_size_upper_limit.csv文件
+# 该文件包含两列，分别是plant_code、max_volume
+# 6）warehouse_production.csv文件
+# 该文件包含四列，分别是plant_code、product_code、produce_date、volume
+# 同理，在该文件中，也需要让每家生产基地可以提供相同的SKU
+
+# 另外，还需要生成一个instance_statistics.csv文件
+# 用于统计每个数据集的规模大小，需要记录的信息包括：
+# 生产基地数量、经销商数量、SKU数量、车辆类型数量、规划周期

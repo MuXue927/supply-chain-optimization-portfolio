@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors
+.idea/
+.vscode/
+*.iml
+
+# Generated outputs and logs
+OutPut*/
+outputs/
+ExperimentsResults/
+logs*/
+*.log
+*.out
+*.tmp
+
+# Secrets and private data
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.db
+*.sqlite
+*.sqlite3
+cookies.txt
+*cookies*.txt
+aws/
+
+# Archives and large local artifacts
+*.7z
+*.zip
+*.tar
+*.tar.gz
+*.prof
+
+# OS files
+.DS_Store
+Thumbs.db

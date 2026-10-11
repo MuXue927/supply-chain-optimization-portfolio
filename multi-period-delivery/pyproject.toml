@@ -1,0 +1,36 @@
+[project]
+name = "problem2"
+version = "0.1.0"
+description = "Multi-period product distribution optimization using ALNS, Column Generation, and Monolithic approaches"
+requires-python = ">=3.10"
+dependencies = [
+    "alns>=1.0.0",
+    "numpy>=1.21.0",
+    "matplotlib>=3.5.0",
+    "scikit-learn>=1.0.0",
+    "gurobipy>=10.0.0",
+    "pandas>=1.3.0",
+    "openpyxl>=3.0.0",
+    "networkx>=2.8.0",
+    "plotly>=5.0.0",
+    "vrplib>=1.4.0",
+    "rich>=10.0.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies used for testing, profiling and linting.
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0.0",
+    "pyinstrument>=5.1.1",
+    "black>=23.0.0",
+    "mypy>=1.8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["ALNSCode*"]
+exclude = ["logs*", "images*", "datasets*", "others*", "outputs*", "CGcodeWrong*", "ALNS-Learn*", "alns-versionWrong*"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
