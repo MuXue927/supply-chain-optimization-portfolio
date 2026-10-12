@@ -47,6 +47,7 @@ Potential improvements (not implemented):
 # =========================
 # Standard library
 # =========================
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -336,9 +337,18 @@ class ParamAutoTuner:
             params: Baseline parameters used directly during exploitation.
             ranges: Continuous or integer bounds used for random exploration
                 and clipped during tuning.
+
+        The params and ranges are copied before they are stored. Directional
+        tuning mutates ``op.params`` in place, and the default operator table
+        lives on the shared configuration object: without the copy, one run's
+        tuning would leak into the next run in the same process.
         """
         # name = self._canonical_name(name)
-        self.operators[name] = OperatorParams(name=name, params=params, ranges=ranges)
+        self.operators[name] = OperatorParams(
+            name=name,
+            params=copy.deepcopy(params),
+            ranges=copy.deepcopy(ranges),
+        )
 
     def update_operator_performance(self, name: str,
                                     improvement: float,
