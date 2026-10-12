@@ -686,6 +686,92 @@ class ALNSConfig:
     PHASED_LEXICOGRAPHIC_OBJ_ABS_TOL: float = 2.0
 
     # --------------------------
+    # Promoted settings that used to be read only through getattr defaults
+    #
+    # Every field below was previously read as
+    # ``getattr(ALNSConfig, "NAME", <default>)`` without being declared here.
+    # Those reads still worked, because the inline default supplied the value,
+    # but the knobs were invisible: nothing in this file hinted that they
+    # existed and the fallback value was the only documentation. They are
+    # declared now with exactly the default each call site used, so behaviour is
+    # unchanged while every value becomes discoverable, typed and settable from
+    # config JSON.
+    # --------------------------
+
+    # --- Fast mode / validation throttling ---
+    # Coarse "fast" screening profile. When on, the callbacks skip the expensive
+    # validation guard and the ML retraining/warm-up work. It is off in every
+    # published run; enable it only for quick exploratory sweeps, because it
+    # also disables ML operator training while it is active.
+    ENABLE_FAST_ALNS_MODE: bool = False
+    # Iterations to complete before the runtime validation guard starts its
+    # periodic validation. 0 validates from the first iteration.
+    VALIDATE_WARMUP_ITERS: int = 0
+    # Validation period used while ENABLE_FAST_ALNS_MODE is on. 1 means "validate
+    # every iteration", i.e. no throttling.
+    FAST_VALIDATE_EVERY_N_ITERS: int = 1
+    # Validation period used in normal mode. 1 means "validate every iteration".
+    VALIDATE_EVERY_N_ITERS: int = 1
+
+    # --- Acceptance diagnostics ---
+    # Emit the periodic acceptance-statistics block from the iteration callback.
+    ENABLE_ACCEPT_STATS_LOG: bool = True
+    # Iterations between two acceptance-statistics log lines.
+    ACCEPT_STATS_LOG_INTERVAL: int = 200
+    # Absolute tolerance below which an inventory inconsistency is treated as
+    # numerical noise and left out of the recorded inconsistency report.
+    RECORD_INCONSISTENCY_EPS: float = 1e-6
+
+    # --- Initial-solution time budget ---
+    # Lower bound of the wall-clock budget (seconds) granted to the initial
+    # solution construction.
+    MIN_INIT_TIMEOUT: float = 30.0
+    # Upper bound of that budget. The effective budget scales with the number of
+    # outstanding demands and is clamped into [MIN_INIT_TIMEOUT, MAX_INIT_TIMEOUT].
+    MAX_INIT_TIMEOUT: float = 120.0
+    # Seconds added to the initial-solution budget per outstanding demand.
+    INIT_TIMEOUT_PER_DEMAND: float = 0.05
+    # Deterministic repair passes the construction pipeline runs while pushing
+    # the initial solution into strict feasibility.
+    INITIAL_REPAIR_MAX_ITER: int = 5
+
+    # --- Lookahead repair weights ---
+    # Weight of the next-period demand term in the lookahead insertion score.
+    LOOKAHEAD_REPAIR_FUTURE_WEIGHT: float = 0.35
+    # Fraction of the vehicle capacity held back as a safety floor before a
+    # candidate insertion is accepted.
+    LOOKAHEAD_REPAIR_SAFETY_FLOOR_RATIO: float = 0.10
+    # Score bonus granted when a candidate reuses a vehicle that is already open.
+    LOOKAHEAD_REPAIR_REUSE_BONUS: float = 0.10
+
+    # --- Fleet classification ---
+    # Capacity quantile above which a vehicle type counts as a "large vehicle" in
+    # the fleet-composition tie-breakers.
+    FLEET_LARGE_CAPACITY_QUANTILE: float = 0.67
+
+    # --- Destroy-operator diagnostics ---
+    # Sampling rate of the per-operator JSON dumps written by destroy_utils.
+    # 1 dumps every call; larger values keep only a sample.
+    OPJSON_SAMPLING_RATE: int = 1
+
+    # --- Machine-learning operator selector hyper-parameters ---
+    # L2 penalty of the ridge fallback model trained on operator outcomes.
+    ML_RIDGE_ALPHA: float = 1.0
+    # Sample count from which the random-forest model is trained instead of the
+    # ridge fallback.
+    ML_USE_RF_THRESHOLD: int = 50
+    # Number of trees in that random-forest model.
+    ML_RF_N_ESTIMATORS: int = 50
+    # Maximum tree depth of that random-forest model.
+    ML_RF_MAX_DEPTH: int = 10
+
+    # --- Reporting and debugging ---
+    # Dots-per-inch of the matplotlib figures written by the reporting step.
+    REPORT_DPI: int = 150
+    # Print the parameter tuner's internal adjustment trace. Debugging only.
+    TUNER_DEBUG: bool = False
+
+    # --------------------------
     # Helper instance methods
     # --------------------------
     def get_destroy_params(self) -> Dict[str, Any]:

@@ -34,6 +34,11 @@ class InputDataCG:
     # Maximum number of load patterns to retain before excess columns are removed.
     param_trigger_shrink_level: int = field(init=False)
 
+    # Minimum-load penalty coefficient: an underloaded vehicle costs
+    # alpha * its fixed cost. Read from model_config.json so the
+    # column-generation objective matches the monolithic model.
+    param_alpha: float = field(init=False)
+
     # MIP gap tolerance. Optimization stops once the configured gap is reached; the default is 0.
     param_gap_limit: float = field(init=False)
     # MIP time limit in seconds; the default is 60.
@@ -102,6 +107,18 @@ class InputDataCG:
         self.param_gap_limit = param['gap_limit']
         self.param_time_limit = param['time_limit']
         self.param_output_flag = param['output_flag']
+
+        # model_config_cg.json carries no alpha, so take the minimum-load penalty
+        # coefficient from the monolithic config in the same directory. It has to
+        # match the monolithic model for the two objectives to be comparable.
+        # Fall back to the historical default of 2.0 when the file or key is
+        # missing, which happens for ad-hoc datasets in the test suite.
+        monolithic_config_path = os.path.join(input_file_loc, 'model_config.json')
+        if os.path.exists(monolithic_config_path):
+            with open(monolithic_config_path) as fp_monolithic:
+                self.param_alpha = float(json.load(fp_monolithic).get('alpha', 2.0))
+        else:
+            self.param_alpha = 2.0
 
         # reading data from each dataset
         input_file_loc = os.path.join(input_file_loc, self.dataset_name)

@@ -45,6 +45,7 @@ def run_cplex_api_column_generation(
             "dataset_name": dataset_name,
             "final_time_limit": final_time_limit,
             "max_iterations": max_iterations,
+            "alpha": algorithm.alpha,
             "seed": seed,
             "seed_result_csv": str(seed_result_csv)
             if seed_result_csv is not None

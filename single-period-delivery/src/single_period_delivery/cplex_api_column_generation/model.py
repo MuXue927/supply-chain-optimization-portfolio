@@ -44,7 +44,7 @@ class CplexApiColumnGeneration:
         *,
         max_iterations: int = 100,
         reduced_cost_tolerance: float = 1e-6,
-        alpha: float = 2.0,
+        alpha: float | None = None,
         random_seed: int = 0,
     ):
         self.data = data
@@ -52,7 +52,10 @@ class CplexApiColumnGeneration:
         self.reduced_cost_tolerance = reduced_cost_tolerance
         # The monolithic model uses alpha * vehicle cost as the minimum-load
         # penalty. Keep the same coefficient in the master and pricing models.
-        self.alpha = float(alpha)
+        # Default to the coefficient declared by the dataset
+        # (InputDataCG.param_alpha) rather than a hard-coded 2.0, so a dataset
+        # with a different alpha is priced correctly.
+        self.alpha = float(data.param_alpha if alpha is None else alpha)
         self.random_seed = int(random_seed)
         self.patterns: List[Pattern] = []
         self.iteration_log: List[Dict[str, float]] = []
