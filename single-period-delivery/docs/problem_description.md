@@ -54,6 +54,12 @@ Vehicle-type selection is associated with a fixed activation cost.
    The total quantity of each SKU delivered to each dealer must fully satisfy
    that dealer's demand.
 
+   *Implementation note:* the thesis model states this as an equality; the
+   archived code uses `>=`. Over-delivery is therefore legal, which is what
+   allows an already-activated vehicle to be topped up to its minimum load
+   instead of activating another one. See
+   [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md).
+
 2. **Supply capacity**
 
    The quantity of a SKU shipped from a plant cannot exceed the inventory held
@@ -91,6 +97,15 @@ Vehicle-type selection is associated with a fixed activation cost.
 
    The 3PL can provide an unlimited number of vehicles. Vehicle-type selection
    is driven only by cost.
+
+   *Implementation note:* the archived monolithic model does **not** implement
+   this literally. `InputDataSingle.load()` derives one global fleet size
+   (`max_veh_num`), assigns each vehicle a type **at random**, and the model can
+   then use that fixed fleet. On `small/dataset_1` this yields 235 vehicles,
+   which is what makes the monolithic model large enough to need a
+   column-generation alternative; see
+   [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md)
+   for the measurements and the recommended reformulation.
 
 ## Problem Diagram
 

@@ -59,6 +59,12 @@ whose loaded volume falls below the minimum shipment quantity.
 
    For every dealer and SKU, the total quantity shipped from all plants over
    all periods must satisfy the total demand of that dealer and SKU.
+
+   *Implementation note:* the thesis model states this as an equality; the
+   archived code uses `>=`. Over-delivery is therefore legal, which is what
+   allows an already-activated vehicle to be topped up to its minimum load
+   instead of activating another one. See
+   [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md).
 2. **Inventory-flow balance**
 
    For each plant, SKU, and period, the shipped quantity equals:
@@ -104,6 +110,16 @@ whose loaded volume falls below the minimum shipment quantity.
 
    The 3PL can provide an unlimited number of vehicles. Vehicle-type selection
    is driven only by cost.
+
+   *Implementation note:* the archived monolithic model does **not** implement
+   this literally. `InputDataMultiple.load()` derives one global fleet size
+   (`max_veh_num`), assigns each vehicle a type **at random**, and the model can
+   then use that fixed fleet in every period. Because no constraint ties a
+   vehicle across periods, the cap is effectively "*max_veh_num* vehicles per
+   period". This makes the model size and the available type mix vary from run
+   to run; see
+   [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md)
+   for the measurements and the recommended reformulation.
 
 ## Problem Diagram
 
