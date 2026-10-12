@@ -282,6 +282,38 @@ which is where they are actually used — while shrinking the index set by more
 than an order of magnitude. It also removes the symmetry that a global fleet
 index creates between interchangeable vehicles.
 
+#### Verification of the reformulation (single-period CPLEX API)
+
+The reformulation is implemented in
+`single-period-delivery/src/single_period_delivery/cplex_api_monolithic/model.py`
+and checked two ways.
+
+**1. Equivalence on a synthetic instance.** The bundled instances cannot settle
+an equivalence question: `BIG_NUM = 99999` makes the LP relaxation weak enough
+that even `small/dataset_3` stops on the time limit. A hand-built instance
+(1 plant, 2 dealers, 2 SKUs, 2 vehicle types) is solved to *proven optimality*
+by both formulations:
+
+| Formulation | Status | Objective | Best bound |
+| --- | --- | ---: | ---: |
+| global fleet (before) | optimal | **2.6** | 2.6 |
+| route-local slots (after) | optimal | **2.6** | 2.6 |
+
+(2.6 = one type-`10.0` vehicle for dealer D1 at 1.6 plus one type-`6.0` vehicle
+for D2 at 1.0, which is also what the instance's economics imply.)
+
+**2. On a bundled instance.** `small/dataset_3`:
+
+| Formulation | Time limit | Status | Objective | Gap |
+| --- | ---: | --- | ---: | ---: |
+| global fleet (before) | 604 s | incumbent only | 15.36 | 11.85% |
+| route-local slots (after) | **~3 s** | **optimal** | **15.06** | 0% |
+
+The new formulation reaches *and proves* an objective the old one could not
+reach in ten minutes. This is not an equivalence violation: the final plan uses
+15 vehicles against an old cap of 20, so the cap was never binding and both
+formulations share the same optimum — the old one simply never got there.
+
 ### 7.2 Make the fleet deterministic (do this regardless)
 
 Whatever formulation is chosen, the vehicle-type draw must stop being an

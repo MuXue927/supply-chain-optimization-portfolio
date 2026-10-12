@@ -16,134 +16,130 @@ class SinglePeriodCplexApiMonolithic:
     def __init__(self, data: InputDataSingle):
         self.data = data
         self.model = CplexApiModel("single_period_cplex_api_monolithic")
-        self.z: dict[int, str] = {}
-        self.zz: dict[int, str] = {}
-        self.p: dict[int, str] = {}
-        self.y: dict[tuple[str, str, int], str] = {}
+        # Route-local slots: a slot belongs to one (plant, dealer) route and its
+        # vehicle type is chosen by the model, so there is no global fleet index
+        # and no `y` assignment variable.
+        self.z: dict[tuple[str, str, str, int], str] = {}
+        self.zz: dict[tuple[str, str, int], str] = {}
+        self.p: dict[tuple[str, str, str, int], str] = {}
         self.x: dict[tuple[str, str, str, int], str] = {}
         self._build_variables()
         self._build_objective()
         self._build_constraints()
 
     def _build_variables(self) -> None:
-        """Create all variables in the original monolithic formulation."""
+        """Create the route-local slot variables.
+
+        For every route and every slot on it:
+          z_ijfn  - slot n of route (i, j) uses vehicle type f
+          zz_ijn  - slot n is allowed to fall below its minimum load
+          p_ijfn  - slot n is used with type f *and* below the minimum load
+          x_ijkn  - units of SKU k loaded on slot n of route (i, j)
+        """
         data = self.data
-        for vehicle in data.all_vehicles:
-            self.z[vehicle] = self.model.add_variable(
-                f"z_{vehicle}", kind="binary"
-            )
-            self.zz[vehicle] = self.model.add_variable(
-                f"zz_{vehicle}", kind="binary"
-            )
-            self.p[vehicle] = self.model.add_variable(
-                f"p_{vehicle}", kind="binary"
-            )
-
-        for plant, dealer in data.supply_chain:
-            for vehicle in data.all_vehicles:
-                self.y[plant, dealer, vehicle] = self.model.add_variable(
-                    f"y_{plant}_{dealer}_{vehicle}",
-                    kind="binary",
+        for (plant, dealer), slots in data.route_slots.items():
+            for slot in slots:
+                self.zz[plant, dealer, slot] = self.model.add_variable(
+                    f"zz_{plant}_{dealer}_{slot}", kind="binary"
                 )
-
-        for plant, dealer in data.supply_chain:
-            for sku in data.supply_chain[plant, dealer]:
-                for vehicle in data.all_vehicles:
-                    self.x[plant, dealer, sku, vehicle] = (
-                        self.model.add_variable(
-                            f"x_{plant}_{dealer}_{sku}_{vehicle}",
-                            kind="integer",
-                        )
+                for sku in data.supply_chain[plant, dealer]:
+                    self.x[plant, dealer, sku, slot] = self.model.add_variable(
+                        f"x_{plant}_{dealer}_{sku}_{slot}", kind="integer"
+                    )
+                for v_type in data.all_veh_types:
+                    self.z[plant, dealer, v_type, slot] = self.model.add_variable(
+                        f"z_{plant}_{dealer}_{v_type}_{slot}", kind="binary"
+                    )
+                    self.p[plant, dealer, v_type, slot] = self.model.add_variable(
+                        f"p_{plant}_{dealer}_{v_type}_{slot}", kind="binary"
                     )
 
     def _build_objective(self) -> None:
-        """Minimize fixed cost plus minimum-load penalties."""
+        """Minimize each activated slot's type cost plus its minimum-load penalty."""
         terms: dict[str, float] = {}
-        for vehicle in self.z:
-            terms[self.z[vehicle]] = float(self.data.veh_cost[vehicle])
-            terms[self.p[vehicle]] = (
-                float(self.data.param_alpha)
-                * float(self.data.veh_cost[vehicle])
+        for (_plant, _dealer, v_type, _slot), variable in self.z.items():
+            cost = float(self.data.veh_type_cost[v_type])
+            terms[variable] = cost
+            terms[self.p[_plant, _dealer, v_type, _slot]] = (
+                float(self.data.param_alpha) * cost
             )
         self.model.set_objective(terms)
 
     def _build_constraints(self) -> None:
-        """Add all constraints from the original single-period model."""
-        data = self.data
-        for vehicle in data.all_vehicles:
-            terms = {
-                self.y[plant, dealer, vehicle]: 1.0
-                for plant, dealer in data.supply_chain
-            }
-            terms[self.z[vehicle]] = -1.0
-            self.model.add_constraint(
-                f"vehicle_use_{vehicle}",
-                terms,
-                "=",
-                0.0,
-            )
+        """Add the route-local constraints.
 
-        for plant, dealer in data.supply_chain:
-            for vehicle in data.all_vehicles:
-                terms = {
-                    self.x[plant, dealer, sku, vehicle]: 1.0
-                    for sku in data.supply_chain[plant, dealer]
-                }
-                terms[self.y[plant, dealer, vehicle]] = (
-                    -float(data.param_BIG_NUM)
-                )
+        Constraint set (per route (i, j) and slot n):
+
+          one type per slot   sum_f z_ijfn <= 1
+          capacity            sum_k size_k x_ijkn <= sum_f cap_f z_ijfn
+          minimum load        sum_k size_k x_ijkn + BIG zz_ijn >= sum_f min_f z_ijfn
+          penalty link        z_ijfn + zz_ijn - 1 <= p_ijfn
+
+        plus the two unchanged global rows (demand coverage and plant supply).
+        The capacity row also replaces the old x-to-y linking constraint: an
+        unused slot has sum_f z_ijfn = 0, which forces every x_ijkn to zero.
+        """
+        data = self.data
+
+        for (plant, dealer), slots in data.route_slots.items():
+            skus = sorted(data.supply_chain[plant, dealer])
+            for slot in slots:
                 self.model.add_constraint(
-                    f"link_x_y_{plant}_{dealer}_{vehicle}",
-                    terms,
+                    f"one_type_{plant}_{dealer}_{slot}",
+                    {
+                        self.z[plant, dealer, v_type, slot]: 1.0
+                        for v_type in data.all_veh_types
+                    },
                     "<=",
+                    1.0,
+                )
+
+                capacity = {
+                    self.x[plant, dealer, sku, slot]: float(data.sku_sizes[sku])
+                    for sku in skus
+                }
+                for v_type in data.all_veh_types:
+                    capacity[self.z[plant, dealer, v_type, slot]] = -float(
+                        data.veh_type_cap[v_type]
+                    )
+                self.model.add_constraint(
+                    f"capacity_{plant}_{dealer}_{slot}", capacity, "<=", 0.0
+                )
+
+                minimum = {
+                    self.x[plant, dealer, sku, slot]: float(data.sku_sizes[sku])
+                    for sku in skus
+                }
+                minimum[self.zz[plant, dealer, slot]] = float(data.param_BIG_NUM)
+                for v_type in data.all_veh_types:
+                    minimum[self.z[plant, dealer, v_type, slot]] = -float(
+                        data.veh_type_min_load[v_type]
+                    )
+                self.model.add_constraint(
+                    f"minimum_load_{plant}_{dealer}_{slot}",
+                    minimum,
+                    ">=",
                     0.0,
                 )
 
-        for vehicle in data.all_vehicles:
-            load = {
-                self.x[plant, dealer, sku, vehicle]: float(
-                    data.sku_sizes[sku]
-                )
-                for plant, dealer in data.supply_chain
-                for sku in data.supply_chain[plant, dealer]
-            }
-            load[self.zz[vehicle]] = float(data.param_BIG_NUM)
-            self.model.add_constraint(
-                f"minimum_load_{vehicle}",
-                load,
-                ">=",
-                float(data.veh_min_load[vehicle]),
-            )
-            self.model.add_constraint(
-                f"penalty_link_{vehicle}",
-                {
-                    self.z[vehicle]: 1.0,
-                    self.zz[vehicle]: 1.0,
-                    self.p[vehicle]: -1.0,
-                },
-                "<=",
-                1.0,
-            )
-            capacity = {
-                self.x[plant, dealer, sku, vehicle]: float(
-                    data.sku_sizes[sku]
-                )
-                for plant, dealer in data.supply_chain
-                for sku in data.supply_chain[plant, dealer]
-            }
-            self.model.add_constraint(
-                f"vehicle_capacity_{vehicle}",
-                capacity,
-                "<=",
-                float(data.veh_cap[vehicle]),
-            )
+                for v_type in data.all_veh_types:
+                    self.model.add_constraint(
+                        f"penalty_link_{plant}_{dealer}_{v_type}_{slot}",
+                        {
+                            self.z[plant, dealer, v_type, slot]: 1.0,
+                            self.zz[plant, dealer, slot]: 1.0,
+                            self.p[plant, dealer, v_type, slot]: -1.0,
+                        },
+                        "<=",
+                        1.0,
+                    )
 
         for dealer, sku in data.demands:
             terms = {
-                self.x[plant, dealer, sku, vehicle]: 1.0
+                self.x[plant, dealer, sku, slot]: 1.0
                 for plant in data.plants
-                for vehicle in data.all_vehicles
-                if (plant, dealer, sku, vehicle) in self.x
+                for slot in data.route_slots.get((plant, dealer), [])
+                if (plant, dealer, sku, slot) in self.x
             }
             self.model.add_constraint(
                 f"demand_{dealer}_{sku}",
@@ -154,10 +150,10 @@ class SinglePeriodCplexApiMonolithic:
 
         for plant, sku in data.sku_inv:
             terms = {
-                self.x[plant, dealer, sku, vehicle]: 1.0
+                self.x[plant, dealer, sku, slot]: 1.0
                 for dealer in data.dealers
-                for vehicle in data.all_vehicles
-                if (plant, dealer, sku, vehicle) in self.x
+                for slot in data.route_slots.get((plant, dealer), [])
+                if (plant, dealer, sku, slot) in self.x
             }
             self.model.add_constraint(
                 f"supply_{plant}_{sku}",
@@ -202,7 +198,7 @@ class SinglePeriodCplexApiMonolithic:
             value = solution.variables.get(variable, 0.0)
             if value <= 1e-7:
                 continue
-            plant, dealer, sku, vehicle = key
+            plant, dealer, sku, slot = key
             rows.append(
                 {
                     "Index": len(rows) + 1,
@@ -210,8 +206,8 @@ class SinglePeriodCplexApiMonolithic:
                     "plant_code": plant,
                     "client_code": dealer,
                     "product_code": sku,
-                    "vehicle_id": vehicle,
-                    "vehicle_type": self.data.veh_type[vehicle],
+                    "vehicle_id": slot,
+                    "vehicle_type": self._slot_type(solution, plant, dealer, slot),
                     "qty": int(round(value)),
                 }
             )
@@ -235,11 +231,11 @@ class SinglePeriodCplexApiMonolithic:
             details["standard_size"] = details["product_code"].map(
                 self.data.sku_sizes
             )
-            details["carry_standard_size"] = details["vehicle_id"].map(
-                self.data.veh_cap
+            details["carry_standard_size"] = details["vehicle_type"].map(
+                self.data.veh_type_cap
             )
-            details["min_standard_size"] = details["vehicle_id"].map(
-                self.data.veh_min_load
+            details["min_standard_size"] = details["vehicle_type"].map(
+                self.data.veh_type_min_load
             )
             details["occupied_size"] = (
                 details["qty"] * details["standard_size"]
@@ -265,8 +261,8 @@ class SinglePeriodCplexApiMonolithic:
                 summary["occupied_size"] + 1e-9
                 < summary["min_standard_size"]
             )
-            summary["fixed_cost"] = summary["vehicle_id"].map(
-                self.data.veh_cost
+            summary["fixed_cost"] = summary["vehicle_type"].map(
+                self.data.veh_type_cost
             )
             summary["minimum_load_penalty"] = (
                 summary["below_min_load"].astype(float)
@@ -314,3 +310,18 @@ class SinglePeriodCplexApiMonolithic:
             if not summary.empty
             else 0,
         }
+
+    def _slot_type(
+        self, solution: CplexApiSolution, plant: str, dealer: str, slot: int
+    ) -> str:
+        """Return the vehicle type a used slot ended up choosing."""
+        best_type = self.data.all_veh_types[0]
+        best_value = 0.0
+        for v_type in self.data.all_veh_types:
+            value = solution.variables.get(
+                self.z[plant, dealer, v_type, slot], 0.0
+            )
+            if value > best_value:
+                best_value = value
+                best_type = v_type
+        return best_type
