@@ -94,39 +94,7 @@ Vehicle-type selection is associated with a fixed activation cost.
 
 ## Problem Diagram
 
-```mermaid
-flowchart LR
-    subgraph Plants["Supply side: multiple plants"]
-        P1["Plant 1<br/>SKU inventory"]
-        P2["Plant 2<br/>SKU inventory"]
-        P3["Plant i<br/>SKU inventory"]
-    end
-
-    subgraph Logistics["Third-party logistics"]
-        FLEET["Integrated loading and delivery optimization<br/>Multiple vehicle types<br/>Fixed vehicle activation cost<br/>Vehicle capacity<br/>Minimum shipment quantity"]
-    end
-
-    subgraph Dealers["Demand side: multiple dealers"]
-        D1["Dealer 1<br/>Multiple SKU demands"]
-        D2["Dealer 2<br/>Multiple SKU demands"]
-        D3["Dealer j<br/>Multiple SKU demands"]
-    end
-
-    CUSTOMERS["End customers"]
-
-    P1 --> FLEET
-    P2 --> FLEET
-    P3 --> FLEET
-    FLEET --> D1
-    FLEET --> D2
-    FLEET --> D3
-    D1 --> CUSTOMERS
-    D2 --> CUSTOMERS
-    D3 --> CUSTOMERS
-
-    P1 -. "No horizontal transfer between plants" .- P2
-    P2 -. "No horizontal transfer between plants" .- P3
-```
+![Single-period product distribution problem](figures/problem_diagram.png)
 
 The diagram shows a many-to-many supply structure. Each plant may supply
 multiple dealers, and each dealer may receive the same SKU from multiple

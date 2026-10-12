@@ -107,51 +107,7 @@ whose loaded volume falls below the minimum shipment quantity.
 
 ## Problem Diagram
 
-```mermaid
-flowchart TB
-    subgraph Horizon["Rolling planning horizon: periods 1 to T"]
-        subgraph Plants["Production plants"]
-            P1["Plant 1<br/>Multiple SKU types"]
-            P2["Plant 2<br/>Multiple SKU types"]
-            P3["Plant i<br/>Multiple SKU types"]
-        end
-
-        subgraph Inventory["Plant inventory state in each period"]
-            OPEN["Opening in-warehouse inventory<br/>Finished and ready to ship"]
-            PROD["Scheduled-production inventory<br/>Available after production"]
-            END["Ending inventory<br/>Carried to the next period"]
-        end
-
-        subgraph Logistics["Third-party logistics in each period"]
-            FLEET["Multiple vehicle types<br/>Fixed activation cost<br/>Vehicle capacity<br/>Minimum shipment quantity"]
-        end
-
-        subgraph Dealers["Dealers"]
-            D1["Dealer 1<br/>Demand may be fulfilled across periods"]
-            D2["Dealer 2<br/>Demand may be fulfilled across periods"]
-            D3["Dealer j<br/>Demand may be fulfilled across periods"]
-        end
-    end
-
-    CUSTOMERS["End customers"]
-
-    P1 --> OPEN
-    P2 --> OPEN
-    P3 --> OPEN
-    PROD -->|"Completed production"| OPEN
-    OPEN --> FLEET
-    FLEET --> D1
-    FLEET --> D2
-    FLEET --> D3
-    OPEN -->|"Inventory balance"| END
-    END -->|"Carried forward"| OPEN
-    D1 --> CUSTOMERS
-    D2 --> CUSTOMERS
-    D3 --> CUSTOMERS
-
-    P1 -. "No horizontal transfer between plants" .- P2
-    P2 -. "No horizontal transfer between plants" .- P3
-```
+![Multi-period production-driven product distribution problem](figures/problem_diagram.png)
 
 The diagram shows the rolling relationship among scheduled production,
 in-warehouse inventory, vehicle loading and delivery, dealer demand, and
