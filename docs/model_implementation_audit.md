@@ -21,7 +21,7 @@
 | 2 | The description assumes **unlimited vehicle availability**, but the code caps the fleet at a pre-estimated size and *fixes* each vehicle's type | **High** | both projects |
 | 3 | The "upper bound" on the fleet size uses `floor` instead of `ceil` | Medium | both projects |
 | 4 | Because no constraint links a vehicle across periods, the cap means "*L* vehicles **per period**", not "*L* vehicles in total" | Medium | multi-period |
-| 5 | The `x` variable is indexed by individual vehicle, inflating the model by **78×** (single) / **18×** (multi) | Medium | both projects |
+| 5 | The `x` variable is indexed by individual vehicle in a **global** fleet; a route-local reformulation was measured at **14.8×** smaller (single) | Medium | both projects |
 | 6 | The thesis' demand constraint is an **equality**; the code uses `>=` | Low (documented) | both projects |
 
 Everything else that was checked lines up; see §8.
@@ -194,16 +194,31 @@ Counted from the bundled instances (index sets only, no solve):
 
 | Model | Instance | `z` | `y` | `x` | Total |
 | --- | --- | ---: | ---: | ---: | ---: |
-| single-period, as implemented | small/`dataset_1` | 235 | 11,280 | 114,210 | **≈125,700** |
-| single-period, type-indexed | small/`dataset_1` | 3 | 144 | 1,458 | **≈1,600** |
-| multi-period, as implemented | small/`dataset_1` | 180 | 2,880 | 37,440 | **≈40,500** |
-| multi-period, type-indexed | small/`dataset_1` | 10 | 160 | 2,080 | **≈2,250** |
+| single-period, as implemented | small/`dataset_1` | 235 | 11,280 | 114,210 | **125,725** |
+| single-period, route-local slots | small/`dataset_1` | 3,038 | — | 5,463 | **8,501** |
+| single-period, as implemented | small/`dataset_3` | 20 | 960 | 920 | **1,900** |
+| single-period, route-local slots | small/`dataset_3` | 180 | — | 180 | **360** |
 
-The vehicle index multiplies the model by `max_veh_num / |types|` —
-**235/3 ≈ 78×** for the single-period instance and **36/2 = 18×** for the
-multi-period one. This is the mechanical reason the monolithic benchmark is
-slow, and it is why the single-period project needs a column-generation
-alternative at all.
+The vehicle index multiplies the loading variables by `max_veh_num`; replacing
+it with route-local slots was measured at **14.8×** fewer variables on
+`dataset_1` and **3.3×** on `dataset_3`, *while keeping the per-vehicle
+minimum-load penalty exactly as it is*. This is the mechanical reason the
+monolithic benchmark is slow, and it is why the single-period project needs a
+column-generation alternative at all.
+
+An earlier draft of this audit claimed **78×** by comparing against a
+*type-aggregated* model that drops the per-vehicle penalty. That comparison was
+not like-for-like and has been replaced by the measured figures above.
+
+> **A design that does not work — recorded so it is not retried.** The first
+> route-local draft gave every `(vehicle type, copy number)` pair its own slot
+> dimension. Measured on `small/dataset_1` that produced **993 slots against a
+> 235-vehicle global fleet**, i.e. *more* variables than the model it was meant
+> to replace: a route never needs a full complement of every type. The
+> reformulation only pays off when the slot is type-agnostic and the type is a
+> model decision (`z_ijfn` with `sum_f z_ijfn <= 1`), and when the number of
+> slots per route is bounded by `ceil(D_ij / min_cap) + 1` rather than by a
+> per-type count.
 
 ### Why the obvious fix is not the whole story
 
@@ -216,24 +231,30 @@ not determine how many of them are underloaded.
 
 ## 7. Recommendations
 
-### 7.1 Route-local vehicle slots (recommended; exact and much smaller)
+### 7.1 Route-local vehicle slots (recommended; measured at 14.8× on `dataset_1`)
 
 Because Constraint 1 already forbids a vehicle from serving more than one route
 per period, vehicle identities are **not shared between routes**. The global
-fleet index can therefore be replaced by a *route-local* slot index:
+fleet index can therefore be replaced by a *route-local* slot index whose type
+is decided by the model:
 
 ```text
-l ∈ {1, …, K_ij}     for each route (i, j) and period t
+slots:  n ∈ {1, …, K_ij}                per route (i, j)
+        K_ij = ceil(D_ij / min_cap) + 1,  D_ij = demand volume the route serves
+
+vars:   z_ijfn, p_ijfn ∈ {0,1}          slot n of route (i,j) uses type f
+        zz_ijn, x_ijkn
+constr: sum_f z_ijfn            <= 1
+        sum_k size_k x_ijkn     <= sum_f cap_f * z_ijfn
+        sum_k size_k x_ijkn + BIG*zz_ijn >= sum_f min_load_f * z_ijfn
+        z_ijfn + zz_ijn - 1     <= p_ijfn
 ```
 
-with `K_ij = ceil(<volume that route (i,j) must ever carry> / min_cap)`, or any
-other valid per-route bound.
-
 This keeps the per-vehicle minimum-load penalty **exactly** as it is — the
-penalty is charged per vehicle, and the vehicles are now per route, which is
-where they are actually used — while collapsing the index set by one to two
-orders of magnitude. It also removes the symmetry that a global fleet index
-creates between interchangeable vehicles.
+penalty is still charged per activated vehicle, and vehicles are now per route,
+which is where they are actually used — while shrinking the index set by more
+than an order of magnitude. It also removes the symmetry that a global fleet
+index creates between interchangeable vehicles.
 
 ### 7.2 Make the fleet deterministic (do this regardless)
 

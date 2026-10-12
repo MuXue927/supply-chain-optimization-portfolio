@@ -296,3 +296,64 @@ class InputDataSingle:
         each_type_min_load = dict(zip(df_all_veh['vehicle_type'], df_all_veh['min_load']))
         # {v_id: min_load}
         self.veh_min_load = {v_id: each_type_min_load[self.veh_type[v_id]] for v_id in self.all_vehicles}
+
+        # ============================================================
+        # Route-local vehicle slots.
+        #
+        # The global fleet index built above is what the original model used,
+        # and it is the reason the monolithic model carries roughly
+        # |triples| x |fleet| loading variables: one fleet is shared, on paper,
+        # by every route. Constraint 1 already forbids a vehicle from serving
+        # two routes, so vehicle identities are not shared between routes and
+        # the global index can be replaced by per-route slots without changing
+        # the set of achievable shipments.
+        #
+        # A slot is (plant, dealer, copy_number); its vehicle type is a model
+        # decision, not a property of the slot. The number of slots on route
+        # (i, j) is
+        #
+        #     K_ij = ceil(D_ij / min_over_types(cap)) + 1
+        #
+        # where D_ij is the volume route (i, j) must carry for the demand it
+        # can serve. ceil(D_ij / min_cap) vehicles of the smallest type can
+        # always carry D_ij, so demand feasibility is preserved whatever type
+        # each slot ends up using; the extra slot is slack for plans that
+        # activate one further vehicle on the route, for example to split a
+        # load around the minimum-load threshold. Activating more vehicles than
+        # that is dominated: each extra activation costs money and ships
+        # nothing the existing slots could not have carried.
+        #
+        # Giving every (type, copy) pair its own slot dimension was measured on
+        # small/dataset_1 and is *worse* than the global fleet it replaces
+        # (993 slots against 235 vehicles), because a route never needs a full
+        # complement of each type. Keeping the type as a decision is what makes
+        # the reformulation pay off.
+        # ============================================================
+        self.veh_type_cap = {
+            v_type: int(each_type_cap[v_type]) for v_type in self.all_veh_types
+        }
+        self.veh_type_min_load = {
+            v_type: int(each_type_min_load[v_type]) for v_type in self.all_veh_types
+        }
+        self.veh_type_cost = {
+            v_type: float(each_type_cost[v_type]) for v_type in self.all_veh_types
+        }
+
+        self.route_demand_volume = {}
+        for (plant, dealer), skus in self.supply_chain.items():
+            self.route_demand_volume[(plant, dealer)] = sum(
+                float(self.demands[dealer, sku]) * float(self.sku_sizes[sku])
+                for sku in skus
+                if (dealer, sku) in self.demands
+            )
+
+        min_cap = min(
+            (cap for cap in self.veh_type_cap.values() if cap > 0), default=0
+        )
+        self.min_veh_cap = min_cap
+
+        self.route_slots = {}
+        for route, volume in self.route_demand_volume.items():
+            copies = math.ceil(volume / min_cap) + 1 if min_cap > 0 else 1
+            self.route_slots[route] = list(range(1, copies + 1))
+        self.route_slot_count = sum(len(slots) for slots in self.route_slots.values())
