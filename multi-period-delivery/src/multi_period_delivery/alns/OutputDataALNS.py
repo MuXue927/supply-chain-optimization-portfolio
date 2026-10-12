@@ -130,11 +130,11 @@ class OutPutData:
         for col, dtype in dtype_map.items():
             if col in df.columns:
                 try:
-                    if dtype == int:
+                    if dtype is int:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-                    elif dtype == float:
+                    elif dtype is float:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
-                    elif dtype == str:
+                    elif dtype is str:
                         df[col] = df[col].astype(str)
                 except Exception as e:
                     logger.warning(f"Failed to convert column {col}: {str(e)}")

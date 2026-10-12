@@ -255,13 +255,13 @@ class DataALNS:
             if col not in df_result.columns:
                 continue
             try:
-                if dtype == str:
+                if dtype is str:
                     df_result[col] = df_result[col].astype(str)
-                elif dtype == int:
+                elif dtype is int:
                     df_result[col] = (
                         pd.to_numeric(df_result[col], errors="coerce").fillna(0).astype(int)
                     )
-                elif dtype == float:
+                elif dtype is float:
                     df_result[col] = pd.to_numeric(df_result[col], errors="coerce").fillna(0.0)
             except Exception as e:
                 self.logger.warning(

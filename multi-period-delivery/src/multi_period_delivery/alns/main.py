@@ -44,7 +44,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Imported after the logging setup above so the optimizer can reuse this logger.
-from .alns_optimizer import ALNSOptimizer
+from .alns_optimizer import ALNSOptimizer  # noqa: E402
 
 def run_model(input_file_loc=None, output_file_loc=None):
     """
