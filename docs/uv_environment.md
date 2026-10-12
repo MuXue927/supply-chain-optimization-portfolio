@@ -124,9 +124,9 @@ With coverage - the same command CI runs:
 
 `--cov-branch` reports branch coverage as well as statements, so a line that
 runs but whose decision is never seen to go the other way no longer counts as
-covered. The measured baseline is **57.20%** combined coverage over the two
+covered. The measured baseline is **57.3%** combined coverage over the two
 packages with the four CPLEX tests skipping (the default, CI-equivalent
-environment): 58.61% of statements and 52.56% of branches. The gate sits a
+environment): 58.6% of statements and 52.9% of branches. The gate sits a
 little below the combined figure so ordinary refactoring does not trip it;
 raise it whenever coverage genuinely improves. The Gurobi-backed modules still
 need a licence to solve, so those paths stay uncovered by design rather than
@@ -144,9 +144,9 @@ push to `main` and for every pull request:
    `[tool.ruff.lint]` inside its `pyproject.toml`;
 3. run the combined test suite with coverage:
    `pytest -q --cov=multi_period_delivery --cov=single_period_delivery
-   --cov-branch --cov-report=term-missing --cov-fail-under=56` - 203 passed +
+   --cov-branch --cov-report=term-missing --cov-fail-under=56` - 214 passed +
    4 skipped, and
-   57.20% coverage against the 56% gate (the CPLEX tests skip themselves when
+   57.3% coverage against the 56% gate (the CPLEX tests skip themselves when
    the optional extra is absent).
 
 The optional `cplex` extra is deliberately **not** synced in CI: the CPLEX

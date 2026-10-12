@@ -334,11 +334,16 @@ def test_used_vehicle_count_falls_back_to_the_vehicles_attribute() -> None:
 # ---------------------------------------------------------------------------
 # Candidate comparison: phased lexicographic and vehicle priority
 # ---------------------------------------------------------------------------
-def _profile(vehicles: float, load: float = 0.5, cost: float = 10.0) -> dict:
+def _profile(
+    vehicles: float,
+    load: float = 0.5,
+    cost: float = 10.0,
+    large: float = 0.5,
+) -> dict:
     return {
         "vehicles": vehicles,
         "load_ratio": load,
-        "large_ratio": 0.5,
+        "large_ratio": large,
         "fixed_cost": cost,
     }
 
@@ -381,6 +386,44 @@ def test_is_candidate_better_uses_a_stricter_late_search_tolerance(
 
     assert late is False
     assert early is True
+
+
+@pytest.mark.parametrize(
+    ("new_profile", "old_profile", "expected"),
+    [
+        # Same objective -> inside the near-equal band; the fleet tie-breaks
+        # below decide the winner.
+        (_profile(3.0), _profile(5.0), True),
+        (_profile(6.0), _profile(5.0), False),
+        (_profile(5.0, load=0.9), _profile(5.0, load=0.5), True),
+        (_profile(5.0, load=0.2), _profile(5.0, load=0.5), False),
+        (_profile(5.0, load=0.5, cost=5.0), _profile(5.0, load=0.5, cost=10.0), True),
+        (_profile(5.0, load=0.5, cost=20.0), _profile(5.0, load=0.5, cost=10.0), False),
+        (
+            _profile(5.0, load=0.5, cost=10.0, large=0.2),
+            _profile(5.0, load=0.5, cost=10.0, large=0.5),
+            True,
+        ),
+        (
+            _profile(5.0, load=0.5, cost=10.0, large=0.5),
+            _profile(5.0, load=0.5, cost=10.0, large=0.5),
+            False,
+        ),
+    ],
+)
+def test_is_candidate_better_tie_breaks_within_the_near_equal_band(
+    monkeypatch: pytest.MonkeyPatch,
+    new_profile: dict,
+    old_profile: dict,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "ENABLE_PHASED_LEXICOGRAPHIC_BEST", False)
+    monkeypatch.setattr(ALNSConfig, "ENABLE_FAST_ALNS_MODE", False)
+
+    # Identical objectives put the comparison inside the near-equal band.
+    assert (
+        cb.is_candidate_better(100.0, new_profile, 100.0, old_profile) is expected
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -583,4 +626,105 @@ def test_iteration_callback_handles_negative_inventory(
     callback(state, np.random.default_rng(6))
 
     # The callback must not raise, whatever repair it manages to apply.
+    assert isinstance(state.s_ikt, dict)
+
+
+def test_record_best_feasible_reads_progress_from_the_tracker(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real run always carries a tracker, and the tie-break tolerances are
+    # progress-dependent, so the progress fraction must actually reach
+    # is_candidate_better().
+    class _Tracker:
+        _iteration_count = 5
+        _max_iterations = 10
+
+    optimizer = _DummyOptimizer()
+    optimizer.tracker = _Tracker()
+    seen: dict = {}
+    original = cb.is_candidate_better
+
+    def _spy(new_obj, new_profile, old_obj, old_profile, progress=None):
+        seen["progress"] = progress
+        return original(new_obj, new_profile, old_obj, old_profile, progress)
+
+    monkeypatch.setattr(cb, "is_candidate_better", _spy)
+
+    cb.record_best_feasible(optimizer, feasible_solution.copy())
+
+    assert seen["progress"] == pytest.approx(0.5)
+    assert optimizer.best_feasible_state is not None
+
+
+def test_iteration_callback_reports_a_temporarily_infeasible_candidate(
+    tmp_path, feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Early in a run a candidate can be infeasible simply because demand is not
+    # fulfilled yet and no incumbent exists. With the diagnostics switch on,
+    # that path prints an explanation instead of failing silently.
+    #
+    # An empty fleet reports *two* violations (unmet demand plus the plant
+    # inventory that was never shipped), so this covers the generic message.
+    monkeypatch.setattr(ALNSConfig, "ENABLE_CALLBACK_DIAGNOSTICS_CONSOLE", True)
+
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+    from multi_period_delivery.alns.alnstrack import ALNSTracker
+
+    base = Path(__file__).resolve().parents[1]
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(base / "datasets" / "multiple-periods" / "small"),
+        output_file_loc=str(tmp_path / "out"),
+    )
+    optimizer.load_data("dataset_1")
+    optimizer.tracker = ALNSTracker(log_printer=optimizer.log_printer)
+    optimizer.best_feasible_state = None
+
+    callback = cb.make_callback_on_iteration(optimizer, stop=None)
+    infeasible = SolutionState(optimizer.data)  # empty fleet -> unmet demand
+    callback(infeasible, np.random.default_rng(9))
+
+    # The callback must survive the infeasible candidate and keep going.
+    assert isinstance(infeasible.s_ikt, dict)
+
+
+def test_iteration_callback_reports_an_unmet_demand_only_candidate(
+    tmp_path, feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The "only unmet demand" case gets its own, more reassuring message: the
+    # candidate is temporarily infeasible because no incumbent exists yet.
+    monkeypatch.setattr(ALNSConfig, "ENABLE_CALLBACK_DIAGNOSTICS_CONSOLE", True)
+
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+    from multi_period_delivery.alns.alnstrack import ALNSTracker
+
+    base = Path(__file__).resolve().parents[1]
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(base / "datasets" / "multiple-periods" / "small"),
+        output_file_loc=str(tmp_path / "out"),
+    )
+    optimizer.load_data("dataset_1")
+    optimizer.tracker = ALNSTracker(log_printer=optimizer.log_printer)
+    optimizer.best_feasible_state = None
+
+    state = feasible_solution.copy()
+    monkeypatch.setattr(
+        state,
+        "validate",
+        lambda: (
+            False,
+            {
+                "negative_inventory": [],
+                "veh_over_load": [],
+                "plant_inv_exceed": [],
+                "unmet_demand": [
+                    {"dealer": "D1", "sku_id": "S1", "demand": 5, "shipped": 0}
+                ],
+                "cargo_day_mismatch": [],
+            },
+        ),
+    )
+
+    callback = cb.make_callback_on_iteration(optimizer, stop=None)
+    callback(state, np.random.default_rng(9))
+
     assert isinstance(state.s_ikt, dict)
