@@ -210,6 +210,32 @@ An earlier draft of this audit claimed **78×** by comparing against a
 *type-aggregated* model that drops the per-vehicle penalty. That comparison was
 not like-for-like and has been replaced by the measured figures above.
 
+### The global fleet cap is also *tighter* than the routes need
+
+This workstation has the size-unlimited CPLEX Studio runtime installed (see
+`docs/uv_environment.md`), so the measurements below are not Community-Edition
+artefacts: a 125,725-variable model solves, and `medium/dataset_1` returns
+*"time limit exceeded, no integer solution"* rather than a size error.
+
+For the bundled single-period instances:
+
+| Scale | Dataset | Global fleet `L` | Routes | SKUs | Route-local slots |
+| --- | --- | ---: | ---: | ---: | ---: |
+| small | `dataset_3` | 20 | 12 | 12 | 36 |
+| small | `dataset_9` | 152 | 61 | 29 | 306 |
+| small | `dataset_1` | 235 | 48 | 22 | 434 |
+| medium | `dataset_3` | 473 | 130 | 50 | 1157 |
+| medium | `dataset_1` | 610 | 144 | 49 | 870 |
+| large | `dataset_1` | 1343 | 262 | 76 | 3269 |
+
+The global fleet is shared by every route, so on `large/dataset_1` the average
+allowance is `1343 / 262 ≈ 5` vehicles per route, while the largest route needs
+about `3269 / 262 ≈ 12`. The old formulation can therefore *starve* a
+volume-heavy route unless other routes leave vehicles unused — the cap couples
+routes that have nothing to do with each other. That coupling is a third reason
+the global index is the wrong abstraction, on top of its size and its random
+type mixture.
+
 > **A design that does not work — recorded so it is not retried.** The first
 > route-local draft gave every `(vehicle type, copy number)` pair its own slot
 > dimension. Measured on `small/dataset_1` that produced **993 slots against a
