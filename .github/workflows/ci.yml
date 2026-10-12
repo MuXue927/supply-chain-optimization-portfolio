@@ -38,13 +38,15 @@ jobs:
 
       # The root pytest.ini adds --import-mode=importlib and limits collection
       # to the two tests/ directories. Coverage is measured over the two
-      # packages only; the threshold is the measured CI baseline (23.78%, with
-      # the four CPLEX tests skipping themselves) rounded down, so ordinary
-      # refactoring does not trip it - it is there to catch a real drop.
+      # packages only; the threshold is the measured CI baseline (33.82%, with
+      # the four CPLEX tests skipping themselves) rounded down to 33, so
+      # ordinary refactoring does not trip it - it is there to catch a real
+      # drop. The Gurobi-backed modules still cannot run without a licence, so
+      # those paths stay uncovered by design rather than being mocked.
       - name: Test with coverage
         run: |
           .venv/bin/python -m pytest -q \
             --cov=multi_period_delivery \
             --cov=single_period_delivery \
             --cov-report=term-missing \
-            --cov-fail-under=23
+            --cov-fail-under=33

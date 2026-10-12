@@ -49,6 +49,11 @@ results/**/raw/
 # Ad-hoc CPLEX scratch directories
 tmp_cplex_debug/
 
+# Scratch output written by the test suite: the ALNS data loader points its
+# output location at <project>/tmp, so running the tests creates it. It is
+# regenerated on every run and must never be committed.
+tmp/
+
 # Secrets and private data
 .env
 .env.*
