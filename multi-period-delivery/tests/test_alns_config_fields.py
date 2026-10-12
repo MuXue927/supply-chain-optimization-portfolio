@@ -18,17 +18,15 @@ from __future__ import annotations
 import ast
 import dataclasses
 from pathlib import Path
-from typing import Dict, Set
 
 import multi_period_delivery.alns as alns_package
-
 from multi_period_delivery.alns.alns_config import ALNSConfig
 
 
-def _names_read_from_config(path: Path) -> Set[str]:
+def _names_read_from_config(path: Path) -> set[str]:
     """Return every string literal passed to ``getattr(ALNSConfig, ...)``."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    found: Set[str] = set()
+    found: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -51,7 +49,7 @@ def test_every_config_name_read_via_getattr_is_declared() -> None:
     alns_dir = Path(alns_package.__file__).resolve().parent
     declared = {field.name for field in dataclasses.fields(ALNSConfig)}
 
-    undeclared: Dict[str, list[str]] = {}
+    undeclared: dict[str, list[str]] = {}
     for path in sorted(alns_dir.glob("*.py")):
         missing = sorted(_names_read_from_config(path) - declared)
         if missing:

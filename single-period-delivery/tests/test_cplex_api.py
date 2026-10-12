@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from single_period_delivery.column_generation.InputDataCG import InputDataCG
 from single_period_delivery.cplex_api_column_generation.model import (
     CplexApiColumnGeneration,
 )
@@ -13,7 +14,6 @@ from single_period_delivery.cplex_api_monolithic.model import (
     SinglePeriodCplexApiMonolithic,
 )
 from single_period_delivery.cplex_api_support import CplexApiModel
-from single_period_delivery.column_generation.InputDataCG import InputDataCG
 from single_period_delivery.monolithic.InputDataSingle import InputDataSingle
 
 
