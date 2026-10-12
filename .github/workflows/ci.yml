@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint and test (Python 3.10)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+
+      # The repository is not a single uv project: there is no root
+      # pyproject.toml and no uv.lock, and the two packages are independent.
+      # CI therefore uses uv's pip-compatible interface, exactly like the
+      # documented local setup in docs/uv_environment.md.
+      - name: Create the shared virtual environment
+        run: uv venv --python 3.10 .venv
+
+      # Editable installs bring in each project's declared dependencies
+      # (numpy, pandas, numba, scikit-learn, gurobipy, ...).
+      # The optional `cplex` extra is deliberately NOT installed: the CPLEX
+      # tests skip themselves via pytest.importorskip, and the Community
+      # Edition runtime has a size limit that would make runs flaky.
+      - name: Install both packages and the dev tools
+        run: |
+          uv pip install --python .venv \
+            -e ./single-period-delivery \
+            -e ./multi-period-delivery \
+            pytest ruff
+
+      # Ruff picks up the nearest pyproject.toml, so each project is checked
+      # against its own [tool.ruff.lint] baseline.
+      - name: Lint
+        run: |
+          .venv/bin/python -m ruff check single-period-delivery
+          .venv/bin/python -m ruff check multi-period-delivery
+
+      # The root pytest.ini adds --import-mode=importlib and limits collection
+      # to the two tests/ directories.
+      - name: Test
+        run: .venv/bin/python -m pytest -q

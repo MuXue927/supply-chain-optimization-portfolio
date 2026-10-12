@@ -1,5 +1,7 @@
 # Supply-Chain Distribution Optimization Portfolio
 
+[![CI](https://github.com/MuXue927/supply-chain-optimization-portfolio/actions/workflows/ci.yml/badge.svg)](https://github.com/MuXue927/supply-chain-optimization-portfolio/actions/workflows/ci.yml)
+
 Two standalone, reproducible Python projects for a retail supply-chain
 distribution problem: shipping products from production plants to dealers with
 heterogeneous vehicles, limited plant inventory, and minimum shipment

@@ -82,6 +82,32 @@ tests with identical file names) and restricts collection to the two `tests/`
 folders, so no extra flags are required and generated folders such as
 `outputs/` are never scanned.
 
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs the same checks on GitHub Actions for every
+push to `main` and for every pull request:
+
+1. install [uv](https://docs.astral.sh/uv/) and create the shared Python 3.10
+   environment with `uv venv`;
+2. install both packages in editable mode plus `pytest` and `ruff`:
+
+   ```text
+   uv pip install --python .venv -e ./single-period-delivery -e ./multi-period-delivery pytest ruff
+   ```
+
+3. `ruff check` each project - each one declares its own baseline rule set in
+   `[tool.ruff.lint]` inside its `pyproject.toml`;
+4. run the combined test suite (`pytest -q`, 30 cases).
+
+The optional `cplex` extra is deliberately **not** installed in CI: the CPLEX
+tests skip themselves through `pytest.importorskip`, and the Community Edition
+runtime carries a size limit that would make CI runs flaky.
+
+The repository is not a single uv project (there is no root `pyproject.toml`
+and no `uv.lock`), so CI uses uv's pip-compatible interface instead of
+`uv sync`. Moving the two packages into a uv workspace with a committed lock
+file is the next step towards a one-command, fully reproducible environment.
+
 ## Network and Proxy Note
 
 If `uv pip install` fails with `No connection could be made`, a stale
