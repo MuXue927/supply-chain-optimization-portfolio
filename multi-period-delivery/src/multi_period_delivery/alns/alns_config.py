@@ -8,7 +8,7 @@ Purpose:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 @dataclass
@@ -245,7 +245,7 @@ class ALNSConfig:
     # Roulette-wheel score levels for [new best, better, accepted, rejected]
     # moves. Higher values make the operators that produced them more likely to
     # be selected again by the ALNS selector.
-    ROULETTE_SCORES: List[float] = field(default_factory=lambda: [8.0, 3.0, 1.0, 0.2])
+    ROULETTE_SCORES: list[float] = field(default_factory=lambda: [8.0, 3.0, 1.0, 0.2])
     # Decay factor applied to accumulated operator scores each segment.
     ROULETTE_DECAY: float = 0.65
     # Number of iterations per scoring segment before scores are decayed.
@@ -305,7 +305,7 @@ class ALNSConfig:
     TUNER_EXPLORATION_INITIAL: float = 0.3
     # (low, high) progress fractions that split the search into exploration,
     # exploitation and refinement phases.
-    TUNER_PHASE_THRESHOLDS: Tuple[float, float] = (
+    TUNER_PHASE_THRESHOLDS: tuple[float, float] = (
         0.3,
         0.7,
     )  # exploration/exploitation/refinement splits
@@ -338,7 +338,7 @@ class ALNSConfig:
     # The keys must match the operator names ALNSOptimizer registers (see
     # ml_operator_selector.DESTROY_OPERATOR_NAMES / REPAIR_OPERATOR_NAMES).
     # --------------------------
-    OPERATOR_DEFAULTS: Dict[str, Dict[str, Any]] = field(
+    OPERATOR_DEFAULTS: dict[str, dict[str, Any]] = field(
         default_factory=lambda: {
             # --- Destroy operators ---
             # degree: fraction of vehicles to remove when the operator fires.
@@ -451,7 +451,7 @@ class ALNSConfig:
     # when it registers the destroy operators. Values must stay consistent with
     # the matching OPERATOR_DEFAULTS entries above.
     # --------------------------
-    DESTROY_DEFAULTS: Dict[str, Any] = field(
+    DESTROY_DEFAULTS: dict[str, Any] = field(
         default_factory=lambda: {
             # Removal degree per operator (fraction of vehicles removed).
             "random_removal_degree": 0.25,
@@ -475,7 +475,7 @@ class ALNSConfig:
     # Flat mapping returned by ALNSConfig.get_repair_params() and read by the
     # optimizer when it registers the repair operators. An empty dict marks an
     # operator with no tunable parameters.
-    REPAIR_DEFAULTS: Dict[str, Any] = field(
+    REPAIR_DEFAULTS: dict[str, Any] = field(
         default_factory=lambda: {
             "greedy_repair": {"demand_weight": 0.8, "stock_weight": 0.2},
             "local_search_repair": {"max_iter": 10},
@@ -665,7 +665,7 @@ class ALNSConfig:
     # Directory where the script entry point writes alns_optimization.log. The
     # CLI overrides it with --log-dir and the experiment runners point it at the
     # per-run directory.
-    LOG_DIR: Optional[str] = "logs-alns"
+    LOG_DIR: str | None = "logs-alns"
 
     # --------------------------
     # Lexicographic best-solution rule
@@ -774,7 +774,7 @@ class ALNSConfig:
     # --------------------------
     # Helper instance methods
     # --------------------------
-    def get_destroy_params(self) -> Dict[str, Any]:
+    def get_destroy_params(self) -> dict[str, Any]:
         """Return a compact dict of commonly used destroy parameters."""
         return {
             "random_removal_degree": self.DESTROY_DEFAULTS.get(
@@ -800,22 +800,22 @@ class ALNSConfig:
             ),
         }
 
-    def get_repair_params(self) -> Dict[str, Any]:
+    def get_repair_params(self) -> dict[str, Any]:
         """Return a compact dict of commonly used repair defaults."""
         return self.REPAIR_DEFAULTS.copy()
 
-    def get_operator_default(self, op_name: str) -> Dict[str, Any]:
+    def get_operator_default(self, op_name: str) -> dict[str, Any]:
         """Return the operator default structure {params, ranges} for a given operator."""
         return self.OPERATOR_DEFAULTS.get(op_name, {"params": {}, "ranges": {}})
 
-    def get_tuner_operator_defaults(self) -> Dict[str, Dict[str, Any]]:
+    def get_tuner_operator_defaults(self) -> dict[str, dict[str, Any]]:
         """
         Return a mapping suitable for ParamAutoTuner._init_default_operators:
         {op_name: {"params":..., "ranges":...}, ...}
         """
         return self.OPERATOR_DEFAULTS.copy()
 
-    def update_from_dict(self, cfg: Dict[str, Any]):
+    def update_from_dict(self, cfg: dict[str, Any]):
         """
         Update configuration fields from a dict (in-place).
         Accepts nested structures for OPERATOR_DEFAULTS / DESTROY_DEFAULTS etc.
@@ -836,7 +836,7 @@ class ALNSConfig:
                     # Unknown keys stored in a generic attribute map
                     setattr(self, k, v)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize the main configuration to a plain dict (shallow for convenience)."""
         out = {}
         for name, val in self.__dict__.items():

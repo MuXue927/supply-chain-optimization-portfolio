@@ -5,7 +5,6 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Set, Tuple
 
 import pandas as pd
 
@@ -50,33 +49,33 @@ class InputDataCG:
 
     # Data interfaces corresponding to the symbols in the mathematical model.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle types.
-    all_veh_types: Set[str] = field(init=False)
+    all_veh_types: set[str] = field(init=False)
 
     # Volume per unit for each SKU: {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
     # Current SKU inventory at production plants: {(plant, sku): qty}.
-    sku_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_inv: dict[tuple[str, str], int] = field(init=False)
     # Total inventory of each SKU: {sku: total_qty}.
-    sku_total_inv: Dict[str, int] = field(init=False)
+    sku_total_inv: dict[str, int] = field(init=False)
     # SKU set that each production plant can supply.
-    skus_plant: Dict[str, Set[str]] = field(init=False)
+    skus_plant: dict[str, set[str]] = field(init=False)
     # Dealer demand by SKU: {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKU set requested by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
 
     # Usage cost for each vehicle type: {v_type: cost}.
-    veh_type_cost: Dict[str, float] = field(init=False)
+    veh_type_cost: dict[str, float] = field(init=False)
     # Capacity limit for each vehicle type: {v_type: capacity}.
-    veh_type_cap: Dict[str, int] = field(init=False)
+    veh_type_cap: dict[str, int] = field(init=False)
     # Minimum shipment quantity for each vehicle type: {v_type: min_load}.
-    veh_type_min_load: Dict[str, int] = field(init=False)
+    veh_type_min_load: dict[str, int] = field(init=False)
 
     df_order: pd.DataFrame = field(default_factory=pd.DataFrame)
     df_sku_inv: pd.DataFrame = field(default_factory=pd.DataFrame)

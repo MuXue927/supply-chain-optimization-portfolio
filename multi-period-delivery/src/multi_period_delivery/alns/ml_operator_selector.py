@@ -96,7 +96,7 @@ from __future__ import annotations
 # Standard library
 # =========================
 import math
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 # =========================
 # Third-party libraries
@@ -121,7 +121,7 @@ if TYPE_CHECKING:
 # ``ALNSOptimizer._register_destroy_operators`` and
 # ``ALNSOptimizer._register_repair_operators``. Keeping the order in one place
 # prevents one-hot indexes from silently drifting between training and reports.
-DESTROY_OPERATOR_NAMES: Tuple[str, ...] = (
+DESTROY_OPERATOR_NAMES: tuple[str, ...] = (
     "random_removal",
     "shaw_removal",
     "periodic_shaw_removal",
@@ -134,7 +134,7 @@ DESTROY_OPERATOR_NAMES: Tuple[str, ...] = (
     "inventory_level_removal",
 )
 
-REPAIR_OPERATOR_NAMES: Tuple[str, ...] = (
+REPAIR_OPERATOR_NAMES: tuple[str, ...] = (
     "greedy_repair",
     "cross_period_consolidation_repair",
     "local_search_repair",
@@ -210,27 +210,27 @@ class MLOperatorSelector:
         self.rng = rng
 
         # Sample buffers
-        self.destroy_features: List[np.ndarray] = []
-        self.destroy_performances: List[float] = []
-        self.repair_features: List[np.ndarray] = []
-        self.repair_performances: List[float] = []
+        self.destroy_features: list[np.ndarray] = []
+        self.destroy_performances: list[float] = []
+        self.repair_features: list[np.ndarray] = []
+        self.repair_performances: list[float] = []
 
         # Operator maps
-        self.destroy_op_map: Dict[str, int] = {}
-        self.repair_op_map: Dict[str, int] = {}
+        self.destroy_op_map: dict[str, int] = {}
+        self.repair_op_map: dict[str, int] = {}
 
         # Models and scalers
-        self.destroy_model: Optional[Any] = None
-        self.destroy_scaler: Optional[StandardScaler] = None
-        self.repair_model: Optional[Any] = None
-        self.repair_scaler: Optional[StandardScaler] = None
+        self.destroy_model: Any | None = None
+        self.destroy_scaler: StandardScaler | None = None
+        self.repair_model: Any | None = None
+        self.repair_scaler: StandardScaler | None = None
 
         # Training controls, with defaults from centralized config
         self.min_samples: int = getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20)
         self.retrain_interval: int = getattr(ALNSConfig, "ML_RETRAIN_INTERVAL", 50)
         self.last_train_iter: int = 0
-        self._no_improve_streak: Dict[str, int] = {"destroy": 0, "repair": 0}
-        self._fallback_cooldown: Dict[str, int] = {"destroy": 0, "repair": 0}
+        self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
+        self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
         # Initialize operator maps
         self._init_operator_maps()
@@ -251,7 +251,7 @@ class MLOperatorSelector:
         except Exception:
             pass
 
-    def _resolve_progress(self, state: Optional["SolutionState"]) -> float:
+    def _resolve_progress(self, state: SolutionState | None) -> float:
         if state is not None:
             tracker = getattr(state, "tracker", None)
             if tracker is not None:
@@ -315,9 +315,9 @@ class MLOperatorSelector:
 
     def should_use_ml(
         self,
-        state: Optional["SolutionState"],
+        state: SolutionState | None,
         op_type: str,
-        min_sample_size: Optional[int] = None,
+        min_sample_size: int | None = None,
     ) -> bool:
         if self.should_force_fallback(op_type):
             return False
@@ -338,7 +338,7 @@ class MLOperatorSelector:
         scaler = self.destroy_scaler if op_type == "destroy" else self.repair_scaler
         return model is not None and scaler is not None
 
-    def _dynamic_epsilon(self, state: Optional["SolutionState"]) -> float:
+    def _dynamic_epsilon(self, state: SolutionState | None) -> float:
         progress = self._resolve_progress(state)
         base = float(getattr(ALNSConfig, "ML_EPSILON_BASE", 0.10))
         early_boost = float(getattr(ALNSConfig, "ML_EPSILON_EARLY_BOOST", 0.15))
@@ -395,7 +395,7 @@ class MLOperatorSelector:
               placeholders to keep the vector shape stable.
         """
         data = state.data
-        features: List[float] = []
+        features: list[float] = []
 
         # 1. Objective value. Use a large finite value for infinities to
         # maintain numerical stability.
@@ -412,7 +412,7 @@ class MLOperatorSelector:
         if num_vehicles > 0:
             # Average utilization
             total_util = 0.0
-            veh_type_counts: Dict[str, int] = {}
+            veh_type_counts: dict[str, int] = {}
             for veh in state.vehicles:
                 load = sum(
                     _finite_float(qty, 0.0)
@@ -458,7 +458,7 @@ class MLOperatorSelector:
             features.append(neg_inv_ratio)
 
             # Compute the mean inventory-to-capacity ratio over plant-day pairs
-            plant_day_pos_inv: Dict[Tuple[str, int], float] = {}
+            plant_day_pos_inv: dict[tuple[str, int], float] = {}
             for (plant, _sku, day), inv in state.s_ikt.items():
                 inv = _finite_float(inv, 0.0)
                 if inv > 0:
@@ -703,9 +703,9 @@ class MLOperatorSelector:
     # ------------------------------------------------------------------
     @staticmethod
     def _valid_training_arrays(
-        feature_buffer: List[np.ndarray],
-        performance_buffer: List[float],
-    ) -> Tuple[Optional[np.ndarray], np.ndarray]:
+        feature_buffer: list[np.ndarray],
+        performance_buffer: list[float],
+    ) -> tuple[np.ndarray | None, np.ndarray]:
         """Return finite, aligned training arrays for one operator family."""
         try:
             X = np.asarray(feature_buffer, dtype=float)
@@ -726,7 +726,7 @@ class MLOperatorSelector:
             return None, np.asarray([], dtype=float)
         return X, y
 
-    def _safe_operator_params(self, op_name: str) -> Dict[str, Any]:
+    def _safe_operator_params(self, op_name: str) -> dict[str, Any]:
         """Return operator parameters without allowing tuner failures to spread."""
         if (
             self.param_tuner is None
@@ -742,7 +742,7 @@ class MLOperatorSelector:
     def _default_operator(
         self,
         op_type: str,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Return a valid default operator for an empty or invalid candidate set."""
         if op_type == "destroy":
             destroy_defaults = ALNSConfig.get_destroy_params()
@@ -755,8 +755,8 @@ class MLOperatorSelector:
     def _random_valid_operator(
         self,
         op_type: str,
-        candidates: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        candidates: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Choose a valid candidate uniformly at random."""
         op_map = self.destroy_op_map if op_type == "destroy" else self.repair_op_map
         valid_candidates = [
@@ -774,8 +774,8 @@ class MLOperatorSelector:
         self,
         state: SolutionState,
         op_type: str,
-        candidates: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        candidates: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """
         Select an operator and its parameters from the current state and model
         predictions.

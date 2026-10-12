@@ -34,7 +34,7 @@ import logging
 import random
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -66,8 +66,8 @@ def _coerce_int(value: Any, default: int = 0) -> int:
 
 
 def _coerce_optional_float(
-    value: Any, default: Optional[float] = None
-) -> Optional[float]:
+    value: Any, default: float | None = None
+) -> float | None:
     if value is None:
         return default
     try:
@@ -125,7 +125,7 @@ def to_native(v: Any):
                     return None
 
 
-def summarize_removed_cargo(removed) -> Dict[Tuple[Any, Any, Any], int]:
+def summarize_removed_cargo(removed) -> dict[tuple[Any, Any, Any], int]:
     """
     Summarize cargo quantities from a list of removed vehicles.
     Returns dict keyed by (plant, sku_id, day) -> qty
@@ -202,7 +202,7 @@ def apply_batch_update(state, removed, skip_batch_update: bool):
 
 
 def partial_updates_overlap_removed_cargo(
-    state, partial_updates: Optional[Dict], removed
+    state, partial_updates: dict | None, removed
 ) -> bool:
     """
     Return whether partial inventory updates touch cargo restored by the batch
@@ -249,7 +249,7 @@ def partial_updates_overlap_removed_cargo(
     return False
 
 
-def apply_partial_inventory_updates(state, partial_updates: Optional[Dict]):
+def apply_partial_inventory_updates(state, partial_updates: dict | None):
     """
     Apply additional inventory deltas from destroy operators.
 
@@ -292,7 +292,7 @@ def apply_partial_inventory_updates(state, partial_updates: Optional[Dict]):
 
 
 def compute_improvement_and_report(
-    state: SolutionState, prev_obj: Optional[float], op_name: str
+    state: SolutionState, prev_obj: float | None, op_name: str
 ):
     """
     Compute objective improvement robustly and report to param_tuner if available.
@@ -363,9 +363,9 @@ def build_opjson_log(
     improvement,
     elapsed,
     batch_conflict: bool,
-    removed_cargo_summary: Dict,
-    inventory_updates: Optional[Dict],
-    extra: Optional[Dict],
+    removed_cargo_summary: dict,
+    inventory_updates: dict | None,
+    extra: dict | None,
 ):
     """
     Construct the standardized OPJSON log payload (as a plain dict).
@@ -598,10 +598,10 @@ def post_destroy(
     removed,
     op_name: str,
     early: bool = False,
-    prev_obj: Optional[float] = None,
-    t0: Optional[float] = None,
+    prev_obj: float | None = None,
+    t0: float | None = None,
     skip_batch_update: bool = False,
-    extra: Optional[dict] = None,
+    extra: dict | None = None,
 ):
     """
     Lightweight post_destroy coordinator for summarize_removed_cargo,

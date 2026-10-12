@@ -39,7 +39,7 @@ import os
 import time
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import numpy.random as rnd
@@ -205,16 +205,16 @@ class ALNSOptimizer:
         self.log_printer = LogPrinter(time.time())
 
         # Initialize data and optimization state.
-        self.data: Optional[DataALNS] = None
-        self.best_solution: Optional[SolutionState] = None
-        self.best_feasible_state: Optional[SolutionState] = None
+        self.data: DataALNS | None = None
+        self.best_solution: SolutionState | None = None
+        self.best_feasible_state: SolutionState | None = None
         self.best_feasible_obj: float = float("inf")
-        self.result: Optional[Result] = None
-        self.tracker: Optional[ALNSTracker] = None
+        self.result: Result | None = None
+        self.tracker: ALNSTracker | None = None
 
         # Initialize optional parameter tuner and ML selector.
-        self.param_tuner: Optional[ParamAutoTuner] = None
-        self.ml_selector: Optional[MLOperatorSelector] = None
+        self.param_tuner: ParamAutoTuner | None = None
+        self.ml_selector: MLOperatorSelector | None = None
 
         # Random number generator.
         self.rng = rnd.default_rng(seed=SEED)
@@ -227,7 +227,7 @@ class ALNSOptimizer:
         self.acceptance = None
         self._background_executor: Any = None
         self._ml_retrain_future: Any = None
-        self._incumbent_state_snapshot: Optional[SolutionState] = None
+        self._incumbent_state_snapshot: SolutionState | None = None
 
     def get_iteration(self) -> int:
         return int(getattr(self, "_iteration", 0))
@@ -320,7 +320,7 @@ class ALNSOptimizer:
         except Exception as e:
             logger.error(f"Failed to clear output files: {e}")
 
-    def create_initial_solution(self) -> Optional[SolutionState]:
+    def create_initial_solution(self) -> SolutionState | None:
         """
         Create the initial solution.
 
@@ -403,7 +403,7 @@ class ALNSOptimizer:
             )
             return None
 
-    def _print_violation_details(self, violations: Dict):
+    def _print_violation_details(self, violations: dict):
         """Print violation details."""
         if violations.get("negative_inventory"):
             self.log_printer.print("Negative inventory violations:")
@@ -753,7 +753,7 @@ class ALNSOptimizer:
         """
 
         class _NamedCallable:
-            def __init__(self, wrapped, callable_name: str, fixed_kwargs: Dict):
+            def __init__(self, wrapped, callable_name: str, fixed_kwargs: dict):
                 self._wrapped = wrapped
                 self._fixed_kwargs = dict(fixed_kwargs)
                 self.__name__ = callable_name

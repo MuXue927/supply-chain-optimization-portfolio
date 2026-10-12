@@ -8,7 +8,6 @@ implementation behavior.
 """
 
 import time
-from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -72,7 +71,7 @@ class MinimalVehicle:
         return not bool(self.cargo)
 
 
-def _get_actual_reference(state) -> Optional[float]:
+def _get_actual_reference(state) -> float | None:
     tracker = getattr(state, "tracker", None)
     if tracker is None:
         return None
@@ -89,9 +88,9 @@ def _get_actual_reference(state) -> Optional[float]:
 
 def compute_mixed_operator_reward(
     state: SolutionState,
-    prev_obj: Optional[float],
-    new_obj: Optional[float] = None,
-    actual_obj: Optional[float] = None,
+    prev_obj: float | None,
+    new_obj: float | None = None,
+    actual_obj: float | None = None,
 ):
     """Compute a mixed search+actual reward for operator feedback."""
     if prev_obj is None:
@@ -195,7 +194,7 @@ def _construct_resource_availability(
 
 def _construct_resource_pool(
     state: SolutionState, data: DataALNS
-) -> Dict[Tuple[str, str, int], float]:
+) -> dict[tuple[str, str, int], float]:
     """
     Build a resource pool by precomputing available inventory for
     (plant, sku, day).
@@ -220,7 +219,7 @@ def _construct_resource_pool(
     return pool
 
 
-def get_unmet_demand(state: SolutionState) -> Dict[Tuple[str, str], int]:
+def get_unmet_demand(state: SolutionState) -> dict[tuple[str, str], int]:
     """
     Return all unmet demand entries for the current state:
       key: (dealer, sku_id)
@@ -259,7 +258,7 @@ def get_unmet_demand(state: SolutionState) -> Dict[Tuple[str, str], int]:
 
     # compute shipped only once for this call
     shipped = state.compute_shipped()
-    removal_list: Dict[Tuple[str, str], int] = {}
+    removal_list: dict[tuple[str, str], int] = {}
     # iterate demands directly (avoid extra allocations where possible)
     for key, total_demand in state.data.demands.items():
         shipped_qty = shipped.get(key, 0)
@@ -282,7 +281,7 @@ def get_unmet_demand(state: SolutionState) -> Dict[Tuple[str, str], int]:
 def veh_loading(
     state: SolutionState,
     veh: Vehicle,
-    orders: Dict[str, int],
+    orders: dict[str, int],
     commit: bool = True,
     skip_compute_inventory: bool = True,
 ) -> bool:
@@ -364,9 +363,9 @@ def select_vehicle_type_for_volume(required_volume: float, data: DataALNS) -> st
 
 def find_existing_route_vehicles(
     state: SolutionState, plant: str, dealer: str, day: int
-) -> List[Vehicle]:
+) -> list[Vehicle]:
     """Return non-full vehicles on the same (plant, dealer, day), sorted by remaining capacity desc."""
-    candidates: List[Vehicle] = []
+    candidates: list[Vehicle] = []
     for veh in state.vehicles:
         if veh.fact_id != plant or veh.dealer_id != dealer or veh.day != day:
             continue
@@ -387,7 +386,7 @@ def commit_load_with_tracking(
     qty: int,
     day: int,
     skip_compute_inventory: bool = True,
-) -> Tuple[int, List[Vehicle]]:
+) -> tuple[int, list[Vehicle]]:
     """
     Commit a single-SKU load and return (actual_loaded_qty, appended_new_vehicles).
     actual_loaded_qty is measured as route-level sku delta to robustly include overflow-created vehicles.
@@ -424,8 +423,8 @@ def commit_load_with_tracking(
 # Precomputation and resource-pool utilities for greedy repair
 # ---------------------------
 def precompute_total_available(
-    state: SolutionState, data: DataALNS, supply_chain: Dict[Tuple[str, str], Set[str]]
-) -> Dict[Tuple[str, str], float]:
+    state: SolutionState, data: DataALNS, supply_chain: dict[tuple[str, str], set[str]]
+) -> dict[tuple[str, str], float]:
     """
     Precompute theoretical cross-plant, cross-period availability for each
     (dealer, sku_id) as previous inventory plus production.
@@ -677,7 +676,7 @@ def consolidate_route_vehicles(
 
 def post_repair(
     state: SolutionState,
-    inserted: List[Vehicle],
+    inserted: list[Vehicle],
     op_name: str,
     prev_obj: float = None,
     t0: float = None,
@@ -1223,7 +1222,7 @@ def compute_improvement_fast_add_vehicle(
 
 def compute_improvement_delta(
     state: SolutionState,
-    prev_obj: Optional[float],
+    prev_obj: float | None,
     dealer: str,
     sku_id: str,
     qty: int,
@@ -1305,7 +1304,7 @@ def compute_improvement_delta(
         return None, 0.0, False
 
 
-def compute_improvement(state: SolutionState, prev_obj: Optional[float] = None):
+def compute_improvement(state: SolutionState, prev_obj: float | None = None):
     """
     Compute improvement and return (new_obj, improvement, success).
 

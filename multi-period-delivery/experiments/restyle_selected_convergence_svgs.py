@@ -9,7 +9,6 @@ import argparse
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -31,8 +30,8 @@ def iter_with_parent(root: ET.Element):
             stack.append((node, child))
 
 
-def comment_texts(node: ET.Element) -> List[str]:
-    out: List[str] = []
+def comment_texts(node: ET.Element) -> list[str]:
+    out: list[str] = []
     for ch in node.iter():
         if not isinstance(ch.tag, str):
             t = (ch.text or "").strip()
@@ -62,7 +61,7 @@ def remove_nodes(root: ET.Element, predicate) -> None:
 
 def parse_plot_box(
     axes_node: ET.Element,
-) -> Optional[Tuple[float, float, float, float]]:
+) -> tuple[float, float, float, float] | None:
     patch = axes_node.find("./" + ns("g") + "[@id='patch_2']/" + ns("path"))
     if patch is None:
         return None
@@ -112,7 +111,7 @@ def make_text(
     *,
     size: int = 14,
     font: str = "SimSun",
-    rotate: Optional[Tuple[float, float, float]] = None,
+    rotate: tuple[float, float, float] | None = None,
 ) -> ET.Element:
     t = ET.Element(
         ns("text"),
@@ -267,7 +266,7 @@ def restyle_svg(input_path: Path, output_path: Path) -> None:
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
 
-def restyle_folder(input_dir: Path, output_dir: Path) -> Tuple[int, int]:
+def restyle_folder(input_dir: Path, output_dir: Path) -> tuple[int, int]:
     svgs = sorted(p for p in input_dir.glob("*_Objective.svg") if p.is_file())
     ok = 0
     for src in svgs:

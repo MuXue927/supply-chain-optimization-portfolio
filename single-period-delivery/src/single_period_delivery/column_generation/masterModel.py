@@ -9,7 +9,6 @@ import os
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Set, Tuple
 
 import gurobipy as gp
 from gurobipy import GRB
@@ -51,26 +50,26 @@ class MasterModel:
 
     # Data interfaces corresponding to the symbols in the mathematical model.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle types.
-    all_veh_types: Set[str] = field(init=False)
+    all_veh_types: set[str] = field(init=False)
 
     # Volume per unit for each SKU: {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
     # Current SKU inventory at production plants: {(plant, sku): qty}.
-    sku_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_inv: dict[tuple[str, str], int] = field(init=False)
     # Total inventory of each SKU: {sku: total_qty}.
-    sku_total_inv: Dict[str, int] = field(init=False)
+    sku_total_inv: dict[str, int] = field(init=False)
     # SKU set that each production plant can supply.
-    skus_plant: Dict[str, Set[str]] = field(init=False)
+    skus_plant: dict[str, set[str]] = field(init=False)
     # Dealer demand by SKU: {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKU set requested by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
 
     # Define the mathematical model, objective function, artificial variables, and decision variables.
     # Add the constraints after defining those components.
@@ -79,24 +78,24 @@ class MasterModel:
     # Objective function.
     obj: gp.LinExpr = field(init=False)
     # Artificial variable alpha.
-    d_alpha: gp.tupledict[Tuple[str, str], gp.Var] = field(init=False)    # {(dealer, sku): gp.Var}
+    d_alpha: gp.tupledict[tuple[str, str], gp.Var] = field(init=False)    # {(dealer, sku): gp.Var}
     # Artificial variable beta.
     d_beta: gp.tupledict[str, gp.Var] = field(init=False)     # {sku: gp.Var}
     # Artificial variable gamma.
-    d_gamma: gp.tupledict[Tuple[str, str], gp.Var] = field(init=False)  # {(plant, sku): gp.Var}
+    d_gamma: gp.tupledict[tuple[str, str], gp.Var] = field(init=False)  # {(plant, sku): gp.Var}
     # Decision variable x_ijf.
     # Number of vehicles of type f whose loading pattern is used from production plant i to dealer j.
     # {(plant, dealer, v_type, load_pattern_id): gp.Var}
-    d_xs: gp.tupledict[Tuple[str, str, str, int], gp.Var] = field(init=False)
+    d_xs: gp.tupledict[tuple[str, str, str, int], gp.Var] = field(init=False)
 
     # Constraints added to the model.
     # Total quantity of SKU k shipped to dealer j from all plants i using all vehicle types f
     # must equal dealer j's demand for SKU k.
-    cons_dealer_demands: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)   # {(dealer, sku_id): gp.Constr}
+    cons_dealer_demands: gp.tupledict[tuple[str, str], gp.Constr] = field(init=False)   # {(dealer, sku_id): gp.Constr}
     # Total shipped quantity of SKU k must not exceed its total inventory.
     cons_sku_supply: gp.tupledict[str, gp.Constr] = field(init=False)  # {sku_id: gp.Constr}
     # Quantity of SKU k shipped from plant i must not exceed plant i's inventory of SKU k.
-    cons_fact_sku_inv: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)    # {(plant, sku_id): gp.Constr}
+    cons_fact_sku_inv: gp.tupledict[tuple[str, str], gp.Constr] = field(init=False)    # {(plant, sku_id): gp.Constr}
 
     def __post_init__(self):
         self.param_gap_limit = self.data.param_gap_limit
@@ -234,7 +233,7 @@ class MasterModel:
         return self.obj.size()
 
     def insert_pattern(self, fact_id: str, dealer_id: str, vehicle_type: str,
-                        obj_contribution: float, load_pattern: Dict[str, int]):
+                        obj_contribution: float, load_pattern: dict[str, int]):
         """
         insert load patterns submitted by sub models into master model
 
@@ -341,7 +340,7 @@ class MasterModel:
             log_printer.print('\n The following constraint (s) cannot be satisfied: ')
             for c in self.model.getConstrs():
                 if c.IISConstr:
-                    log_printer.print('%s' % c.ConstrName)
+                    log_printer.print(f'{c.ConstrName}')
             return False
         else:
             self.print_sol_summary()

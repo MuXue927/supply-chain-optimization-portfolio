@@ -72,7 +72,7 @@ Maintenance guidance:
 # =========================
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 # =========================
 # Third-party libraries
@@ -141,7 +141,7 @@ class DestroyOperatorWrapper:
     and exposes a callable compatible with ALNS (state, rng, **kwargs).
     """
 
-    def __init__(self, func, name: Optional[str] = None, **fixed_kwargs):
+    def __init__(self, func, name: str | None = None, **fixed_kwargs):
         self.func = func
         self.fixed_kwargs = fixed_kwargs or {}
         self.__name__ = name or getattr(func, "__name__", "destroy_op")
@@ -223,7 +223,7 @@ def create_cross_period_dealer_removal(degree: float):
     )
 
 
-def create_period_range_removal(degree: float, window_ratio: Optional[float] = None):
+def create_period_range_removal(degree: float, window_ratio: float | None = None):
     """Factory for period_range_removal with fixed parameters."""
     name = "period_range_removal"
     fixed_kwargs = {"degree": degree}
@@ -233,7 +233,7 @@ def create_period_range_removal(degree: float, window_ratio: Optional[float] = N
 
 
 def random_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ):
     """
     Concise, importable random_removal implementation:
@@ -294,8 +294,8 @@ def random_removal(
 def worst_removal(
     current: SolutionState,
     rng: rnd.Generator,
-    degree: Optional[float] = None,
-    value_bias: Optional[float] = None,
+    degree: float | None = None,
+    value_bias: float | None = None,
 ):
     """
     Concise, importable worst_removal implementation:
@@ -578,7 +578,7 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
 # 4. High-inventory-pressure-oriented removal
 # ---------------------------------------------------------------------
 def surplus_inventory_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ):
     """
     Focus on plants with high inventory risk:
@@ -701,7 +701,7 @@ def surplus_inventory_removal(
 # 5. Shaw similarity-based removal
 # ---------------------------------------------------------------------
 def shaw_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ):
     """
     Focus on a related vehicle cluster for similarity-based removal:
@@ -852,11 +852,11 @@ def shaw_removal(
 def periodic_shaw_removal(
     current: SolutionState,
     rng: rnd.Generator,
-    degree: Optional[float] = None,
-    alpha: Optional[float] = None,
-    beta: Optional[float] = None,
-    gamma: Optional[float] = None,
-    k_cluster: Optional[int] = None,
+    degree: float | None = None,
+    alpha: float | None = None,
+    beta: float | None = None,
+    gamma: float | None = None,
+    k_cluster: int | None = None,
 ) -> SolutionState:
     """
     Multidimensional feature clustering plus relatedness-based removal:
@@ -1194,7 +1194,7 @@ def periodic_shaw_removal(
 # 7. Cross-period dealer block removal for large jumps
 # ---------------------------------------------------------------------
 def cross_period_dealer_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ):
     """
     Large-jump destroy operator:
@@ -1372,8 +1372,8 @@ def cross_period_dealer_removal(
 def period_range_removal(
     current: SolutionState,
     rng: rnd.Generator,
-    degree: Optional[float] = None,
-    window_ratio: Optional[float] = None,
+    degree: float | None = None,
+    window_ratio: float | None = None,
 ):
     """
     Destroy by continuous period segment:
@@ -1525,7 +1525,7 @@ def period_range_removal(
 # 7. Whole-path removal from plant to dealer
 # ---------------------------------------------------------------------
 def path_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ):
     """
     Evaluate (plant, dealer) paths as a whole:
@@ -1737,7 +1737,7 @@ def path_removal(
 
 
 def inventory_level_removal(
-    current: SolutionState, rng: rnd.Generator, degree: Optional[float] = None
+    current: SolutionState, rng: rnd.Generator, degree: float | None = None
 ) -> SolutionState:
     """
     Inventory-level removal.
@@ -1878,7 +1878,7 @@ def inventory_level_removal(
     return state
 
 
-def create_inventory_level_removal(degree: Optional[float] = None):
+def create_inventory_level_removal(degree: float | None = None):
     """Factory that creates an inventory-level removal wrapper."""
     defaults = ALNSConfig.get_operator_default("inventory_level_removal").get(
         "params", {}

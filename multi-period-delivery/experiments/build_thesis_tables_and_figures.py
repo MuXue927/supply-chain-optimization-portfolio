@@ -24,7 +24,7 @@ import json
 import math
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -184,7 +184,7 @@ def plot_boxplot(
     out_path: Path,
     title: str,
     ylabel: str,
-) -> Optional[Path]:
+) -> Path | None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -194,8 +194,8 @@ def plot_boxplot(
         return None
 
     variants = sorted(v for v in df["variant"].dropna().unique())
-    values: List[List[float]] = []
-    labels: List[str] = []
+    values: list[list[float]] = []
+    labels: list[str] = []
     for v in variants:
         arr = pd.to_numeric(
             df.loc[df["variant"] == v, value_col], errors="coerce"
@@ -223,7 +223,7 @@ def plot_boxplot(
 def plot_small_gap_boxplot(
     df: pd.DataFrame,
     out_path: Path,
-) -> Optional[Path]:
+) -> Path | None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -255,9 +255,9 @@ def plot_small_gap_boxplot(
     variant_order = ["ALNS-B", "ALNS-F", "ALNS-ML", "ALNS-T"]
     warm_palette = ["#f6c1a5", "#f3d2a8", "#f7b7a3", "#f8d6b3"]
 
-    values: List[List[float]] = []
-    labels: List[str] = []
-    facecolors: List[str] = []
+    values: list[list[float]] = []
+    labels: list[str] = []
+    facecolors: list[str] = []
     for idx, variant in enumerate(variant_order):
         series = pd.to_numeric(
             df.loc[df["variant"] == variant, "gap_to_milp_pct"], errors="coerce"
@@ -368,8 +368,8 @@ def _canonical_variant(v: str) -> str:
     return aliases.get(value, str(v))
 
 
-def parse_representative_quadruples(spec: str) -> List[Tuple[str, int, int, int, int]]:
-    parsed: List[Tuple[str, int, int, int, int]] = []
+def parse_representative_quadruples(spec: str) -> list[tuple[str, int, int, int, int]]:
+    parsed: list[tuple[str, int, int, int, int]] = []
     for entry in spec.split(";"):
         entry = entry.strip()
         if not entry:
@@ -386,7 +386,7 @@ def parse_representative_quadruples(spec: str) -> List[Tuple[str, int, int, int,
 
 def find_representative_runs(
     df: pd.DataFrame,
-    quadruple: Tuple[str, int, int, int, int],
+    quadruple: tuple[str, int, int, int, int],
 ) -> pd.DataFrame:
     scale, plant_nums, dealer_nums, sku_nums, vehicle_type_nums = quadruple
     required = [
@@ -430,15 +430,15 @@ def find_representative_runs(
 def export_representative_convergence(
     df: pd.DataFrame,
     out_dir: Path,
-    representative_quadruples: List[Tuple[str, int, int, int, int]],
-) -> List[Dict[str, Any]]:
-    exports: List[Dict[str, Any]] = []
+    representative_quadruples: list[tuple[str, int, int, int, int]],
+) -> list[dict[str, Any]]:
+    exports: list[dict[str, Any]] = []
     for quadruple in representative_quadruples:
         scale, plant_nums, dealer_nums, sku_nums, vehicle_type_nums = quadruple
         label = f"{scale}_{plant_nums}_{dealer_nums}_{sku_nums}_{vehicle_type_nums}"
         target_dir = ensure_dir(out_dir / f"figures4_6_representative_{label}")
         rows = find_representative_runs(df, quadruple)
-        outputs: List[Dict[str, str]] = []
+        outputs: list[dict[str, str]] = []
         missing_variants = {"ALNS-B", "ALNS-T", "ALNS-ML", "ALNS-F"}
 
         for _, row in rows.iterrows():
@@ -496,7 +496,7 @@ def export_representative_convergence(
     return exports
 
 
-def write_csv(df: pd.DataFrame, path: Path) -> Optional[Path]:
+def write_csv(df: pd.DataFrame, path: Path) -> Path | None:
     if df.empty:
         return None
     df.to_csv(path, index=False)

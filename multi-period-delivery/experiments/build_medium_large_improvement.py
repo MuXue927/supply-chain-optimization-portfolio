@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -52,7 +52,7 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
-def discover_selection_dir(results_root: Path) -> Optional[Path]:
+def discover_selection_dir(results_root: Path) -> Path | None:
     if not results_root.exists():
         return None
     candidates = [
@@ -66,11 +66,11 @@ def discover_selection_dir(results_root: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def load_selection_features(selection_dir: Optional[Path]) -> pd.DataFrame:
+def load_selection_features(selection_dir: Path | None) -> pd.DataFrame:
     if selection_dir is None:
         return pd.DataFrame()
 
-    frames: List[pd.DataFrame] = []
+    frames: list[pd.DataFrame] = []
     for name in ["selected_instances_medium.csv", "selected_instances_large.csv"]:
         path = selection_dir / name
         if not path.exists():
@@ -203,8 +203,8 @@ def load_and_filter_medium_large(results_csv: Path) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def load_and_filter_many(results_csvs: List[Path]) -> pd.DataFrame:
-    frames: List[pd.DataFrame] = []
+def load_and_filter_many(results_csvs: list[Path]) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
     for path in results_csvs:
         frame = load_and_filter_medium_large(path)
         if not frame.empty:
@@ -324,7 +324,7 @@ def build_instance_wide(
             how="left",
         )
 
-    ordered_cols: List[str] = ["scale"]
+    ordered_cols: list[str] = ["scale"]
     if "structure_quadruple" in instance_wide.columns:
         ordered_cols.append("structure_quadruple")
     if "structure_quadruple_t" in instance_wide.columns:
@@ -339,8 +339,8 @@ def build_instance_wide(
 
 def build_scale_tables(
     detail: pd.DataFrame, selection_features: pd.DataFrame
-) -> Dict[str, Dict[str, pd.DataFrame]]:
-    tables: Dict[str, Dict[str, pd.DataFrame]] = {}
+) -> dict[str, dict[str, pd.DataFrame]]:
+    tables: dict[str, dict[str, pd.DataFrame]] = {}
     for scale in ["medium", "large"]:
         sub = detail[detail["scale"] == scale].copy()
         if sub.empty:

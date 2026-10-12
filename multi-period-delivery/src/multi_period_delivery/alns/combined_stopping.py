@@ -75,7 +75,7 @@ Compatibility
 # Standard library
 # =========================
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # =========================
 # External library (ALNS)
@@ -121,10 +121,10 @@ class CombinedStoppingCriterion:
                 "(criteria and expr are both empty)"
             )
 
-        self.criteria: List[Any] = list(criteria)
+        self.criteria: list[Any] = list(criteria)
         self.expr: Any = expr
-        self._start_time: Optional[float] = None  # Start timing on first call.
-        self._triggered: Optional[str] = None  # Name of the triggering criterion.
+        self._start_time: float | None = None  # Start timing on first call.
+        self._triggered: str | None = None  # Name of the triggering criterion.
 
     # ------------------------------------------------------------------
     # Extension: dynamically add criteria.
@@ -133,7 +133,7 @@ class CombinedStoppingCriterion:
         """Append a new stopping criterion."""
         self.criteria.append(criterion)
 
-    def get_max_iterations(self) -> Optional[int]:
+    def get_max_iterations(self) -> int | None:
         for criterion in self.criteria:
             if isinstance(criterion, MaxIterations):
                 return int(getattr(criterion, "max_iterations", 0))
@@ -157,7 +157,7 @@ class CombinedStoppingCriterion:
                     pass
         return updated
 
-    def get_max_runtime(self) -> Optional[float]:
+    def get_max_runtime(self) -> float | None:
         for criterion in self.criteria:
             if isinstance(criterion, MaxRuntime):
                 return float(getattr(criterion, "max_runtime", 0.0))
@@ -251,7 +251,7 @@ class CombinedStoppingCriterion:
     # ------------------------------------------------------------------
     # Status snapshot.
     # ------------------------------------------------------------------
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """
         Return a safe status snapshot for the stopping criterion collection.
         The snapshot contains only:
@@ -294,7 +294,7 @@ def OR(*args):
 def create_standard_combined_criterion(
     max_iterations: int = 300,
     max_runtime: float = 900,
-    max_no_improvement: Optional[int] = None,
+    max_no_improvement: int | None = None,
 ) -> CombinedStoppingCriterion:
     """
     Create a common combined stopping criterion
@@ -315,7 +315,7 @@ def create_standard_combined_criterion(
     CombinedStoppingCriterion
         Configured combined criterion.
     """
-    criteria: List[Any] = [
+    criteria: list[Any] = [
         MaxIterations(max_iterations=max_iterations),
         MaxRuntime(max_runtime=max_runtime),
     ]

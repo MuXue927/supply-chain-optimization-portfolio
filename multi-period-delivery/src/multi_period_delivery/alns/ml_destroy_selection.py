@@ -55,7 +55,7 @@ Optional future enhancements
 # =========================
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 # =========================
 # Third-party libraries
@@ -93,7 +93,7 @@ from .repair_utils import compute_mixed_operator_reward
 # Internal: operator map construction. Lambda wrappers preserve the call
 # signature.
 # ---------------------------------------------------------------------
-_DESTROY_OPERATOR_FUNCTIONS: Dict[str, callable] = {
+_DESTROY_OPERATOR_FUNCTIONS: dict[str, callable] = {
     "random_removal": lambda s, r, **kw: random_removal(s, r, **kw),
     "shaw_removal": lambda s, r, **kw: shaw_removal(s, r, **kw),
     "periodic_shaw_removal": lambda s, r, **kw: periodic_shaw_removal(s, r, **kw),
@@ -115,13 +115,13 @@ _DESTROY_OPERATOR_FUNCTIONS: Dict[str, callable] = {
 # Derive the public mapping from the shared registration-order tuple. This
 # makes a missing or extra operator visible at import time rather than silently
 # changing the one-hot feature layout.
-_DESTROY_OPERATORS: Dict[str, callable] = {
+_DESTROY_OPERATORS: dict[str, callable] = {
     name: _DESTROY_OPERATOR_FUNCTIONS[name] for name in DESTROY_OPERATOR_NAMES
 }
 
 
 # Helper: sanitize and align ParamTuner kwargs to operator signatures
-def _sanitize_destroy_params(op_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_destroy_params(op_name: str, params: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(params, dict) or not params:
         return {}
     allowed = {
@@ -146,7 +146,7 @@ def _sanitize_destroy_params(op_name: str, params: Dict[str, Any]) -> Dict[str, 
     return {k: v for k, v in p.items() if k in allow}
 
 
-def _get_destroy_params(state: SolutionState, op_name: str) -> Dict[str, Any]:
+def _get_destroy_params(state: SolutionState, op_name: str) -> dict[str, Any]:
     """Read tuner parameters, skipping operators that have no parameters."""
     if state.param_tuner is None or op_name in PARAMETERLESS_OPERATOR_NAMES:
         return {}
@@ -163,7 +163,7 @@ def _get_destroy_params(state: SolutionState, op_name: str) -> Dict[str, Any]:
 def ml_based_destroy(
     current: SolutionState,
     rng: rnd.Generator,
-    min_sample_size: Optional[int] = None,
+    min_sample_size: int | None = None,
 ) -> SolutionState:
     """
     Select and execute a destroy operator with ML prediction and fallback
@@ -200,7 +200,7 @@ def ml_based_destroy(
     state = current.copy()
 
     print("[OPLOG][Destroy-ML] Starting adaptive destroy selection")
-    ml_selector: Optional[MLOperatorSelector] = state.ml_selector  # May be None.
+    ml_selector: MLOperatorSelector | None = state.ml_selector  # May be None.
 
     # If min_sample_size is not supplied, read the default from centralized
     # configuration for backward compatibility.

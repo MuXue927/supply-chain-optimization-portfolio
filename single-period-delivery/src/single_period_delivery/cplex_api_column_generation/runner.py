@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict
 
 from ..column_generation.InputDataCG import InputDataCG
 from .model import CplexApiColumnGeneration
@@ -19,7 +18,7 @@ def run_cplex_api_column_generation(
     max_iterations: int = 100,
     seed_result_csv: str | Path | None = None,
     seed: int = 20260408,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Run the CPLEX Python API column-generation workflow for one dataset."""
     input_path = Path(input_dir)
     output_path = Path(output_dir)

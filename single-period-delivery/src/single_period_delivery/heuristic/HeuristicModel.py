@@ -1,7 +1,6 @@
 import random
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
 
 from .InputDataHeuristic import InputDataHeuristic
 from .optutility import POSITIVEEPS
@@ -13,30 +12,30 @@ class HeuristicModel:
     data: InputDataHeuristic
     
     # Set X_ij of SKU types and quantities supplied from production plant i to dealer j.
-    X_ij: Dict[Tuple[str, str], Set[Tuple[str, int]]] = field(default_factory=dict)
+    X_ij: dict[tuple[str, str], set[tuple[str, int]]] = field(default_factory=dict)
     
     # Quantity of SKU k supplied from production plant i to dealer j: {(i, j, k): qty}.
-    supply: Dict[Tuple[str, str, str], int] = field(default_factory=dict)
+    supply: dict[tuple[str, str, str], int] = field(default_factory=dict)
     
     # SKUs already considered for each dealer j.
-    SKUs_considered: Dict[str, Set[str]] = field(default_factory=dict)
+    SKUs_considered: dict[str, set[str]] = field(default_factory=dict)
     
     # Set L_f of vehicle identifiers l assigned to vehicle type f.
-    Veh_type_sets: Dict[str, Set[int]] = field(default_factory=dict)
+    Veh_type_sets: dict[str, set[int]] = field(default_factory=dict)
     
     # Number N_f of vehicles used for vehicle type f.
-    N_f: Dict[str, int] = field(default_factory=dict)
+    N_f: dict[str, int] = field(default_factory=dict)
     
     # Number of vehicles of type f used for each production plant i and dealer j.
-    Nums_veh_used: Dict[Tuple[str, str, str], int] = field(default_factory=dict)
+    Nums_veh_used: dict[tuple[str, str, str], int] = field(default_factory=dict)
     
     # Records for the feasible solution.
     # Quantity x_k of SKU k supplied from production plant i to dealer j by vehicle l of type f.
-    Vehicles: List[Vehicle] = field(default_factory=list)
-    X_full: Dict[Tuple[str, str, str, str, int], int] = field(default_factory=dict)
+    Vehicles: list[Vehicle] = field(default_factory=list)
+    X_full: dict[tuple[str, str, str, str, int], int] = field(default_factory=dict)
     
     # SKUs already loaded for the route between production plant i and dealer j.
-    SKUs_loaded: Dict[Tuple[str, str], Set[str]] = field(default_factory=dict)
+    SKUs_loaded: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     
     def optimize_stage_1(self):
         

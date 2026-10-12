@@ -7,7 +7,6 @@
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
 
 import gurobipy as gp
 from gurobipy import GRB
@@ -48,51 +47,51 @@ class MonolithicModelMultiple:
 
     # Data interfaces aligned with the notation in the mathematical model.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle IDs.
-    all_vehicles: Set[int] = field(init=False)
+    all_vehicles: set[int] = field(init=False)
     # Set of planning periods t.
-    periods: Set[int] = field(init=False)
+    periods: set[int] = field(init=False)
 
     # Volume per SKU {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
     # Planned SKU production at each plant in period t {(plant, sku, day): qty}.
-    sku_prod_each_day: Dict[Tuple[str, str, int], int] = field(init=False)
+    sku_prod_each_day: dict[tuple[str, str, int], int] = field(init=False)
     # Initial SKU inventory at each plant {(plant, sku): qty}.
-    sku_initial_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_initial_inv: dict[tuple[str, str], int] = field(init=False)
     # SKUs that each plant can supply.
-    skus_plant: Dict[str, Set[str]] = field(init=False)
+    skus_plant: dict[str, set[str]] = field(init=False)
 
     # Dealer demand for each SKU {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKUs required by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
 
     # Use cost for each vehicle {v_id: cost}.
-    veh_cost: Dict[int, float] = field(init=False)
+    veh_cost: dict[int, float] = field(init=False)
     # Capacity upper bound for each vehicle {v_id: capacity}.
-    veh_cap: Dict[int, float] = field(init=False)
+    veh_cap: dict[int, float] = field(init=False)
     # Minimum load for each vehicle {v_id: min_load}.
-    veh_min_load: Dict[int, float] = field(init=False)
+    veh_min_load: dict[int, float] = field(init=False)
     # Inventory capacity upper bound for each plant {plant: max_cap}.
-    plant_inv_limit: Dict[str, float] = field(init=False)
+    plant_inv_limit: dict[str, float] = field(init=False)
 
     # All vehicle types.
-    all_veh_types: List[str] = field(init=False)
+    all_veh_types: list[str] = field(init=False)
     # Vehicle IDs must be linked to vehicle types.
     # Given a vehicle ID, its type identifies all relevant vehicle attributes,
     # including use cost, capacity, and minimum load.
     # {v_id: v_type}
-    veh_type: Dict[int, str] = field(init=False)
+    veh_type: dict[int, str] = field(init=False)
     # Conversely, each vehicle type identifies its vehicle IDs {v_type: {v_id}}.
-    veh_ids: Dict[str, Set[int]] = field(init=False)
+    veh_ids: dict[str, set[int]] = field(init=False)
 
     # Supply relationships between plants and dealers {(plant, dealer): {sku}}.
-    supply_chain: Dict[Tuple[str, str], Set[str]] = field(init=False)
+    supply_chain: dict[tuple[str, str], set[str]] = field(init=False)
     # All data interfaces required by the multi-period optimization problem are defined.
 
     # Next, define the mathematical model, objective function, auxiliary variables,
@@ -104,74 +103,74 @@ class MonolithicModelMultiple:
 
     # Auxiliary variables.
     # Whether vehicle l is used in period t {(v_id, day): gp.Var}; 1 = used, 0 = unused.
-    z_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
+    z_lt: gp.tupledict[tuple[int, int], gp.Var] = field(init=False)
     # Whether vehicle l's actual load in period t is below its minimum load
     # {(v_id, day): gp.Var}; 1 = below, 0 = not below.
-    zz_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
+    zz_lt: gp.tupledict[tuple[int, int], gp.Var] = field(init=False)
     # Penalty indicator for vehicle l's minimum-load violation in period t
     # {(v_id, day): gp.Var}; 1 = penalized, 0 = not penalized.
     # A used vehicle is penalized only when its actual load is below its minimum load.
     # An unused vehicle is not penalized.
-    p_lt: gp.tupledict[Tuple[int, int], gp.Var] = field(init=False)
+    p_lt: gp.tupledict[tuple[int, int], gp.Var] = field(init=False)
 
     # Decision variables.
     # Whether vehicle l delivers goods from plant i to dealer j in period t
     # {(plant, dealer, v_id, day): gp.Var}; 1 = used, 0 = unused.
-    y_ijlt: gp.tupledict[Tuple[str, str, int, int], gp.Var] = field(init=False)
+    y_ijlt: gp.tupledict[tuple[str, str, int, int], gp.Var] = field(init=False)
     # Inventory of SKU k at plant i carried into period t, where t = 0, 1, ..., T-1.
     # In particular, s_ik0 is the initial inventory of SKU k at plant i.
     # {(plant, sku_id, day): gp.Var}
-    s_ikt: gp.tupledict[Tuple[str, str, int], gp.Var] = field(init=False)
+    s_ikt: gp.tupledict[tuple[str, str, int], gp.Var] = field(init=False)
     # Quantity of SKU k loaded onto vehicle l for shipment from plant i to dealer j in period t
     # {(plant, dealer, sku_id, v_id, day): gp.Var}
-    x_ijklt: gp.tupledict[Tuple[str, str, str, int, int], gp.Var] = field(init=False)
+    x_ijklt: gp.tupledict[tuple[str, str, str, int, int], gp.Var] = field(init=False)
 
     # Variable index sets.
-    auxi_indices: List[Tuple[int, int]] = field(init=False)
-    y_indices: List[Tuple[str, str, int, int]] = field(init=False)
-    s_indices: List[Tuple[str, str, int]] = field(init=False)
-    x_indices: List[Tuple[str, str, str, int, int]] = field(init=False)
-    new_triple_ikt: Set[Tuple[str, str, int]] = field(init=False)
+    auxi_indices: list[tuple[int, int]] = field(init=False)
+    y_indices: list[tuple[str, str, int, int]] = field(init=False)
+    s_indices: list[tuple[str, str, int]] = field(init=False)
+    x_indices: list[tuple[str, str, str, int, int]] = field(init=False)
+    new_triple_ikt: set[tuple[str, str, int]] = field(init=False)
 
     # Constraints added to the model.
     # Constraint 1: for every ordered pair (i, j) of plant i and dealer j,
     # if plant i uses vehicle l to deliver goods to dealer j in period t,
     # then vehicle l is considered used.
-    cons_veh_use: gp.tupledict[Tuple[int, int], gp.Constr] = field(
+    cons_veh_use: gp.tupledict[tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
     # Constraint 2: in period t, goods can be loaded onto vehicle l only if it is used.
-    cons_sku_load: gp.tupledict[Tuple[str, str, int, int], gp.Constr] = field(
+    cons_sku_load: gp.tupledict[tuple[str, str, int, int], gp.Constr] = field(
         init=False
     )  # {(plant, dealer, v_id, day): gp.Constr}
     # Constraint 3: in period t, vehicle l's actual load must be at least its minimum load.
-    cons_veh_min_load: gp.tupledict[Tuple[int, int], gp.Constr] = field(
+    cons_veh_min_load: gp.tupledict[tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
     # Constraint 4: relationship among the minimum-load penalty indicator p_lt,
     # the vehicle-use variable z_lt, and the minimum-load satisfaction variable zz_lt.
-    cons_auxi_relation: gp.tupledict[Tuple[int, int], gp.Constr] = field(
+    cons_auxi_relation: gp.tupledict[tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
     # Constraint 5: in period t, vehicle l's actual load must not exceed its capacity.
-    cons_veh_cap_limit: gp.tupledict[Tuple[int, int], gp.Constr] = field(
+    cons_veh_cap_limit: gp.tupledict[tuple[int, int], gp.Constr] = field(
         init=False
     )  # {(v_id, day): gp.Constr}
     # Constraint 6: across all periods t, the total quantity of SKU k shipped to dealer j
     # from all plants i using all vehicles l must equal dealer j's demand for SKU k.
-    cons_dealer_demands: gp.tupledict[Tuple[str, str], gp.Constr] = field(
+    cons_dealer_demands: gp.tupledict[tuple[str, str], gp.Constr] = field(
         init=False
     )  # {(dealer, sku_id): gp.Constr}
     # Constraint 7: in period t, the total quantity of SKU k shipped from plant i to all
     # dealers j equals the inventory carried from period t-1 plus production in period t
     # minus the inventory carried into period t.
     # {(plant, sku_id, day): gp.Constr}
-    cons_sku_inv_transfer: gp.tupledict[Tuple[str, str, int], gp.Constr] = field(
+    cons_sku_inv_transfer: gp.tupledict[tuple[str, str, int], gp.Constr] = field(
         init=False
     )
     # Constraint 8: in period t, the total remaining inventory at plant i must not
     # exceed the plant's maximum storage capacity.
-    cons_plant_inv_limit: gp.tupledict[Tuple[str, int], gp.Constr] = field(
+    cons_plant_inv_limit: gp.tupledict[tuple[str, int], gp.Constr] = field(
         init=False
     )  # {(plant, day): gp.Constr}
 
@@ -562,7 +561,7 @@ class MonolithicModelMultiple:
             log_printer.print("\n The following constraint (s) cannot be satisfied :")
             for c in self.model.getConstrs():
                 if c.IISConstr:
-                    log_printer.print("%s" % c.ConstrName)
+                    log_printer.print(f"{c.ConstrName}")
 
             if self.model.Status == GRB.INFEASIBLE:
                 meta["status"] = "infeasible"

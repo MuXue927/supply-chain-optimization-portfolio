@@ -25,7 +25,6 @@ Implementation notes:
 # Standard library / typing
 # =========================
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
 
 # =========================
 # Internal project dependencies
@@ -146,7 +145,7 @@ class Vehicle:
     capacity: int = field(init=False, default=0)
     # cargo uses init=False and is managed by a property so assignments are
     # automatically wrapped as CargoDict.
-    cargo: Dict[Tuple[str, int], int] = field(init=False, repr=False, default_factory=dict)
+    cargo: dict[tuple[str, int], int] = field(init=False, repr=False, default_factory=dict)
 
     _id_counter = 0  # Class-level counter.
 

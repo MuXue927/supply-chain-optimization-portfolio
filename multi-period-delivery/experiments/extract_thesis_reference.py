@@ -23,11 +23,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 
-INSTANCES: Dict[str, List[int]] = {
+INSTANCES: dict[str, list[int]] = {
     "small": [12, 30],
     "medium": [13, 26],
     "large": [3],
@@ -41,7 +40,7 @@ RUN_DIRS = {
 }
 
 
-def vehicle_tables(dataset_dir: Path) -> tuple[Dict[str, float], Dict[str, float]]:
+def vehicle_tables(dataset_dir: Path) -> tuple[dict[str, float], dict[str, float]]:
     veh = pd.read_csv(dataset_dir / "vehicle.csv")
     costs = dict(zip(veh["vehicle_type"], veh["cost_to_use"]))
     min_loads = dict(zip(veh["vehicle_type"], veh["min_standard_size"]))
@@ -49,7 +48,7 @@ def vehicle_tables(dataset_dir: Path) -> tuple[Dict[str, float], Dict[str, float
 
 
 def rescore_plan(
-    plan_path: Path, costs: Dict[str, float], min_loads: Dict[str, float], alpha: float
+    plan_path: Path, costs: dict[str, float], min_loads: dict[str, float], alpha: float
 ) -> tuple[float, float, int]:
     df = pd.read_csv(plan_path)
     fixed = 0.0

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-from typing import Dict
 
 from ..monolithic.InputDataMultiple import InputDataMultiple
 from .model import MultiPeriodCplexApiMonolithic
@@ -19,7 +18,7 @@ def run_cplex_api_monolithic(
     time_limit: float = 60.0,
     mip_gap: float = 0.0,
     seed: int = 20260408,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Solve one dataset with the CPLEX Python API and write result files."""
     random.seed(seed)
     input_path = Path(input_dir)

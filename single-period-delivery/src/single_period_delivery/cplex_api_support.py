@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, MutableMapping, Tuple
+from typing import Any, Literal
 
 Number = int | float
 ConstraintSense = Literal["<=", ">=", "="]
@@ -48,8 +49,8 @@ class CplexApiSolution:
 
     status: str
     objective: float | None
-    variables: Dict[str, float] = field(default_factory=dict)
-    duals: Dict[str, float] = field(default_factory=dict)
+    variables: dict[str, float] = field(default_factory=dict)
+    duals: dict[str, float] = field(default_factory=dict)
     best_bound: float | None = None
     mip_gap: float | None = None
     solver_status: str = ""
@@ -70,9 +71,9 @@ class CplexApiModel:
         self.sense = sense
         self.objective_terms: MutableMapping[str, float] = {}
         self.constraints: list[
-            Tuple[str, Dict[str, float], ConstraintSense, float]
+            tuple[str, dict[str, float], ConstraintSense, float]
         ] = []
-        self.variables: MutableMapping[str, Tuple[float, float, str]] = {}
+        self.variables: MutableMapping[str, tuple[float, float, str]] = {}
 
     def add_variable(
         self,

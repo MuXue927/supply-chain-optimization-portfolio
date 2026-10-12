@@ -6,7 +6,6 @@
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
 
 import gurobipy as gp
 from gurobipy import GRB
@@ -43,38 +42,38 @@ class MonolithicModelSingle:
 
     # Data interface aligned with the notation in the mathematical model.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle identifiers.
-    all_vehicles: Set[int] = field(init=False)
+    all_vehicles: set[int] = field(init=False)
     # Unit volume of each SKU: {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
     # Current SKU inventory at each production plant: {(plant, sku): qty}.
-    sku_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_inv: dict[tuple[str, str], int] = field(init=False)
     # Total inventory of each SKU: {sku: total_qty}.
-    sku_total_inv: Dict[str, int] = field(init=False)
+    sku_total_inv: dict[str, int] = field(init=False)
     # Dealer demand for each SKU: {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # Supply relationships between production plants and dealers: {(plant, dealer): {sku}}.
-    supply_chain: Dict[Tuple[str, str], Set[str]] = field(init=False)
+    supply_chain: dict[tuple[str, str], set[str]] = field(init=False)
     # Cost of using each vehicle: {v_id: cost}.
-    veh_cost: Dict[int, float] = field(init=False)
+    veh_cost: dict[int, float] = field(init=False)
     # Capacity of each vehicle: {v_id: capacity}.
-    veh_cap: Dict[int, int] = field(init=False)
+    veh_cap: dict[int, int] = field(init=False)
     # Minimum load for each vehicle: {v_id: min_load}.
-    veh_min_load: Dict[int, int] = field(init=False)
+    veh_min_load: dict[int, int] = field(init=False)
     # All vehicle types.
-    all_veh_types: List[str] = field(init=False)
+    all_veh_types: list[str] = field(init=False)
     # Vehicle identifiers must be linked to their vehicle types.
     # Given a vehicle identifier, its type determines all vehicle attributes,
     # including cost, capacity, and minimum load.
     # {v_id: v_type}
-    veh_type: Dict[int, str] = field(init=False)
+    veh_type: dict[int, str] = field(init=False)
     # Similarly, each vehicle type maps to the identifiers assigned to that type: {v_type: {v_id}}.
-    veh_ids: Dict[str, Set[int]] = field(init=False)
+    veh_ids: dict[str, set[int]] = field(init=False)
     # All data interfaces required by the single-period optimization problem are now declared.
 
     # Next, define the mathematical model, objective function, auxiliary variables, and decision variables.
@@ -94,14 +93,14 @@ class MonolithicModelSingle:
     p_l: gp.tupledict[int, gp.Var] = field(init=False)
     # Decision variables.
     # Whether vehicle l delivers goods from production plant i to dealer j: 1 for delivery, 0 otherwise: {(plant, dealer, v_id): gp.Var}.
-    y_ijl: gp.tupledict[Tuple[str, str, int], gp.Var] = field(init=False)
+    y_ijl: gp.tupledict[tuple[str, str, int], gp.Var] = field(init=False)
     # Quantity of SKU k loaded on vehicle l when delivering from plant i to dealer j: {(plant, dealer, sku_id, v_id): gp.Var}.
-    x_ijkl: gp.tupledict[Tuple[str, str, str, int], gp.Var] = field(init=False)
+    x_ijkl: gp.tupledict[tuple[str, str, str, int], gp.Var] = field(init=False)
 
     # Decision-variable indices.
-    y_indices: List[Tuple[str, str, int]] = field(init=False)
-    x_indices: List[Tuple[str, str, str, int]] = field(init=False)
-    new_duet_ik: Set[Tuple[str, str]] = field(init=False)
+    y_indices: list[tuple[str, str, int]] = field(init=False)
+    x_indices: list[tuple[str, str, str, int]] = field(init=False)
+    new_duet_ik: set[tuple[str, str]] = field(init=False)
 
     # Constraints to add to the model.
     # Constraint 1: for every ordered pair (i, j) of production plant i and dealer j,
@@ -117,15 +116,15 @@ class MonolithicModelSingle:
     # Constraint 5: the actual load of vehicle l must not exceed its capacity.
     cons_veh_cap_limit: gp.tupledict[int, gp.Constr] = field(init=False)                # {v_id: gp.Constr}
     # Constraint 6: the total quantity of SKU k delivered to dealer j by all plants and vehicles must satisfy dealer j's demand.
-    cons_dealer_demands: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)   # {(dealer, sku_id): gp.Constr}
+    cons_dealer_demands: gp.tupledict[tuple[str, str], gp.Constr] = field(init=False)   # {(dealer, sku_id): gp.Constr}
     # Constraint 7: the quantity of SKU k shipped from plant i must not exceed its current inventory at plant i.
-    cons_sku_supply: gp.tupledict[Tuple[str, str], gp.Constr] = field(init=False)       # {(plant, sku_id): gp.Constr}
+    cons_sku_supply: gp.tupledict[tuple[str, str], gp.Constr] = field(init=False)       # {(plant, sku_id): gp.Constr}
     # # Constraint 8: the quantity of SKU k shipped from all plants must not exceed total SKU k inventory.                       # {sku_id: gp.Constr}
     # cons_sku_total_supply: gp.tupledict[str, gp.Constr] = field(init=False)
 
     # Constraint 9: symmetry-breaking cuts reduce symmetry and shrink the solution space.
     # {(v_type, v_id, v_di_1): gp.Constr}
-    cons_symmetry_break: gp.tupledict[Tuple[str, int, int], gp.Constr] = field(init=False)
+    cons_symmetry_break: gp.tupledict[tuple[str, int, int], gp.Constr] = field(init=False)
     # All attributes of the single-period optimization model are now declared.
     # The next step is to instantiate them.
 
@@ -274,7 +273,7 @@ class MonolithicModelSingle:
             log_printer.print('\n The following constraint (s) cannot be satisfied :')
             for c in self.model.getConstrs():
                 if c.IISConstr:
-                    log_printer.print('%s' % c.ConstrName)
+                    log_printer.print(f'{c.ConstrName}')
             return False
         elif self.model.Status == GRB.TIME_LIMIT:
             log_printer.print("Time limit is reached! Solving process is stopped.")

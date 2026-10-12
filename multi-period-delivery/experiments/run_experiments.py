@@ -28,7 +28,6 @@ import time
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
 
 RUN_META_NAME = "run_metadata.json"
 
@@ -43,7 +42,7 @@ def utc_now_iso_z() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def parse_seeds(seeds_spec: str) -> List[int]:
+def parse_seeds(seeds_spec: str) -> list[int]:
     """
     Supported forms:
       - "0-9" -> [0..9]
@@ -92,7 +91,7 @@ def is_valid_instance(path_str: str):
     return False, "not a dataset_* directory (use dataset_1, dataset_2, ...)"
 
 
-def expand_container_to_datasets(container_path: str) -> List[str]:
+def expand_container_to_datasets(container_path: str) -> list[str]:
     """
     Expand a container directory such as small, medium, or large into all
     contained dataset_* directories.
@@ -122,7 +121,7 @@ def expand_container_to_datasets(container_path: str) -> List[str]:
     return datasets
 
 
-def expand_instances(patterns: List[str]) -> List[str]:
+def expand_instances(patterns: list[str]) -> list[str]:
     paths = []
     for p in patterns:
         if "*" in p or "?" in p:

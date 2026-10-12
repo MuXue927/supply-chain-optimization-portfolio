@@ -34,7 +34,7 @@ Operator set, kept consistent with MLOperatorSelector.REPAIR_OPERATOR_NAMES:
 
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy.random as rnd
 
@@ -61,7 +61,7 @@ from .repair_utils import compute_mixed_operator_reward
 
 
 # Helper: sanitize and align ParamTuner kwargs to operator signatures
-def _sanitize_repair_params(op_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_repair_params(op_name: str, params: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(params, dict) or not params:
         return {}
     allowed = {
@@ -79,7 +79,7 @@ def _sanitize_repair_params(op_name: str, params: Dict[str, Any]) -> Dict[str, A
     return {k: v for k, v in params.items() if k in allow}
 
 
-def _get_repair_params(state: SolutionState, op_name: str) -> Dict[str, Any]:
+def _get_repair_params(state: SolutionState, op_name: str) -> dict[str, Any]:
     """Read tuner parameters, skipping operators that have no parameters."""
     if state.param_tuner is None or op_name in PARAMETERLESS_OPERATOR_NAMES:
         return {}
@@ -119,7 +119,7 @@ _REPAIR_OPERATORS = {
 
 
 def ml_based_repair(
-    current: SolutionState, rng: rnd.Generator, min_sample_size: Optional[int] = None
+    current: SolutionState, rng: rnd.Generator, min_sample_size: int | None = None
 ) -> SolutionState:
     """
     Apply an ML-guided repair operator.

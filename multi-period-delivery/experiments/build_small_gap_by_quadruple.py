@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -101,7 +100,7 @@ def load_gap_detail(path: Path) -> pd.DataFrame:
 
 def build_tables(
     selected_df: pd.DataFrame, detail_df: pd.DataFrame
-) -> Dict[str, pd.DataFrame]:
+) -> dict[str, pd.DataFrame]:
     # Aggregate by dataset/method in case there are multiple seeds.
     agg = (
         detail_df.groupby(["dataset_name", "method"], as_index=False)["gap_vs_milp_pct"]

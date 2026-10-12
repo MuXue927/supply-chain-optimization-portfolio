@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Callable
 from math import isfinite
-from typing import TYPE_CHECKING, Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy.random as rnd
 
@@ -32,7 +33,7 @@ def _callback_console_enabled() -> bool:
     return bool(getattr(ALNSConfig, "ENABLE_CALLBACK_DIAGNOSTICS_CONSOLE", False))
 
 
-def safe_state_snapshot(state: Optional[SolutionState]) -> Optional[SolutionState]:
+def safe_state_snapshot(state: SolutionState | None) -> SolutionState | None:
     if state is None:
         return None
     try:
@@ -46,7 +47,7 @@ def safe_state_snapshot(state: Optional[SolutionState]) -> Optional[SolutionStat
         return state
 
 
-def dump_state_snapshot(optimizer: Any, state: Optional[SolutionState], label: str):
+def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str):
     if state is None:
         return
     try:
@@ -82,7 +83,7 @@ def _get_capacity_threshold(data) -> float:
     return float(caps[idx])
 
 
-def build_state_profile(state: "SolutionState") -> dict[str, float]:
+def build_state_profile(state: SolutionState) -> dict[str, float]:
     if hasattr(state, "iter_used_vehicles") and callable(
         getattr(state, "iter_used_vehicles")
     ):
@@ -140,9 +141,9 @@ def build_state_profile(state: "SolutionState") -> dict[str, float]:
 def is_candidate_better(
     new_obj: float,
     new_profile: dict[str, float],
-    old_obj: Optional[float],
-    old_profile: Optional[dict[str, float]],
-    progress: Optional[float] = None,
+    old_obj: float | None,
+    old_profile: dict[str, float] | None,
+    progress: float | None = None,
 ) -> bool:
     if getattr(ALNSConfig, "ENABLE_FAST_ALNS_MODE", False):
         if old_obj is None:
@@ -247,7 +248,7 @@ if TYPE_CHECKING:
     from .alns_optimizer import ALNSOptimizer
 
 
-def _used_vehicle_count(state: Optional[SolutionState]) -> int:
+def _used_vehicle_count(state: SolutionState | None) -> int:
     if state is None:
         return 0
     if hasattr(state, "count_used_vehicles") and callable(
@@ -392,7 +393,7 @@ def _choose_elite_relink_target(
     elite_pool: list[dict],
     require_signature_diff: bool = True,
     max_rel_worse: float = 0.02,
-) -> Optional[dict]:
+) -> dict | None:
     """Pick an elite candidate for basin-jump path relinking under safety gates."""
     if not elite_pool:
         return None
@@ -485,16 +486,16 @@ def _is_best_feasible_solution(state: SolutionState) -> bool:
     return True
 
 
-def _record_best_feasible(candidates: List[SolutionState]) -> Optional[SolutionState]:
+def _record_best_feasible(candidates: list[SolutionState]) -> SolutionState | None:
     """
     Return the best fully feasible state from the candidate list.
 
     A fully feasible state passes validation. Return ``None`` when no candidate
     qualifies.
     """
-    best_state: Optional[SolutionState] = None
-    best_obj: Optional[float] = None
-    best_profile: Optional[dict] = None
+    best_state: SolutionState | None = None
+    best_obj: float | None = None
+    best_profile: dict | None = None
 
     for state in candidates:
         is_best_feasible = _is_best_feasible_solution(state)
@@ -680,7 +681,7 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
 
 
 def make_callback_on_iteration(
-    optimizer: ALNSOptimizer, stop: Optional[Any] = None
+    optimizer: ALNSOptimizer, stop: Any | None = None
 ) -> Callable[..., None]:
     """
     Return an ``on_iteration`` callback.
@@ -1617,7 +1618,7 @@ def make_callback_on_iteration(
 
 
 def register_callbacks(
-    alns_instance: "ALNS", optimizer: ALNSOptimizer, stop: Optional[Any] = None
+    alns_instance: ALNS, optimizer: ALNSOptimizer, stop: Any | None = None
 ):
     """
     Register callbacks on the ALNS instance.

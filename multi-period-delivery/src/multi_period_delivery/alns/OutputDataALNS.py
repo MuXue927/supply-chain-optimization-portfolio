@@ -13,7 +13,6 @@ Purpose
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
 
 # =========================
 # Third-party libraries
@@ -36,17 +35,17 @@ class OutPutData:
     dataset_name: str
     
     # Data attributes initialized by __post_init__
-    order_fulfill: Dict[Tuple[int, str, str, str], int] = field(init=False)
-    vehicle_load: Dict[Tuple[int, str, str, int, str], float] = field(init=False)
-    non_fulfill: Dict[Tuple[str, str], int] = field(init=False)
-    sku_inv_left: Dict[Tuple[str, str, int], int] = field(init=False)
+    order_fulfill: dict[tuple[int, str, str, str], int] = field(init=False)
+    vehicle_load: dict[tuple[int, str, str, int, str], float] = field(init=False)
+    non_fulfill: dict[tuple[str, str], int] = field(init=False)
+    sku_inv_left: dict[tuple[str, str, int], int] = field(init=False)
     
     # DataFrame cache
-    df_result: Optional[pd.DataFrame] = field(init=False, default=None)
-    df_details: Optional[pd.DataFrame] = field(init=False, default=None)
-    df_summary: Optional[pd.DataFrame] = field(init=False, default=None)
-    df_non_fulfill: Optional[pd.DataFrame] = field(init=False, default=None)
-    df_sku_inv_left: Optional[pd.DataFrame] = field(init=False, default=None)
+    df_result: pd.DataFrame | None = field(init=False, default=None)
+    df_details: pd.DataFrame | None = field(init=False, default=None)
+    df_summary: pd.DataFrame | None = field(init=False, default=None)
+    df_non_fulfill: pd.DataFrame | None = field(init=False, default=None)
+    df_sku_inv_left: pd.DataFrame | None = field(init=False, default=None)
     
     def __post_init__(self):
         """Initialize the data structures."""
@@ -55,7 +54,7 @@ class OutPutData:
         self.non_fulfill = {}
         self.sku_inv_left = {}
     
-    def _reorganize_dataframe(self, df: pd.DataFrame, title_map: Dict[str, str]) -> pd.DataFrame:
+    def _reorganize_dataframe(self, df: pd.DataFrame, title_map: dict[str, str]) -> pd.DataFrame:
         """
         Reorganize DataFrame column names and order.
 
@@ -78,8 +77,8 @@ class OutPutData:
         
         return df_copy
     
-    def _load_and_process_csv(self, file_path: str, title_map: Dict[str, str], 
-                             dtype_map: Dict[str, type]) -> pd.DataFrame:
+    def _load_and_process_csv(self, file_path: str, title_map: dict[str, str], 
+                             dtype_map: dict[str, type]) -> pd.DataFrame:
         """
         Load and process a CSV file.
 
@@ -116,7 +115,7 @@ class OutPutData:
             empty_df = pd.DataFrame(columns=list(title_map.values()))
             return self._apply_dtypes(empty_df, dtype_map)
     
-    def _apply_dtypes(self, df: pd.DataFrame, dtype_map: Dict[str, type]) -> pd.DataFrame:
+    def _apply_dtypes(self, df: pd.DataFrame, dtype_map: dict[str, type]) -> pd.DataFrame:
         """
         Apply data-type conversions.
 
@@ -333,7 +332,7 @@ class OutPutData:
         else:
             logger.info("Data validation passed")
     
-    def get_summary_stats(self) -> Dict[str, int]:
+    def get_summary_stats(self) -> dict[str, int]:
         """
         Return aggregate output statistics.
 

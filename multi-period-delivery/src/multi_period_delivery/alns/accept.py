@@ -9,7 +9,7 @@ Responsibilities:
 - Track calls, acceptances, and accumulated penalties for diagnostics and tuning.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 
@@ -320,7 +320,7 @@ class DemandConstraintAccept:
             self._accepted += 1
         return accepted
 
-    def get_statistics(self) -> Dict[str, float]:
+    def get_statistics(self) -> dict[str, float]:
         """
         Return acceptance statistics.
 

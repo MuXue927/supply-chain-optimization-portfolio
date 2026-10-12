@@ -9,7 +9,7 @@ basic resource-pool snapshot generation.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
 class UnifiedInventoryManager:
@@ -27,9 +27,9 @@ class UnifiedInventoryManager:
 
     def scan_negative_inventory(
         self, state: Any
-    ) -> List[Tuple[Tuple[str, str, int], float]]:
+    ) -> list[tuple[tuple[str, str, int], float]]:
         """Return all (index, value) entries with negative inventory."""
-        negatives: List[Tuple[Tuple[str, str, int], float]] = []
+        negatives: list[tuple[tuple[str, str, int], float]] = []
         try:
             for k, v in state.s_ikt.items():
                 if float(v) < -self.eps:
@@ -50,7 +50,7 @@ class UnifiedInventoryManager:
             return False
         return len(self.scan_negative_inventory(state)) == 0
 
-    def build_resource_pool(self, state: Any) -> Dict[Tuple[str, str, int], int]:
+    def build_resource_pool(self, state: Any) -> dict[tuple[str, str, int], int]:
         """
         Return the available inventory pool for periods 1..H.
 
@@ -60,13 +60,13 @@ class UnifiedInventoryManager:
         Day 0 is an opening balance used only for the recursion, not an
         allocatable period in the pool.
         """
-        pool: Dict[Tuple[str, str, int], int] = {}
+        pool: dict[tuple[str, str, int], int] = {}
         try:
             data = state.data
             if not getattr(state, "s_initialized", False):
                 state.compute_inventory()
 
-            usage: Dict[Tuple[str, int, str], int] = defaultdict(int)
+            usage: dict[tuple[str, int, str], int] = defaultdict(int)
             for veh in getattr(state, "vehicles", []):
                 for (sku, cargo_day), qty in veh.cargo.items():
                     if cargo_day != veh.day:

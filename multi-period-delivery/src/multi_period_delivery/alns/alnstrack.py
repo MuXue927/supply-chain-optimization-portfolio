@@ -57,7 +57,7 @@ import copy
 import csv
 import os
 import time
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 # =========================
 # Third-party libraries
@@ -91,17 +91,17 @@ class ALNSTracker:
 
     def __init__(
         self,
-        output_file: Optional[str] = None,
-        log_printer: Optional[LogPrinter] = None,
+        output_file: str | None = None,
+        log_printer: LogPrinter | None = None,
     ):
         # Iteration and objective state
         self.iteration: int = 0
         self.max_iterations: int = getattr(ALNSConfig, "MAX_ITERATIONS", 1000)
         self.current_obj: float = float("inf")
         self.best_obj: float = float("inf")
-        self.best_solution: Optional["SolutionState"] = None
+        self.best_solution: SolutionState | None = None
         self.best_actual_obj: float = float("inf")
-        self.best_actual_solution: Optional["SolutionState"] = None
+        self.best_actual_solution: SolutionState | None = None
         self.initial_search_obj: float = float("inf")
         self.initial_actual_obj: float = float("inf")
 
@@ -112,7 +112,7 @@ class ALNSTracker:
         self.gaps: list[float] = []
 
         # Optional result persistence
-        self.output_file: Optional[str] = output_file
+        self.output_file: str | None = output_file
         if self.output_file:
             os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
             with open(self.output_file, "w", newline="") as f:
@@ -126,9 +126,9 @@ class ALNSTracker:
             list[float]
         ] = []  # Each feature can be [demand, size, day, inventory, utilization, ...].
         self.labels: list[float] = []  # Corresponding improvement values.
-        self._cached_model: Optional[Any] = None
-        self._cached_scaler: Optional[Any] = None
-        self._last_train_iteration: Optional[int] = None
+        self._cached_model: Any | None = None
+        self._cached_scaler: Any | None = None
+        self._last_train_iteration: int | None = None
 
         # Early-stopping state
         self.early_stop_patience: int = 500  # Tunable by problem scale/runtime.
@@ -157,8 +157,8 @@ class ALNSTracker:
 
     def set_initial_reference(
         self,
-        initial_search_obj: Optional[float] = None,
-        initial_actual_obj: Optional[float] = None,
+        initial_search_obj: float | None = None,
+        initial_actual_obj: float | None = None,
     ):
         if initial_search_obj is not None:
             self.initial_search_obj = float(initial_search_obj)
@@ -485,7 +485,7 @@ class ALNSTracker:
     # -----------------------------------------------------------------
     # ML data collection
     # -----------------------------------------------------------------
-    def update_ml_data(self, feature: list, label: float) -> Tuple[int, int]:
+    def update_ml_data(self, feature: list, label: float) -> tuple[int, int]:
         """
         Store one (feature, label) sample.
 
@@ -528,7 +528,7 @@ class ALNSTracker:
         self._last_train_iteration = iteration
         print(f"[Tracker] Cached ML model at iteration {iteration}")
 
-    def get_cached_model(self) -> Tuple[Optional[Any], Optional[Any], Optional[int]]:
+    def get_cached_model(self) -> tuple[Any | None, Any | None, int | None]:
         """
         Return the (model, scaler, last_train_iteration) cache tuple.
 

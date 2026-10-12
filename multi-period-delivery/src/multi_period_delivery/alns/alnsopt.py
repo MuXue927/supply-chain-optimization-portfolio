@@ -59,7 +59,7 @@ Maintenance notes:
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Optional
 
 # =========================
 # Third-party libraries
@@ -85,26 +85,26 @@ from .vehicle import Vehicle
 @dataclass
 class SolutionState:
     data: DataALNS
-    vehicles: List[Vehicle] = field(default_factory=list)
-    s_ikt: Dict[Tuple[str, str, int], int] = field(default_factory=dict)
-    s_indices: Set[Tuple[str, str, int]] = field(default_factory=set)
+    vehicles: list[Vehicle] = field(default_factory=list)
+    s_ikt: dict[tuple[str, str, int], int] = field(default_factory=dict)
+    s_indices: set[tuple[str, str, int]] = field(default_factory=set)
     tracker: Optional["ALNSTracker"] = (
         None  # Optional tracker for iteration history used by ML training.
     )
     s_initialized: bool = field(default=False)  # Whether s_ikt is initialized.
     param_tuner: Optional["ParamAutoTuner"] = None  # Automatic parameter tuner.
     ml_selector: Optional["MLOperatorSelector"] = None  # ML operator selector.
-    inventory_manager: Optional[Any] = field(default=None, repr=False, compare=False)
-    _inventory_cache: Optional[Any] = field(default=None, repr=False, compare=False)
+    inventory_manager: Any | None = field(default=None, repr=False, compare=False)
+    _inventory_cache: Any | None = field(default=None, repr=False, compare=False)
     _suppress_compute_inventory: bool = field(default=False, repr=False, compare=False)
-    repair_audit: Dict[str, Dict[str, Any]] = field(
+    repair_audit: dict[str, dict[str, Any]] = field(
         default_factory=dict, repr=False, compare=False
     )
     # ---- Objective cache ----
-    shipped_cache: Optional[Dict[Tuple[str, str], int]] = field(
+    shipped_cache: dict[tuple[str, str], int] | None = field(
         default=None
     )  # cache for compute_shipped
-    last_objective: Optional[float] = field(default=None)  # Last objective value.
+    last_objective: float | None = field(default=None)  # Last objective value.
     objective_dirty: bool = field(
         default=True
     )  # Whether vehicle or inventory changes require objective recomputation.
@@ -148,7 +148,7 @@ class SolutionState:
         """Return the number of non-empty vehicles currently in the state."""
         return sum(1 for _ in self.iter_used_vehicles())
 
-    def replace_vehicles(self, vehicles: List[Vehicle]):
+    def replace_vehicles(self, vehicles: list[Vehicle]):
         """Replace the vehicle list and invalidate all derived caches."""
         self.vehicles = list(vehicles or [])
         self.s_initialized = False
@@ -232,7 +232,7 @@ class SolutionState:
         self,
         op_name: str,
         feasible: bool,
-        violations: Optional[Dict[str, Any]] = None,
+        violations: dict[str, Any] | None = None,
         rolled_back: bool = False,
         inserted_cnt: int = 0,
         improvement: float = 0.0,
@@ -595,7 +595,7 @@ class SolutionState:
         self.objective_dirty = False
         return float(self.last_objective)
 
-    def _vehicle_cost_components(self) -> Tuple[float, int, float]:
+    def _vehicle_cost_components(self) -> tuple[float, int, float]:
         """Return fixed cost, underloaded count, and underload gap penalty."""
         data = self.data
         fixed_cost = 0.0
@@ -685,7 +685,7 @@ class SolutionState:
                 obj += self.data.param_pun_factor3 * (min_load - total_volume)
         return obj
 
-    def compute_shipped(self) -> Dict[Tuple[str, str], int]:
+    def compute_shipped(self) -> dict[tuple[str, str], int]:
         """
         Compute shipped quantity for each dealer and SKU across all periods.
 
@@ -870,7 +870,7 @@ class SolutionState:
         return new_state
 
 
-def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
+def veh_loading(state: SolutionState, veh: Vehicle, orders: dict[str, int]):
     """
     Load a vehicle and update inventory incrementally.
 
@@ -995,7 +995,7 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: Dict[str, int]):
     return True
 
 
-def batch_update_inventory(state: SolutionState, vehicles: List[Vehicle], op_type: str):
+def batch_update_inventory(state: SolutionState, vehicles: list[Vehicle], op_type: str):
     """
     Batch-update inventory and return a summary of applied changes.
 

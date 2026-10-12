@@ -26,7 +26,7 @@ import math
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -69,7 +69,7 @@ def safe_float(value: Any) -> float:
     return float("nan")
 
 
-def safe_int(value: Any) -> Optional[int]:
+def safe_int(value: Any) -> int | None:
     try:
         if value is None:
             return None
@@ -89,7 +89,7 @@ def utc_now_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
-def infer_scale_from_instance_path(instance_path: Path) -> Optional[str]:
+def infer_scale_from_instance_path(instance_path: Path) -> str | None:
     parts = [p.lower() for p in instance_path.parts]
     for scale in ("small", "medium", "large"):
         if scale in parts:
@@ -97,7 +97,7 @@ def infer_scale_from_instance_path(instance_path: Path) -> Optional[str]:
     return None
 
 
-def load_json(path: Path) -> Dict[str, Any]:
+def load_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -113,13 +113,13 @@ def read_csv_if_exists(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def discover_run_dirs(results_root: Path) -> List[Path]:
+def discover_run_dirs(results_root: Path) -> list[Path]:
     run_dirs = [p.parent for p in results_root.rglob(RUN_META_NAME)]
     run_dirs = sorted(set(run_dirs))
     return run_dirs
 
 
-def discover_selection_manifest(results_root: Path) -> Optional[Path]:
+def discover_selection_manifest(results_root: Path) -> Path | None:
     candidates = [
         p
         for p in results_root.iterdir()
@@ -131,7 +131,7 @@ def discover_selection_manifest(results_root: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def load_selection_table(selection_dir: Optional[Path]) -> pd.DataFrame:
+def load_selection_table(selection_dir: Path | None) -> pd.DataFrame:
     if selection_dir is None:
         return pd.DataFrame()
     path = selection_dir / SELECTED_ALL_NAME
@@ -139,7 +139,7 @@ def load_selection_table(selection_dir: Optional[Path]) -> pd.DataFrame:
 
 
 @contextmanager
-def temporary_config(updates: Dict[str, Any]):
+def temporary_config(updates: dict[str, Any]):
     from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 
     old_values = {k: copy.deepcopy(getattr(ALNSConfig, k, None)) for k in updates}
@@ -155,8 +155,8 @@ def compute_initial_baseline(
     instance_path: Path,
     variant: str,
     seed: int,
-    cache: Dict[Tuple[str, str, int], Dict[str, Any]],
-) -> Dict[str, Any]:
+    cache: dict[tuple[str, str, int], dict[str, Any]],
+) -> dict[str, Any]:
     cache_key = (str(instance_path.resolve()), variant.lower(), int(seed))
     if cache_key in cache:
         return cache[cache_key]
@@ -246,10 +246,10 @@ def compute_initial_baseline(
 def normalize_run_record(
     *,
     run_dir: Path,
-    meta: Dict[str, Any],
+    meta: dict[str, Any],
     selection_df: pd.DataFrame,
-    initial_cache: Dict[Tuple[str, str, int], Dict[str, Any]],
-) -> Dict[str, Any]:
+    initial_cache: dict[tuple[str, str, int], dict[str, Any]],
+) -> dict[str, Any]:
     instance_raw = meta.get("instance")
     instance_path = Path(instance_raw).expanduser() if instance_raw else run_dir
     if not instance_path.is_absolute():
@@ -263,7 +263,7 @@ def normalize_run_record(
     seed = safe_int(meta.get("seed"))
     time_limit = safe_int(meta.get("time_limit"))
 
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "scale": scale,
         "dataset_name": dataset_name,
         "instance": str(instance_path),
@@ -347,8 +347,8 @@ def normalize_run_record(
 
 
 def collect_records(results_root: Path, selection_df: pd.DataFrame) -> pd.DataFrame:
-    initial_cache: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
-    rows: List[Dict[str, Any]] = []
+    initial_cache: dict[tuple[str, str, int], dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
 
     for run_dir in discover_run_dirs(results_root):
         meta_path = run_dir / RUN_META_NAME
@@ -395,7 +395,7 @@ def collect_records(results_root: Path, selection_df: pd.DataFrame) -> pd.DataFr
     return df
 
 
-def filter_scales(df: pd.DataFrame, scales: List[str]) -> pd.DataFrame:
+def filter_scales(df: pd.DataFrame, scales: list[str]) -> pd.DataFrame:
     if df.empty or not scales or "scale" not in df.columns:
         return df
     scale_set = {s.strip().lower() for s in scales if s.strip()}
@@ -404,7 +404,7 @@ def filter_scales(df: pd.DataFrame, scales: List[str]) -> pd.DataFrame:
     return df[df["scale"].astype(str).str.lower().isin(scale_set)].copy()
 
 
-def compute_instance_wide_tables(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def compute_instance_wide_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 

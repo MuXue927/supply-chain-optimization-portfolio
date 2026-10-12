@@ -72,7 +72,6 @@ import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple, Union
 
 # =========================
 # Third-party libraries
@@ -112,36 +111,36 @@ class DataALNS:
     param_alpha: float = field(init=False)
 
     # ==== Base sets and attributes ====
-    plants: Set[str] = field(init=False)
-    dealers: Set[str] = field(init=False)
-    all_skus: Set[str] = field(init=False)
-    all_veh_types: Set[str] = field(init=False)
-    sku_sizes: Dict[str, float] = field(init=False)
+    plants: set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
+    all_veh_types: set[str] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
 
     # Production: daily and aggregate views
-    sku_prod_each_day: Dict[Tuple[str, str, int], int] = field(init=False)   # (plant, sku, day) -> qty
-    sku_prod_total: Dict[Tuple[str, int], int] = field(init=False)           # (sku, day) -> aggregated qty
+    sku_prod_each_day: dict[tuple[str, str, int], int] = field(init=False)   # (plant, sku, day) -> qty
+    sku_prod_total: dict[tuple[str, int], int] = field(init=False)           # (sku, day) -> aggregated qty
 
     # Inventory
-    sku_initial_inv: Dict[Tuple[str, str], int] = field(init=False)          # (plant, sku) -> init qty
-    skus_initial: Dict[str, Set[str]] = field(init=False)                    # plant -> init SKUs
-    skus_prod: Dict[str, Set[str]] = field(init=False)                       # plant -> produced SKUs
-    skus_plant: Dict[str, Set[str]] = field(init=False)                      # plant -> available SKUs (init ∪ produced)
+    sku_initial_inv: dict[tuple[str, str], int] = field(init=False)          # (plant, sku) -> init qty
+    skus_initial: dict[str, set[str]] = field(init=False)                    # plant -> init SKUs
+    skus_prod: dict[str, set[str]] = field(init=False)                       # plant -> produced SKUs
+    skus_plant: dict[str, set[str]] = field(init=False)                      # plant -> available SKUs (init ∪ produced)
 
     # Demand
-    demands: Dict[Tuple[str, str], int] = field(init=False)                  # (dealer, sku) -> demand
-    skus_dealer: Dict[str, Set[str]] = field(init=False)                     # dealer -> demanded SKUs
+    demands: dict[tuple[str, str], int] = field(init=False)                  # (dealer, sku) -> demand
+    skus_dealer: dict[str, set[str]] = field(init=False)                     # dealer -> demanded SKUs
 
     # Historical inventory used as the initial recurrence value, day=0 only
-    historical_s_ikt: Dict[Tuple[str, str, int], int] = field(init=False)    # (plant, sku, 0) -> init inv
+    historical_s_ikt: dict[tuple[str, str, int], int] = field(init=False)    # (plant, sku, 0) -> init inv
 
     # Vehicle parameters
-    veh_type_cost: Dict[str, float] = field(init=False)
-    veh_type_cap: Dict[str, float] = field(init=False)
-    veh_type_min_load: Dict[str, float] = field(init=False)
+    veh_type_cost: dict[str, float] = field(init=False)
+    veh_type_cap: dict[str, float] = field(init=False)
+    veh_type_min_load: dict[str, float] = field(init=False)
 
     # Plant inventory capacity limits
-    plant_inv_limit: Dict[str, float] = field(init=False)
+    plant_inv_limit: dict[str, float] = field(init=False)
 
     # Normalized order DataFrame retained for statistics or debugging
     df_order: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -166,8 +165,8 @@ class DataALNS:
         self,
         file_path: str,
         file_description: str,
-        required_cols: Optional[List[str]] = None,
-    ) -> Optional[pd.DataFrame]:
+        required_cols: list[str] | None = None,
+    ) -> pd.DataFrame | None:
         """
         Safely read a CSV file:
           - check existence
@@ -214,7 +213,7 @@ class DataALNS:
             self.logger.error(f"Failed to load {file_description}: {e}")
             return None
 
-    def _reorganize_dataframe(self, df_input: pd.DataFrame, title_map: Dict[str, str]) -> pd.DataFrame:
+    def _reorganize_dataframe(self, df_input: pd.DataFrame, title_map: dict[str, str]) -> pd.DataFrame:
         """
         Reorganize a DataFrame:
           - rename columns using title_map, mapping original names to new names
@@ -234,7 +233,7 @@ class DataALNS:
         ordered_cols = list(title_map.values())
         return df_result.reindex(columns=ordered_cols)
 
-    def _convert_dataframe_types(self, df: pd.DataFrame, type_mapping: Dict[str, type]) -> pd.DataFrame:
+    def _convert_dataframe_types(self, df: pd.DataFrame, type_mapping: dict[str, type]) -> pd.DataFrame:
         """
         Convert selected columns to target types:
           - safely skip missing columns
@@ -301,7 +300,7 @@ class DataALNS:
             raise FileNotFoundError(f"Configuration file does not exist: {config_file}")
 
         try:
-            with open(config_file, "r", encoding="utf-8") as fp:
+            with open(config_file, encoding="utf-8") as fp:
                 param = json.load(fp)
 
             self.param_pun_factor1 = float(param.get("pun_factor1", 0))
@@ -319,7 +318,7 @@ class DataALNS:
     # ------------------------------------------------------------------
     # Step 2: build file paths
     # ------------------------------------------------------------------
-    def _construct_file_paths(self) -> Dict[str, str]:
+    def _construct_file_paths(self) -> dict[str, str]:
         """Build the mapping of data-file paths inside the dataset directory."""
         dataset_path = os.path.join(self.input_file_loc, self.dataset_name)
         return {
@@ -334,7 +333,7 @@ class DataALNS:
     # ------------------------------------------------------------------
     # Step 3: load all DataFrames
     # ------------------------------------------------------------------
-    def _load_all_dataframes(self, file_paths: Dict[str, str]) -> Dict[str, pd.DataFrame]:
+    def _load_all_dataframes(self, file_paths: dict[str, str]) -> dict[str, pd.DataFrame]:
         """Load CSV files into a DataFrame mapping and stop on any failure."""
         dataframes = {}
         file_desc = {
@@ -365,7 +364,7 @@ class DataALNS:
     # ------------------------------------------------------------------
     # Step 4: normalize DataFrames
     # ------------------------------------------------------------------
-    def _process_dataframes(self, dataframes: Dict[str, pd.DataFrame]):
+    def _process_dataframes(self, dataframes: dict[str, pd.DataFrame]):
         """Apply column mappings and type conversion to _df_* intermediates."""
 
         # Orders
@@ -532,14 +531,14 @@ class DataALNS:
     # ------------------------------------------------------------------
     # Supply-chain and accessor helpers
     # ------------------------------------------------------------------
-    def available_skus_in_plant(self, plant_id: str) -> Set[str]:
+    def available_skus_in_plant(self, plant_id: str) -> set[str]:
         """Return all SKUs available from a plant, or an empty set with a warning."""
         if plant_id not in self.plants:
             self.logger.warning(f"Plant {plant_id} does not exist in the data")
             return set()
         return self.skus_plant.get(plant_id, set())
 
-    def plan_dealer_skus(self, plant_id: str) -> Set[Tuple[str, str]]:
+    def plan_dealer_skus(self, plant_id: str) -> set[tuple[str, str]]:
         """Return potential (dealer, SKU) pairs served by the plant."""
         if plant_id not in self.plants:
             self.logger.warning(f"Plant {plant_id} does not exist in the data")
@@ -552,7 +551,7 @@ class DataALNS:
                     result.add((dealer, sku))
         return result
 
-    def available_skus_to_dealer(self, plant_id: str, dealer_id: str) -> Set[str]:
+    def available_skus_to_dealer(self, plant_id: str, dealer_id: str) -> set[str]:
         """Return SKUs that a plant can supply to a dealer."""
         if plant_id not in self.plants:
             self.logger.warning(f"Plant {plant_id} does not exist in the data")
@@ -563,7 +562,7 @@ class DataALNS:
         supply_chain = self.construct_supply_chain()
         return supply_chain.get((plant_id, dealer_id), set())
 
-    def construct_supply_chain(self) -> Dict[Tuple[str, str], Set[str]]:
+    def construct_supply_chain(self) -> dict[tuple[str, str], set[str]]:
         """
         Build the supply-chain relation:
             {(plant, dealer): intersect_skus}, where intersect_skus contains
@@ -592,7 +591,7 @@ class DataALNS:
                 total += demand
         return total
 
-    def get_total_production_for_sku(self, sku_id: str, day: Optional[int] = None) -> int:
+    def get_total_production_for_sku(self, sku_id: str, day: int | None = None) -> int:
         """Return total production for a SKU on one day or across all days."""
         if day is not None:
             return self.sku_prod_total.get((sku_id, day), 0)
@@ -610,7 +609,7 @@ class DataALNS:
                 total += inv
         return total
 
-    def get_sku_supply_demand_balance(self, sku_id: str) -> Dict[str, Union[int, float]]:
+    def get_sku_supply_demand_balance(self, sku_id: str) -> dict[str, int | float]:
         """
         Supply-demand balance:
             total_supply = initial + production_all
@@ -634,7 +633,7 @@ class DataALNS:
             "status": "surplus" if balance > 0 else "deficit" if balance < 0 else "balanced",
         }
 
-    def get_summary_statistics(self) -> Dict[str, Union[int, float]]:
+    def get_summary_statistics(self) -> dict[str, int | float]:
         """Return overall summary metrics for logging or a quick sanity check."""
         total_demand = sum(self.demands.values())
         total_initial = sum(self.sku_initial_inv.values())

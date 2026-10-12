@@ -57,20 +57,21 @@ testpaths = ["tests"]
 # Lint gate enforced by CI (.github/workflows/ci.yml).
 #
 # The rule set is grown deliberately ("almost certainly a bug" first) instead of
-# switching on ruff's full default set: this code base still carries
-# modernization debt (typing.List -> list, ...) and a gate that is red from the
-# first push gets ignored.
+# switching on ruff's full default set: a gate that is red from the first push
+# gets ignored.
 #
 #   E4/E7/E9  pycodestyle errors
 #   F         pyflakes (unused imports, undefined names, ...)
 #   I         import sorting
+#   UP        pyupgrade (PEP 585/604 annotations, deprecated typing imports, ...)
 #
-# Next candidate: UP (pyupgrade) - roughly 700 findings, most auto-fixable.
+# All four groups are clean as of 2026-10-13; keep new code clean rather than
+# switching on the whole default rule set at once.
 [tool.ruff]
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

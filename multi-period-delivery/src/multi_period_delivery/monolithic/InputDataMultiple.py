@@ -7,7 +7,6 @@ import os
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
 
 import pandas as pd
 
@@ -37,53 +36,53 @@ class InputDataMultiple:
 
     # Data interfaces aligned with the notation in the mathematical model.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle IDs.
-    all_vehicles: Set[int] = field(init=False)
+    all_vehicles: set[int] = field(init=False)
     
     # Volume per SKU {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
 
     # Planned SKU production at each plant in each period {(plant, sku, day): qty}.
-    sku_prod_each_day: Dict[Tuple[str, str, int], int] = field(init=False)
+    sku_prod_each_day: dict[tuple[str, str, int], int] = field(init=False)
     # Initial SKU inventory at each plant {(plant, sku): qty}.
-    sku_initial_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_initial_inv: dict[tuple[str, str], int] = field(init=False)
     
     # SKUs that each plant can supply.
-    skus_plant: Dict[str, Set[str]] = field(init=False)
+    skus_plant: dict[str, set[str]] = field(init=False)
 
     # Dealer demand for each SKU {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKUs required by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
 
     # Use cost for each vehicle {v_id: cost}.
-    veh_cost: Dict[int, float] = field(init=False)
+    veh_cost: dict[int, float] = field(init=False)
     
     # Capacity upper bound for each vehicle {v_id: capacity}.
-    veh_cap: Dict[int, float] = field(init=False)
+    veh_cap: dict[int, float] = field(init=False)
     # Minimum load for each vehicle {v_id: min_load}.
-    veh_min_load: Dict[int, float] = field(init=False)
+    veh_min_load: dict[int, float] = field(init=False)
     
     # Inventory capacity upper bound for each plant {plant: max_cap}.
-    plant_inv_limit: Dict[str, float] = field(init=False)
+    plant_inv_limit: dict[str, float] = field(init=False)
     
     # All vehicle types.
-    all_veh_types: List[str] = field(init=False)
+    all_veh_types: list[str] = field(init=False)
     # Vehicle IDs must be linked to vehicle types.
     # Given a vehicle ID, its type identifies all relevant vehicle attributes,
     # including use cost, capacity, and minimum load.
     # 
-    veh_type: Dict[int, str] = field(init=False)
+    veh_type: dict[int, str] = field(init=False)
     # Conversely, each vehicle type identifies its vehicle IDs {v_type: {v_id}}.
-    veh_ids: Dict[str, Set[int]] = field(init=False)
+    veh_ids: dict[str, set[int]] = field(init=False)
 
     # Supply relationships between plants and dealers {(plant, dealer): {sku}}.
-    supply_chain: Dict[Tuple[str, str], Set[str]] = field(init=False)
+    supply_chain: dict[tuple[str, str], set[str]] = field(init=False)
     
     # Upper bound on the number of vehicles that can be used.
     max_veh_num: int = field(init=False)

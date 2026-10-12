@@ -15,7 +15,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -30,7 +29,7 @@ class Pattern:
     plant: str
     dealer: str
     vehicle_type: str
-    load: Dict[str, int]
+    load: dict[str, int]
     penalty_indicator: int
     cost: float
 
@@ -57,14 +56,14 @@ class CplexApiColumnGeneration:
         # with a different alpha is priced correctly.
         self.alpha = float(data.param_alpha if alpha is None else alpha)
         self.random_seed = int(random_seed)
-        self.patterns: List[Pattern] = []
-        self.iteration_log: List[Dict[str, float]] = []
+        self.patterns: list[Pattern] = []
+        self.iteration_log: list[dict[str, float]] = []
         self.master_lp_objective: float | None = None
         self.final_objective: float | None = None
         self.final_status = "not_solved"
 
     @property
-    def supply_pairs(self) -> List[Tuple[str, str]]:
+    def supply_pairs(self) -> list[tuple[str, str]]:
         """Return all plant-dealer pairs with at least one shareable SKU."""
         pairs = []
         for plant in self.data.plants:
@@ -77,7 +76,7 @@ class CplexApiColumnGeneration:
                     pairs.append((plant, dealer))
         return pairs
 
-    def _available_skus(self, plant: str, dealer: str) -> List[str]:
+    def _available_skus(self, plant: str, dealer: str) -> list[str]:
         return [
             sku
             for sku in self.data.all_skus
@@ -88,8 +87,8 @@ class CplexApiColumnGeneration:
     def _pattern_cost(
         self,
         vehicle_type: str,
-        load: Dict[str, int],
-    ) -> Tuple[float, int]:
+        load: dict[str, int],
+    ) -> tuple[float, int]:
         volume = sum(
             self.data.sku_sizes[sku] * qty for sku, qty in load.items()
         )
@@ -178,7 +177,7 @@ class CplexApiColumnGeneration:
         *,
         integer_patterns: bool,
         artificial_penalty: float = 1e6,
-    ) -> Tuple[CplexApiModel, Dict[int, str], Dict[Tuple[str, str], str]]:
+    ) -> tuple[CplexApiModel, dict[int, str], dict[tuple[str, str], str]]:
         """Build the restricted master problem."""
         model = CplexApiModel(
             (
@@ -187,8 +186,8 @@ class CplexApiColumnGeneration:
                 else "single_period_master_lp"
             ),
         )
-        pattern_vars: Dict[int, str] = {}
-        artificial_vars: Dict[Tuple[str, str], str] = {}
+        pattern_vars: dict[int, str] = {}
+        artificial_vars: dict[tuple[str, str], str] = {}
 
         for index, pattern in enumerate(self.patterns):
             pattern_vars[index] = model.add_variable(
@@ -202,7 +201,7 @@ class CplexApiColumnGeneration:
                 kind="continuous",
             )
 
-        objective: Dict[str, float] = {}
+        objective: dict[str, float] = {}
         for index, pattern in enumerate(self.patterns):
             objective[pattern_vars[index]] = pattern.cost
         for variable in artificial_vars.values():
@@ -242,7 +241,7 @@ class CplexApiColumnGeneration:
     def solve_master_lp(
         self,
         work_dir: str | Path,
-    ) -> Tuple[CplexApiSolution, Dict[int, str], Dict[Tuple[str, str], str]]:
+    ) -> tuple[CplexApiSolution, dict[int, str], dict[tuple[str, str], str]]:
         """Solve one master LP relaxation and return its dual solution."""
         model, pattern_vars, artificial_vars = self._build_master(
             integer_patterns=False
@@ -259,8 +258,8 @@ class CplexApiColumnGeneration:
         plant: str,
         dealer: str,
         vehicle_type: str,
-        demand_duals: Dict[Tuple[str, str], float],
-        supply_duals: Dict[Tuple[str, str], float],
+        demand_duals: dict[tuple[str, str], float],
+        supply_duals: dict[tuple[str, str], float],
         work_dir: str | Path,
     ) -> Pattern | None:
         """Solve one pricing subproblem and return a negative-cost pattern."""
@@ -353,7 +352,7 @@ class CplexApiColumnGeneration:
         work_dir: str | Path,
         *,
         final_time_limit: float = 60.0,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Run column generation and then solve the integer restricted master."""
         work_path = Path(work_dir)
         work_path.mkdir(parents=True, exist_ok=True)
@@ -446,14 +445,14 @@ class CplexApiColumnGeneration:
 
     def write_outputs(
         self,
-        result: Dict[str, object],
+        result: dict[str, object],
         output_dir: str | Path,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Write the final pattern solution in the project CSV schema."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         solution: CplexApiSolution = result["final_solution"]  # type: ignore[assignment]
-        pattern_vars: Dict[int, str] = result["pattern_vars"]  # type: ignore[assignment]
+        pattern_vars: dict[int, str] = result["pattern_vars"]  # type: ignore[assignment]
 
         rows = []
         vehicle_id = 0

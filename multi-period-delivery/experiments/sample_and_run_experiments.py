@@ -23,7 +23,6 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_EXPERIMENTS = PROJECT_ROOT / "experiments" / "run_experiments.py"
@@ -33,7 +32,7 @@ def utc_now_iso_z() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def dataset_sort_key(p: Path) -> Tuple[int, str]:
+def dataset_sort_key(p: Path) -> tuple[int, str]:
     name = p.name
     if name.startswith("dataset_"):
         suffix = name.split("dataset_", 1)[1]
@@ -42,7 +41,7 @@ def dataset_sort_key(p: Path) -> Tuple[int, str]:
     return 10**9, name
 
 
-def load_stats_csv(stats_file: Path) -> Dict[str, Dict[str, str]]:
+def load_stats_csv(stats_file: Path) -> dict[str, dict[str, str]]:
     if not stats_file.exists():
         return {}
     with stats_file.open("r", encoding="utf-8", newline="") as f:
@@ -55,7 +54,7 @@ def load_stats_csv(stats_file: Path) -> Dict[str, Dict[str, str]]:
         return out
 
 
-def collect_dataset_dirs(scale_dir: Path) -> List[Path]:
+def collect_dataset_dirs(scale_dir: Path) -> list[Path]:
     ds = [p for p in scale_dir.iterdir() if p.is_dir() and p.name.startswith("dataset_")]
     ds.sort(key=dataset_sort_key)
     return ds
@@ -63,8 +62,8 @@ def collect_dataset_dirs(scale_dir: Path) -> List[Path]:
 
 def write_selection_csv(
     file_path: Path,
-    rows: List[Dict[str, str]],
-    extra_headers: List[str],
+    rows: list[dict[str, str]],
+    extra_headers: list[str],
 ) -> None:
     base_headers = [
         "selection_order",
@@ -84,13 +83,13 @@ def write_selection_csv(
 def run_scale(
     *,
     python_exe: str,
-    instances: List[Path],
+    instances: list[Path],
     variants: str,
     seeds: str,
     time_limit: int,
     parallel: int,
     out_dir: Path,
-) -> Tuple[int, List[str]]:
+) -> tuple[int, list[str]]:
     cmd = [
         python_exe,
         str(RUN_EXPERIMENTS),
@@ -187,8 +186,8 @@ def main() -> int:
 
     rng = random.Random(args.selection_seed)
 
-    all_rows: List[Dict[str, str]] = []
-    per_scale_selected: Dict[str, List[Path]] = {}
+    all_rows: list[dict[str, str]] = []
+    per_scale_selected: dict[str, list[Path]] = {}
 
     # 1) Sample and persist selection info.
     for scale in scales:

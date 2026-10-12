@@ -34,12 +34,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 # Curated instance set: 2 small + 2 medium + 1 large.
 # These are the thesis "representative" instances, so the new results can be
 # compared directly with the recorded thesis numbers on identical data.
-INSTANCES: Dict[str, List[int]] = {
+INSTANCES: dict[str, list[int]] = {
     "small": [12, 30],
     "medium": [13, 26],
     "large": [3],
@@ -47,10 +46,10 @@ INSTANCES: Dict[str, List[int]] = {
 
 # Time budget in seconds per scale. The small budget matches the thesis
 # comparison so the ALNS-vs-thesis numbers stay comparable.
-BUDGETS: Dict[str, int] = {"small": 180, "medium": 360, "large": 720}
+BUDGETS: dict[str, int] = {"small": 180, "medium": 360, "large": 720}
 
 # ALNS variant -> extra CLI flags.
-VARIANTS: Dict[str, List[str]] = {
+VARIANTS: dict[str, list[str]] = {
     "basic": [],
     "tuner": ["--enable-param-tuner"],
     "ml": ["--enable-ml-operators"],
@@ -76,7 +75,7 @@ class Job:
         return f"{self.scale}_dataset_{self.dataset_id}__{self.variant}"
 
 
-def parse_log(text: str) -> Tuple[Optional[float], Optional[float]]:
+def parse_log(text: str) -> tuple[float | None, float | None]:
     """Return (initial_objective, final_objective) parsed from an ALNS log."""
     initial = INITIAL_RE.search(text)
     final = FINAL_RE.search(text)
@@ -86,7 +85,7 @@ def parse_log(text: str) -> Tuple[Optional[float], Optional[float]]:
     )
 
 
-def independent_objective(run_dir: Path) -> tuple[Optional[float], Optional[float]]:
+def independent_objective(run_dir: Path) -> tuple[float | None, float | None]:
     """Recompute the objective from opt_summary.csv.
 
     Returns ``(corrected_total, fixed_cost_only)``.
@@ -187,11 +186,11 @@ def run_job(
     }
 
 
-def write_summary(rows: List[dict], results_dir: Path) -> None:
+def write_summary(rows: list[dict], results_dir: Path) -> None:
     """Write per-scale mean/median improvement and objective."""
     import statistics
 
-    def stat(values: List[float], fn) -> Optional[float]:
+    def stat(values: list[float], fn) -> float | None:
         return round(fn(values), 4) if values else None
 
     summary_rows = []
@@ -272,7 +271,7 @@ def main() -> int:
     ]
 
     print(f"Scheduling {len(jobs)} runs with {args.workers} workers...")
-    rows: List[dict] = []
+    rows: list[dict] = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {
             pool.submit(

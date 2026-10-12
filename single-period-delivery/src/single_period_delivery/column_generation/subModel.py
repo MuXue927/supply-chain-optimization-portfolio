@@ -7,8 +7,8 @@
 # Production plants may supply overlapping SKU sets.
 import math
 import os
+from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Dict, Hashable, Set, Tuple
 
 import gurobipy as gp
 from gurobipy import GRB
@@ -32,24 +32,24 @@ class SubModel:
     param_output_flag: int = field(init=False)
 
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # SKUs required by the current dealer and available from the current production plant.
-    require_skus: Set[str] = field(init=False)
+    require_skus: set[str] = field(init=False)
     # Volume per unit for each SKU: {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)
+    sku_sizes: dict[str, float] = field(init=False)
     # SKU quantity available at production plants: {(plant, sku): qty}.
-    sku_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_inv: dict[tuple[str, str], int] = field(init=False)
     # Dealer demand by SKU: {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKU set requested by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
 
     # Usage cost for each vehicle type: {v_type: cost}.
-    veh_type_cost: Dict[str, float] = field(init=False)
+    veh_type_cost: dict[str, float] = field(init=False)
     # Capacity limit for each vehicle type: {v_type: capacity}.
-    veh_type_cap: Dict[str, int] = field(init=False)
+    veh_type_cap: dict[str, int] = field(init=False)
     # Minimum shipment quantity for each vehicle type: {v_type: min_load}.
-    veh_type_min_load: Dict[str, int] = field(init=False)
+    veh_type_min_load: dict[str, int] = field(init=False)
 
     # Define the mathematical model, objective function, and decision variables.
     # Add the constraints after defining those components.

@@ -4,7 +4,6 @@
 # 2. the volume of goods loaded onto the vehicle; and
 # 3. whether the vehicle is full.
 from dataclasses import dataclass, field
-from typing import Dict
 
 from .InputDataHeuristic import InputDataHeuristic
 
@@ -32,7 +31,7 @@ class Vehicle:  # fact_id, dealer_id, type, and data must be provided when insta
     # init: If true (the default), this field is included as a parameter to the generated __init__() method.
 
     capacity: float = field(init=False)  # Remaining usable volume of the vehicle.
-    cargo: Dict[str, int] = field(default_factory=dict)  # SKUs loaded on the vehicle and their quantities.
+    cargo: dict[str, int] = field(default_factory=dict)  # SKUs loaded on the vehicle and their quantities.
 
     def __post_init__(self):
         Vehicle.id += 1

@@ -48,7 +48,7 @@ Potential improvements (not implemented):
 # Standard library
 # =========================
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # =========================
 # Third-party libraries
@@ -81,9 +81,9 @@ class OperatorParams:
         and score operators in get_best_operators.
     """
     name: str
-    params: Dict[str, Any] = field(default_factory=dict)
-    ranges: Dict[str, Tuple[float, float]] = field(default_factory=dict)
-    performance_history: List[float] = field(default_factory=list)
+    params: dict[str, Any] = field(default_factory=dict)
+    ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
+    performance_history: list[float] = field(default_factory=list)
     usage_count: int = 0
     success_count: int = 0
 
@@ -160,15 +160,15 @@ class ParamAutoTuner:
       get_operator_params returns an empty dictionary.
     """
 
-    operators: Dict[str, OperatorParams]
-    _prev_params: Dict[str, Dict[str, Any]]
+    operators: dict[str, OperatorParams]
+    _prev_params: dict[str, dict[str, Any]]
 
     def __init__(self, data: DataALNS, rng: rnd.Generator):
         self.data = data
         self.rng = rng
 
         # Registered operator parameters
-        self.operators: Dict[str, OperatorParams] = {}
+        self.operators: dict[str, OperatorParams] = {}
 
         # Instance features reserved for higher-level policies. The current
         # logic does not consume them directly.
@@ -190,10 +190,10 @@ class ParamAutoTuner:
 
         # Historical parameter snapshots used to compute
         # direction = value - prev_value.
-        self._prev_params: Dict[str, Dict[str, Any]] = {}
+        self._prev_params: dict[str, dict[str, Any]] = {}
         # Most recent execution-time parameter snapshot recorded by
         # get_operator_params, used to compute the used minus baseline direction.
-        self._last_used: Dict[str, Dict[str, Any]] = {}
+        self._last_used: dict[str, dict[str, Any]] = {}
 
         # Initialize default operators
         self._init_default_operators()
@@ -216,7 +216,7 @@ class ParamAutoTuner:
         except Exception:
             return name
 
-    def _extract_instance_features(self) -> Dict[str, float]:
+    def _extract_instance_features(self) -> dict[str, float]:
         """
         Extract problem-scale and structural statistics for future ML or
         advanced adaptive policies.
@@ -225,7 +225,7 @@ class ParamAutoTuner:
         participate in the core parameter-tuning process.
         """
         data = self.data
-        features: Dict[str, float] = {}
+        features: dict[str, float] = {}
 
         # Scale features
         features["num_plants"] = len(data.plants)
@@ -327,8 +327,8 @@ class ParamAutoTuner:
     # Public interface: registration and updates
     # -----------------------------------------------------------------
     def register_operator(self, name: str,
-                          params: Dict[str, Any],
-                          ranges: Dict[str, Tuple[float, float]]):
+                          params: dict[str, Any],
+                          ranges: dict[str, tuple[float, float]]):
         """
         Register an operator.
 
@@ -363,7 +363,7 @@ class ParamAutoTuner:
         self,
         current: int,
         maximum: int,
-        no_improve_iters: Optional[int] = None,
+        no_improve_iters: int | None = None,
     ):
         """
         Set iteration progress and refresh the phase and exploration rate.
@@ -415,7 +415,7 @@ class ParamAutoTuner:
     # -----------------------------------------------------------------
     # Parameter retrieval: exploration versus exploitation
     # -----------------------------------------------------------------
-    def get_operator_params(self, name: str) -> Dict[str, Any]:
+    def get_operator_params(self, name: str) -> dict[str, Any]:
         """
         Return the parameters to use for an operator and record the execution
         snapshot in self._last_used[name].
@@ -425,7 +425,7 @@ class ParamAutoTuner:
         directional tuning.
         """
         # name = self._canonical_name(name)
-        ret: Dict[str, Any] = {}
+        ret: dict[str, Any] = {}
         if name not in self.operators:
             print(f"[WARNING] Unregistered operator: {name}; using default parameters")
             self._last_used[name] = {}
@@ -586,7 +586,7 @@ class ParamAutoTuner:
     # -----------------------------------------------------------------
     # Operator ranking: top K
     # -----------------------------------------------------------------
-    def get_best_operators(self, operator_type: str, top_k: int = 3) -> List[str]:
+    def get_best_operators(self, operator_type: str, top_k: int = 3) -> list[str]:
         """
         Return the top-performing operators whose names contain operator_type,
         such as 'removal' or 'repair'.

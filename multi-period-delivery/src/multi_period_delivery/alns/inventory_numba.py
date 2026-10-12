@@ -22,7 +22,6 @@ Notes:
 
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, List
 
 import numpy as np
 
@@ -37,10 +36,10 @@ except Exception:
 
 @dataclass
 class IndexMaps:
-    plant_to_idx: Dict[str, int]
-    sku_to_idx: Dict[str, int]
-    idx_to_plant: List[str]
-    idx_to_sku: List[str]
+    plant_to_idx: dict[str, int]
+    sku_to_idx: dict[str, int]
+    idx_to_plant: list[str]
+    idx_to_sku: list[str]
     horizons: int
     n_plants: int
     n_skus: int

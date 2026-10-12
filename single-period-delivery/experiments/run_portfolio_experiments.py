@@ -29,16 +29,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
-INSTANCES: Dict[str, List[str]] = {
+INSTANCES: dict[str, list[str]] = {
     "small": ["dataset_1", "dataset_3"],
     "medium": ["dataset_1", "dataset_3"],
     "large": ["dataset_1"],
 }
 
 # CPLEX time limit in seconds per instance.
-CPLEX_TIME_LIMITS: Dict[str, int] = {"small": 600, "medium": 600, "large": 600}
+CPLEX_TIME_LIMITS: dict[str, int] = {"small": 600, "medium": 600, "large": 600}
 
 
 @dataclass
@@ -52,7 +51,7 @@ class Job:
         return f"{self.scale}_{self.dataset_name}__{self.approach}"
 
 
-def heuristic_objective(run_dir: Path, dataset_name: str) -> Optional[float]:
+def heuristic_objective(run_dir: Path, dataset_name: str) -> float | None:
     summary = run_dir / dataset_name / "opt_summary.csv"
     if not summary.exists():
         return None
@@ -189,7 +188,7 @@ def main() -> int:
     ]
 
     print(f"Scheduling {len(jobs)} runs with {args.workers} workers...")
-    rows: List[dict] = []
+    rows: list[dict] = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {
             pool.submit(run_job, job, project_root, results_dir, sys.executable): job

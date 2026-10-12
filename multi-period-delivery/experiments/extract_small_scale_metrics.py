@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -116,7 +116,7 @@ def load_and_filter_small(input_csv: Path) -> pd.DataFrame:
 
 
 def build_detail_table(small: pd.DataFrame) -> pd.DataFrame:
-    keep_cols: List[str] = [
+    keep_cols: list[str] = [
         "scale",
         "dataset_name",
         "instance",
@@ -151,7 +151,7 @@ def build_summary_table(detail: pd.DataFrame) -> pd.DataFrame:
         "mip_gap",
     ]
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for m in metrics:
         s = pd.to_numeric(detail[m], errors="coerce")
         valid = s.dropna()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple
 
 import pandas as pd
 
@@ -17,11 +16,11 @@ class SinglePeriodCplexApiMonolithic:
     def __init__(self, data: InputDataSingle):
         self.data = data
         self.model = CplexApiModel("single_period_cplex_api_monolithic")
-        self.z: Dict[int, str] = {}
-        self.zz: Dict[int, str] = {}
-        self.p: Dict[int, str] = {}
-        self.y: Dict[Tuple[str, str, int], str] = {}
-        self.x: Dict[Tuple[str, str, str, int], str] = {}
+        self.z: dict[int, str] = {}
+        self.zz: dict[int, str] = {}
+        self.p: dict[int, str] = {}
+        self.y: dict[tuple[str, str, int], str] = {}
+        self.x: dict[tuple[str, str, str, int], str] = {}
         self._build_variables()
         self._build_objective()
         self._build_constraints()
@@ -59,7 +58,7 @@ class SinglePeriodCplexApiMonolithic:
 
     def _build_objective(self) -> None:
         """Minimize fixed cost plus minimum-load penalties."""
-        terms: Dict[str, float] = {}
+        terms: dict[str, float] = {}
         for vehicle in self.z:
             terms[self.z[vehicle]] = float(self.data.veh_cost[vehicle])
             terms[self.p[vehicle]] = (
@@ -194,7 +193,7 @@ class SinglePeriodCplexApiMonolithic:
         self,
         solution: CplexApiSolution,
         output_dir: str | Path,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Write result files matching the original single-period schema."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)

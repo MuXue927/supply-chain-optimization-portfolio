@@ -12,18 +12,19 @@ installed and produces a clear dependency error at model-build time.
 from __future__ import annotations
 
 import io
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping, Tuple
+from typing import Any
 
 import pandas as pd
 
 from ..monolithic.InputDataMultiple import InputDataMultiple
 
-IndexVehiclePeriod = Tuple[int, int]
-IndexPlantDealerVehiclePeriod = Tuple[str, str, int, int]
-IndexPlantSkuPeriod = Tuple[str, str, int]
-IndexPlantDealerSkuVehiclePeriod = Tuple[str, str, str, int, int]
+IndexVehiclePeriod = tuple[int, int]
+IndexPlantDealerVehiclePeriod = tuple[str, str, int, int]
+IndexPlantSkuPeriod = tuple[str, str, int]
+IndexPlantDealerSkuVehiclePeriod = tuple[str, str, str, int, int]
 
 
 def _load_cplex() -> Any:
@@ -57,7 +58,7 @@ class CplexApiSolution:
 
     status: str
     objective: float | None
-    variables: Dict[str, float] = field(default_factory=dict)
+    variables: dict[str, float] = field(default_factory=dict)
     best_bound: float | None = None
     mip_gap: float | None = None
     solver_status: str = ""
@@ -78,12 +79,12 @@ class MultiPeriodCplexApiMonolithic:
 
         # Variable dictionaries map mathematical indices to CPLEX column
         # indices. The index-to-name mapping is retained for solution export.
-        self.z: Dict[IndexVehiclePeriod, int] = {}
-        self.zz: Dict[IndexVehiclePeriod, int] = {}
-        self.p: Dict[IndexVehiclePeriod, int] = {}
-        self.y: Dict[IndexPlantDealerVehiclePeriod, int] = {}
-        self.x: Dict[IndexPlantDealerSkuVehiclePeriod, int] = {}
-        self.s: Dict[IndexPlantSkuPeriod, int] = {}
+        self.z: dict[IndexVehiclePeriod, int] = {}
+        self.zz: dict[IndexVehiclePeriod, int] = {}
+        self.p: dict[IndexVehiclePeriod, int] = {}
+        self.y: dict[IndexPlantDealerVehiclePeriod, int] = {}
+        self.x: dict[IndexPlantDealerSkuVehiclePeriod, int] = {}
+        self.s: dict[IndexPlantSkuPeriod, int] = {}
 
         self._variable_names: list[str] = []
         self._variable_lower_bounds: list[float] = []
@@ -251,7 +252,7 @@ class MultiPeriodCplexApiMonolithic:
         # plant-dealer assignment is selected in a period.
         for vehicle in sorted(data.all_vehicles):
             for period in self.periods:
-                terms: Dict[int, float] = {
+                terms: dict[int, float] = {
                     self.y[plant, dealer, vehicle, period]: 1.0
                     for plant, dealer in data.supply_chain
                 }
@@ -285,7 +286,7 @@ class MultiPeriodCplexApiMonolithic:
         # Constraints 3-5: minimum load, penalty linking, and capacity.
         for vehicle in sorted(data.all_vehicles):
             for period in self.periods:
-                load_terms: Dict[int, float] = {}
+                load_terms: dict[int, float] = {}
                 for plant, dealer in data.supply_chain:
                     for sku in data.supply_chain[plant, dealer]:
                         load_terms[self.x[plant, dealer, sku, vehicle, period]] = float(
@@ -310,7 +311,7 @@ class MultiPeriodCplexApiMonolithic:
                     1.0,
                 )
 
-                capacity_terms: Dict[int, float] = {}
+                capacity_terms: dict[int, float] = {}
                 for plant, dealer in data.supply_chain:
                     for sku in data.supply_chain[plant, dealer]:
                         capacity_terms[self.x[plant, dealer, sku, vehicle, period]] = (
@@ -473,7 +474,7 @@ class MultiPeriodCplexApiMonolithic:
         )
 
         objective: float | None = None
-        variables: Dict[str, float] = {}
+        variables: dict[str, float] = {}
         try:
             feasible = bool(self.model.solution.is_primal_feasible())
         except Exception:
@@ -534,7 +535,7 @@ class MultiPeriodCplexApiMonolithic:
         self,
         solution: CplexApiSolution,
         output_dir: str | Path,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Write result files compatible with the existing experiment schema."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)

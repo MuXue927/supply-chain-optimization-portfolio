@@ -6,7 +6,6 @@ import os
 import random
 import time
 from dataclasses import field
-from typing import Dict, Tuple
 
 import gurobipy as gp
 import pandas as pd
@@ -22,7 +21,7 @@ data: InputDataCG
 # Plant identifier.
 masterM: MasterModel
 # (fact_id, dealer_id, vehicle_type)
-subM: Dict[Tuple[str, str, str], SubModel] = field(default_factory=dict)
+subM: dict[tuple[str, str, str], SubModel] = field(default_factory=dict)
 
 project_root = os.getcwd()
 input_loc = os.path.join(project_root, 'datasets', 'single-period', 'large')

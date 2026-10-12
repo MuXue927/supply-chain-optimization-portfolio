@@ -4,7 +4,6 @@
 # 2. Calculating the volume of products loaded on the vehicle.
 # 3. Determining whether the vehicle is fully loaded.
 from dataclasses import dataclass, field
-from typing import Dict
 
 from .InputDataCG import InputDataCG
 
@@ -31,7 +30,7 @@ class Vehicle:  # fact_id, dealer_id, type, and data must be provided when const
     # init: If true (the default), this field is included as a parameter to the generated __init__() method.
 
     capacity: float = field(init=False)  # Available vehicle volume.
-    cargo: Dict[str, int] = field(default_factory=dict)  # SKUs loaded on the vehicle and their quantities.
+    cargo: dict[str, int] = field(default_factory=dict)  # SKUs loaded on the vehicle and their quantities.
 
     def __post_init__(self):
         Vehicle.id += 1

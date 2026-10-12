@@ -5,7 +5,6 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Set, Tuple
 
 import pandas as pd
 
@@ -24,33 +23,33 @@ class InputDataHeuristic:
     
     # Required data interfaces.
     # Set of production plants.
-    plants: Set[str] = field(init=False)
+    plants: set[str] = field(init=False)
     # Set of dealers.
-    dealers: Set[str] = field(init=False)
+    dealers: set[str] = field(init=False)
     # Set of all SKUs.
-    all_skus: Set[str] = field(init=False)
+    all_skus: set[str] = field(init=False)
     # Set of all vehicle types.
-    all_veh_types: Set[str] = field(init=False)
+    all_veh_types: set[str] = field(init=False)
     
     # Unit volume of each SKU: {sku: size}.
-    sku_sizes: Dict[str, float] = field(init=False)  
+    sku_sizes: dict[str, float] = field(init=False)  
     
     # Current SKU inventory at each production plant: {(plant, sku): qty}.
-    sku_inv: Dict[Tuple[str, str], int] = field(init=False)
+    sku_inv: dict[tuple[str, str], int] = field(init=False)
     # SKUs that can be supplied by each production plant.
-    skus_plant: Dict[str, Set[str]] = field(init=False)
+    skus_plant: dict[str, set[str]] = field(init=False)
     
     # Dealer demand for each SKU: {(dealer, sku): qty}.
-    demands: Dict[Tuple[str, str], int] = field(init=False)
+    demands: dict[tuple[str, str], int] = field(init=False)
     # SKUs required by each dealer.
-    skus_dealer: Dict[str, Set[str]] = field(init=False)
+    skus_dealer: dict[str, set[str]] = field(init=False)
     
     # Usage cost of each vehicle type: {v_type: cost}.
-    veh_type_cost: Dict[str, float] = field(init=False)
+    veh_type_cost: dict[str, float] = field(init=False)
     # Capacity of each vehicle type: {v_type: capacity}.
-    veh_type_cap: Dict[str, int] = field(init=False)
+    veh_type_cap: dict[str, int] = field(init=False)
     # Minimum load of each vehicle type: {v_type: min_load}.
-    veh_type_min_load: Dict[str, int] = field(init=False)
+    veh_type_min_load: dict[str, int] = field(init=False)
     # Penalty coefficient applied to underloaded vehicles.
     param_alpha: float = field(init=False)
     

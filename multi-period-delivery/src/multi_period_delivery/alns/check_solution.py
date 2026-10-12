@@ -25,7 +25,6 @@ Inputs/Outputs
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 from .alns_config import default_config as ALNSConfig
 
@@ -54,9 +53,9 @@ class ValidationResult:
     """Data class for one validation result."""
     constraint_name: str
     is_satisfied: bool
-    violations: List[str]
+    violations: list[str]
     total_violations: int
-    details: Dict
+    details: dict
 
 
 class SolutionValidator:
@@ -276,7 +275,7 @@ class SolutionValidator:
             details=details
         )
     
-    def validate_all(self) -> Tuple[bool, List[ValidationResult]]:
+    def validate_all(self) -> tuple[bool, list[ValidationResult]]:
         """Run all constraint checks."""
         logger.info("Starting solution validation...")
         

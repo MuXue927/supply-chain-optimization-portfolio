@@ -50,7 +50,6 @@ Compatibility helper, not registered as an ALNS repair operator:
 import logging
 import math
 import time
-from typing import Optional
 
 # -------------------------
 # Third-party imports
@@ -143,7 +142,7 @@ class RepairOperatorWrapper:
     Provides a stable __name__ for ALNS logging and is callable with (state, rng, **kwargs).
     """
 
-    def __init__(self, func_or_callable, name: Optional[str] = None, **fixed_kwargs):
+    def __init__(self, func_or_callable, name: str | None = None, **fixed_kwargs):
         self.func = func_or_callable
         self.fixed_kwargs = fixed_kwargs or {}
         # Ensure ALNS logging can read a friendly name.
@@ -182,8 +181,8 @@ def wrap_repair_no_args(func):
 
 
 def create_cross_period_consolidation_repair(
-    time_limit: Optional[float] = None,
-    max_moves: Optional[int] = None,
+    time_limit: float | None = None,
+    max_moves: int | None = None,
 ):
     """Factory that binds a work budget onto cross_period_consolidation_repair."""
     return RepairOperatorWrapper(
@@ -194,7 +193,7 @@ def create_cross_period_consolidation_repair(
     )
 
 
-def create_local_search_repair(max_iter: Optional[int] = None):
+def create_local_search_repair(max_iter: int | None = None):
     """Factory that returns a wrapper for local_search_repair with max_iter bound."""
     defaults = ALNSConfig.get_operator_default("local_search_repair").get("params", {})
     max_iter = max_iter if max_iter is not None else defaults.get("max_iter", 10)
@@ -203,9 +202,9 @@ def create_local_search_repair(max_iter: Optional[int] = None):
 
 
 def create_smart_batch_repair(
-    max_iter: Optional[int] = None,
-    batch_size: Optional[int] = None,
-    timeout: Optional[float] = None,
+    max_iter: int | None = None,
+    batch_size: int | None = None,
+    timeout: float | None = None,
 ):
     """Factory that returns a wrapper for smart_batch_repair with bound parameters."""
     defaults = ALNSConfig.get_operator_default("smart_batch_repair").get("params", {})
@@ -225,9 +224,9 @@ def create_smart_batch_repair(
 
 
 def create_regret_repair(
-    k: Optional[int] = None,
-    topN: Optional[int] = None,
-    time_limit: Optional[float] = None,
+    k: int | None = None,
+    topN: int | None = None,
+    time_limit: float | None = None,
 ):
     """
     Return an instance of RegretBasedRepairOperator with readable __name__.
@@ -247,8 +246,8 @@ def create_regret_repair(
 def greedy_repair(
     partial: SolutionState,
     rng: rnd.Generator,
-    demand_weight: Optional[float] = None,
-    stock_weight: Optional[float] = None,
+    demand_weight: float | None = None,
+    stock_weight: float | None = None,
 ) -> SolutionState:
     """
     Reworked greedy_repair:
@@ -546,8 +545,8 @@ def fill_minimum_load_repair(
 def cross_period_consolidation_repair(
     partial: SolutionState,
     rng: rnd.Generator,
-    time_limit: Optional[float] = None,
-    max_moves: Optional[int] = None,
+    time_limit: float | None = None,
+    max_moves: int | None = None,
 ) -> SolutionState:
     """Move cargo across periods to remove an underutilized vehicle.
 
@@ -711,7 +710,7 @@ def cross_period_consolidation_repair(
 
 
 def local_search_repair(
-    partial: SolutionState, rng: rnd.Generator, max_iter: Optional[int] = None
+    partial: SolutionState, rng: rnd.Generator, max_iter: int | None = None
 ) -> SolutionState:
     """
     Local Search Repair:
@@ -1006,9 +1005,9 @@ def infeasible_repair(partial: SolutionState, rng: rnd.Generator) -> SolutionSta
 def smart_batch_repair(
     partial: SolutionState,
     rng: rnd.Generator,
-    max_iter: Optional[int] = None,
-    batch_size: Optional[int] = None,
-    timeout: Optional[float] = None,
+    max_iter: int | None = None,
+    batch_size: int | None = None,
+    timeout: float | None = None,
 ) -> SolutionState:
     """
     Smart Batch Repair:
@@ -1108,9 +1107,9 @@ def smart_batch_repair(
 def regret_based_repair(
     partial: SolutionState,
     rng: rnd.Generator,
-    k: Optional[int] = None,
-    topN: Optional[int] = None,
-    time_limit: Optional[float] = None,
+    k: int | None = None,
+    topN: int | None = None,
+    time_limit: float | None = None,
 ) -> SolutionState:
     """
     Note: time_limit caps runtime as a guardrail and should not be included in
@@ -1664,7 +1663,7 @@ class RegretBasedRepairOperator:
     Example: alns.add_repair_operator(RegretBasedRepairOperator(k=2, topN=6))
     """
 
-    def __init__(self, k: int = 2, topN: int = 6, time_limit: Optional[float] = None):
+    def __init__(self, k: int = 2, topN: int = 6, time_limit: float | None = None):
         defaults = ALNSConfig.get_operator_default("regret_based_repair").get(
             "params", {}
         )
@@ -1772,7 +1771,7 @@ def fleet_consolidation_repair(
 
 
 def sequential_repair(
-    partial: SolutionState, rng: rnd.Generator, lookahead_horizon: Optional[int] = None
+    partial: SolutionState, rng: rnd.Generator, lookahead_horizon: int | None = None
 ) -> SolutionState:
     """
     Sequential repair following the period order.
@@ -1998,7 +1997,7 @@ def sequential_repair(
     return state
 
 
-def create_sequential_repair(lookahead_horizon: Optional[int] = None):
+def create_sequential_repair(lookahead_horizon: int | None = None):
     """Factory that creates a sequential-repair operator wrapper."""
     defaults = ALNSConfig.get_operator_default("sequential_repair").get("params", {})
     lookahead_horizon = lookahead_horizon or defaults.get("lookahead_horizon", None)
@@ -2011,7 +2010,7 @@ def create_sequential_repair(lookahead_horizon: Optional[int] = None):
 def lookahead_repair(
     partial: SolutionState,
     rng: rnd.Generator,
-    lookahead_horizon: Optional[int] = None,
+    lookahead_horizon: int | None = None,
 ) -> SolutionState:
     """
     Lookahead Repair:
@@ -2276,7 +2275,7 @@ def lookahead_repair(
     return state
 
 
-def create_lookahead_repair(lookahead_horizon: Optional[int] = None):
+def create_lookahead_repair(lookahead_horizon: int | None = None):
     """Factory that creates a lookahead-repair operator wrapper."""
     defaults = ALNSConfig.get_operator_default("lookahead_repair").get("params", {})
     lookahead_horizon = (
