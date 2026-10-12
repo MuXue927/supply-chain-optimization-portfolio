@@ -242,3 +242,345 @@ def test_make_callback_on_best_records_and_survives_failures(
             raise RuntimeError("boom")
 
     callback(_Broken(), np.random.default_rng(0))
+
+
+# ---------------------------------------------------------------------------
+# Fallback paths
+# ---------------------------------------------------------------------------
+def test_safe_state_snapshot_falls_back_to_deepcopy() -> None:
+    class _CopyRaises:
+        def copy(self):
+            raise RuntimeError("no copy")
+
+    original = _CopyRaises()
+
+    snapshot = cb.safe_state_snapshot(original)
+
+    assert snapshot is not original
+
+
+def test_safe_state_snapshot_returns_the_object_when_everything_fails() -> None:
+    class _Uncopyable:
+        def copy(self):
+            raise RuntimeError("no copy")
+
+        def __deepcopy__(self, memo):
+            raise RuntimeError("no deepcopy")
+
+    original = _Uncopyable()
+
+    assert cb.safe_state_snapshot(original) is original
+
+
+def test_dump_state_snapshot_survives_a_broken_objective() -> None:
+    class _Broken:
+        def objective(self):
+            raise RuntimeError("boom")
+
+    assert cb.dump_state_snapshot(_DummyOptimizer(), _Broken(), "broken") is None
+
+
+def test_get_capacity_threshold_is_zero_without_vehicle_types() -> None:
+    class _NoTypes:
+        all_veh_types: list[str] = []
+
+    assert cb._get_capacity_threshold(_NoTypes()) == 0.0
+
+
+def test_get_capacity_threshold_skips_unknown_vehicle_types() -> None:
+    class _Partial:
+        all_veh_types = ["A", "MISSING_FROM_CAPACITY_MAP"]
+        veh_type_cap = {"A": 42.0}
+
+    assert cb._get_capacity_threshold(_Partial()) == 42.0
+
+
+def test_build_state_profile_without_iter_used_vehicles(
+    feasible_solution: SolutionState,
+) -> None:
+    class _NoIterator:
+        """Proxy that hides ``iter_used_vehicles`` to exercise the fallback."""
+
+        def __init__(self, inner: SolutionState) -> None:
+            self._inner = inner
+            self.vehicles = inner.vehicles
+
+        def __getattr__(self, name: str):
+            if name == "iter_used_vehicles":
+                raise AttributeError(name)
+            return getattr(self._inner, name)
+
+    profile = cb.build_state_profile(_NoIterator(feasible_solution))
+
+    assert profile["vehicles"] == len(feasible_solution.vehicles)
+    assert profile["fixed_cost"] > 0.0
+
+
+def test_used_vehicle_count_falls_back_to_the_vehicles_attribute() -> None:
+    class _Vehicle:
+        def __init__(self, empty: bool) -> None:
+            self._empty = empty
+
+        def is_empty(self) -> bool:
+            return self._empty
+
+    class _NoIterator:
+        def __init__(self) -> None:
+            self.vehicles = [_Vehicle(False), _Vehicle(True), None]
+
+    assert cb._used_vehicle_count(_NoIterator()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Candidate comparison: phased lexicographic and vehicle priority
+# ---------------------------------------------------------------------------
+def _profile(vehicles: float, load: float = 0.5, cost: float = 10.0) -> dict:
+    return {
+        "vehicles": vehicles,
+        "load_ratio": load,
+        "large_ratio": 0.5,
+        "fixed_cost": cost,
+    }
+
+
+def test_is_candidate_better_fast_mode_accepts_the_first_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "ENABLE_FAST_ALNS_MODE", True)
+
+    assert cb.is_candidate_better(1.0, _profile(3.0), None, None) is True
+
+
+def test_is_candidate_better_phased_lexicographic_prefers_a_smaller_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "ENABLE_PHASED_LEXICOGRAPHIC_BEST", True)
+    monkeypatch.setattr(ALNSConfig, "PHASED_LEXICOGRAPHIC_OBJ_ABS_TOL", 5.0)
+
+    better = cb.is_candidate_better(102.0, _profile(3.0), 100.0, _profile(5.0), 0.5)
+    worse = cb.is_candidate_better(120.0, _profile(3.0), 100.0, _profile(5.0), 0.5)
+    larger = cb.is_candidate_better(100.0, _profile(6.0), 100.0, _profile(5.0), 0.5)
+
+    assert better is True
+    assert worse is False
+    assert larger is False
+
+
+def test_is_candidate_better_uses_a_stricter_late_search_tolerance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "ENABLE_VEHICLE_COUNT_PRIORITY", True)
+    monkeypatch.setattr(ALNSConfig, "ENABLE_PHASED_LEXICOGRAPHIC_BEST", False)
+    monkeypatch.setattr(ALNSConfig, "VEHICLE_PRIORITY_OBJ_ABS_TOL", 2.0)
+
+    # The allowed objective worsening is max(abs_tol, rel_tol * |old_obj|) with
+    # the phase factor applied to both: late halves it (8.0 * 0.5 = 4.0), early
+    # multiplies it by 1.5 (8.0 * 1.5 = 12.0). A +6.0 objective fits only early.
+    late = cb.is_candidate_better(106.0, _profile(3.0), 100.0, _profile(5.0), 0.9)
+    early = cb.is_candidate_better(106.0, _profile(3.0), 100.0, _profile(5.0), 0.1)
+
+    assert late is False
+    assert early is True
+
+
+# ---------------------------------------------------------------------------
+# Path relinking between the incumbent and an elite solution
+# ---------------------------------------------------------------------------
+def test_build_path_relinked_vehicle_list_blends_the_target(
+    feasible_solution: SolutionState,
+) -> None:
+    current = feasible_solution.copy()
+    target = feasible_solution.copy()
+    target_used = list(target.iter_used_vehicles())
+
+    relinked = cb._build_path_relinked_vehicle_list(
+        current, target, blend_ratio=0.5, max_target_veh=5
+    )
+
+    assert relinked
+    # The injected vehicles come straight from the target solution.
+    assert any(veh in target_used for veh in relinked)
+
+
+def test_build_path_relinked_vehicle_list_without_a_target_keeps_current(
+    data: DataALNS, feasible_solution: SolutionState,
+) -> None:
+    current = feasible_solution.copy()
+    empty_target = SolutionState(data)
+
+    relinked = cb._build_path_relinked_vehicle_list(current, empty_target)
+
+    assert relinked == list(current.iter_used_vehicles())
+
+
+def test_build_relink_progression_is_monotonic() -> None:
+    schedule = cb._build_relink_progression(0.2, 4, steps=3)
+
+    assert len(schedule) == 3
+    ratios = [ratio for ratio, _ in schedule]
+    targets = [target for _, target in schedule]
+    assert ratios == sorted(ratios)
+    assert targets == sorted(targets)
+    assert all(0.0 <= ratio <= 1.0 for ratio in ratios)
+    # The schedule never asks for fewer than one target vehicle.
+    assert all(target >= 1 for target in targets)
+
+
+def test_vehicle_elimination_repair_returns_a_state(
+    feasible_solution: SolutionState,
+) -> None:
+    state = feasible_solution.copy()
+
+    result = cb._vehicle_elimination_repair(state, np.random.default_rng(1))
+
+    assert isinstance(result, SolutionState)
+
+
+def test_is_relink_candidate_acceptable(
+    data: DataALNS, feasible_solution: SolutionState,
+) -> None:
+    current = feasible_solution.copy()
+
+    assert (
+        cb._is_relink_candidate_acceptable(current, feasible_solution.copy()) is True
+    )
+    # A solution with unmet demand has an enormous objective and is rejected.
+    assert cb._is_relink_candidate_acceptable(current, SolutionState(data)) is False
+
+
+def test_choose_elite_relink_target_handles_an_empty_pool(
+    feasible_solution: SolutionState,
+) -> None:
+    assert cb._choose_elite_relink_target(feasible_solution.copy(), []) is None
+
+
+def test_choose_elite_relink_target_skips_identical_signatures(
+    feasible_solution: SolutionState,
+) -> None:
+    current = feasible_solution.copy()
+    profile = cb.build_state_profile(current)
+    pool = [
+        {
+            "state": feasible_solution.copy(),
+            "obj": float(current.objective()) - 1.0,
+            "profile": profile,
+            "signature": cb._profile_signature(profile),
+        }
+    ]
+
+    assert cb._choose_elite_relink_target(current, pool) is None
+
+
+def test_choose_elite_relink_target_returns_the_best_candidate(
+    feasible_solution: SolutionState,
+) -> None:
+    current = feasible_solution.copy()
+    pool = [
+        {
+            "state": feasible_solution.copy(),
+            "obj": float(current.objective()) - 1.0,
+            "profile": _profile(8.0, 0.9, 1.0),
+            "signature": (8, 9, 9, 1),
+        },
+        {
+            "state": feasible_solution.copy(),
+            "obj": float(current.objective()) - 5.0,
+            "profile": _profile(7.0, 0.9, 1.0),
+            "signature": (7, 9, 9, 1),
+        },
+    ]
+
+    chosen = cb._choose_elite_relink_target(current, pool)
+
+    assert chosen is not None
+    assert chosen["obj"] == float(current.objective()) - 5.0
+
+
+# ---------------------------------------------------------------------------
+# ML warmup
+# ---------------------------------------------------------------------------
+def test_ml_warmup_sample_is_a_noop_without_ml(
+    feasible_solution: SolutionState,
+) -> None:
+    optimizer = _DummyOptimizer()
+    optimizer.ml_selector = None
+    optimizer.param_tuner = None
+
+    assert cb.ml_warmup_sample(optimizer, feasible_solution, budget=2) is None
+
+
+def test_ml_warmup_sample_copies_the_state_and_survives_failures(
+    feasible_solution: SolutionState,
+) -> None:
+    # The stub components are not real selectors, so both the destroy and the
+    # repair attempt fail internally - which is exactly the path that must not
+    # disturb the main loop.
+    optimizer = _DummyOptimizer()
+    optimizer.ml_selector = object()
+    optimizer.param_tuner = object()
+    optimizer.rng = np.random.default_rng(1)
+    state = feasible_solution.copy()
+    before = state.s_ikt
+
+    assert cb.ml_warmup_sample(optimizer, state, budget=2) is None
+
+    # Warmup works on copies only, so the original state is untouched.
+    assert state.s_ikt is before
+
+
+# ---------------------------------------------------------------------------
+# Iteration callback
+# ---------------------------------------------------------------------------
+def test_iteration_callback_keeps_the_state_hard_feasible(
+    tmp_path, feasible_solution: SolutionState
+) -> None:
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+    from multi_period_delivery.alns.alnstrack import ALNSTracker
+
+    base = Path(__file__).resolve().parents[1]
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(base / "datasets" / "multiple-periods" / "small"),
+        output_file_loc=str(tmp_path / "out"),
+    )
+    optimizer.load_data("dataset_1")
+    optimizer.tracker = ALNSTracker(log_printer=optimizer.log_printer)
+
+    callback = cb.make_callback_on_iteration(optimizer, stop=None)
+    state = feasible_solution.copy()
+    for _ in range(3):
+        callback(state, np.random.default_rng(4))
+        optimizer.increment_iteration()
+
+    _feasible, violations = state.validate()
+    assert not violations["negative_inventory"]
+    assert not violations["veh_over_load"]
+
+
+def test_iteration_callback_handles_negative_inventory(
+    tmp_path, feasible_solution: SolutionState
+) -> None:
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+    from multi_period_delivery.alns.alnstrack import ALNSTracker
+
+    base = Path(__file__).resolve().parents[1]
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(base / "datasets" / "multiple-periods" / "small"),
+        output_file_loc=str(tmp_path / "out"),
+    )
+    optimizer.load_data("dataset_1")
+    optimizer.tracker = ALNSTracker(log_printer=optimizer.log_printer)
+
+    state = feasible_solution.copy()
+    # Inflate one shipment so the recomputed inventory goes negative, which is
+    # what the callback's inventory check and runtime guard exist to catch.
+    vehicle = state.vehicles[0]
+    cargo_key = next(iter(vehicle.cargo))
+    vehicle.cargo[cargo_key] += 10_000
+    state.compute_inventory()
+    assert state.s_ikt[(vehicle.fact_id, cargo_key[0], cargo_key[1])] < 0
+
+    callback = cb.make_callback_on_iteration(optimizer, stop=None)
+    callback(state, np.random.default_rng(6))
+
+    # The callback must not raise, whatever repair it manages to apply.
+    assert isinstance(state.s_ikt, dict)

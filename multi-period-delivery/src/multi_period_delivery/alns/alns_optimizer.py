@@ -1596,52 +1596,6 @@ class ALNSOptimizer:
                 f"Warning: Failed to generate reports: {e}", color="yellow"
             )
 
-    def _plot_operator_performance(self):
-        """Plot a simplified operator performance chart."""
-        try:
-            import matplotlib.pyplot as plt
-            # Simplified bar chart for operator usage.
-
-            destroy_counts = self.result.statistics.destroy_operator_counts
-            repair_counts = self.result.statistics.repair_operator_counts
-
-            # Create the simplified performance figure.
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-
-            # Destroy operators
-            if destroy_counts:
-                operators = list(destroy_counts.keys())
-                totals = [
-                    sum(counts[:4]) for counts in destroy_counts.values()
-                ]  # Sum the first four result categories.
-                ax1.bar(operators, totals, color="skyblue")
-                ax1.set_title("Destroy Operators Performance")
-                ax1.set_ylabel("Total Usage")
-                ax1.tick_params(axis="x", rotation=45)
-
-            # Repair operators
-            if repair_counts:
-                operators = list(repair_counts.keys())
-                totals = [sum(counts[:4]) for counts in repair_counts.values()]
-                ax2.bar(operators, totals, color="lightcoral")
-                ax2.set_title("Repair Operators Performance")
-                ax2.set_ylabel("Total Usage")
-                ax2.tick_params(axis="x", rotation=45)
-
-            plt.tight_layout()
-
-            file_path = (
-                Path(self.data.output_file_loc)
-                / "images"
-                / "Performance_of_Operators.svg"
-            )
-            dpi_value = getattr(ALNSConfig, "REPORT_DPI", 150)
-            plt.savefig(file_path, dpi=dpi_value, bbox_inches="tight")
-            plt.close()
-
-        except Exception as e:
-            logger.error(f"Failed to plot operator performance: {e}")
-
     def _generate_param_tuning_report(self):
         """Generate parameter tuning and ML selector reports."""
         if not self.param_tuner:
