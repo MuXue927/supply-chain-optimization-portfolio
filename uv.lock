@@ -2761,6 +2761,7 @@ cplex = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-cov" },
     { name = "ruff" },
 ]
 
@@ -2776,6 +2777,7 @@ provides-extras = ["cplex"]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=7.0" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
     { name = "ruff", specifier = ">=0.6.0" },
 ]
 

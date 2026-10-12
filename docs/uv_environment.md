@@ -114,6 +114,19 @@ tests with identical file names) and restricts collection to the two `tests/`
 folders, so no extra flags are required and generated folders such as
 `outputs/` are never scanned.
 
+With coverage - the same command CI runs:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  --cov=multi_period_delivery --cov=single_period_delivery `
+  --cov-report=term-missing --cov-fail-under=23
+```
+
+The measured baseline is **23.78%** over the two packages with the four CPLEX
+tests skipping (the default, CI-equivalent environment). The gate sits one
+point below that so ordinary refactoring does not trip it; raise it whenever
+coverage genuinely improves.
+
 ## Continuous Integration
 
 `.github/workflows/ci.yml` runs the same checks on GitHub Actions for every
@@ -124,8 +137,11 @@ push to `main` and for every pull request:
    root dev group into `.venv`;
 2. `ruff check` each project - each one declares its own baseline rule set in
    `[tool.ruff.lint]` inside its `pyproject.toml`;
-3. run the combined test suite (`pytest -q`: 26 passed + 4 skipped, because the
-   CPLEX tests skip themselves when the optional extra is absent).
+3. run the combined test suite with coverage:
+   `pytest -q --cov=multi_period_delivery --cov=single_period_delivery
+   --cov-report=term-missing --cov-fail-under=23` - 26 passed + 4 skipped, and
+   23.78% coverage against the 23% gate (the CPLEX tests skip themselves when
+   the optional extra is absent).
 
 The optional `cplex` extra is deliberately **not** synced in CI: the CPLEX
 tests skip themselves through `pytest.importorskip`, and the Community Edition

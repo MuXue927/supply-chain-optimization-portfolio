@@ -37,6 +37,14 @@ jobs:
           .venv/bin/python -m ruff check multi-period-delivery
 
       # The root pytest.ini adds --import-mode=importlib and limits collection
-      # to the two tests/ directories.
-      - name: Test
-        run: .venv/bin/python -m pytest -q
+      # to the two tests/ directories. Coverage is measured over the two
+      # packages only; the threshold is the measured CI baseline (23.78%, with
+      # the four CPLEX tests skipping themselves) rounded down, so ordinary
+      # refactoring does not trip it - it is there to catch a real drop.
+      - name: Test with coverage
+        run: |
+          .venv/bin/python -m pytest -q \
+            --cov=multi_period_delivery \
+            --cov=single_period_delivery \
+            --cov-report=term-missing \
+            --cov-fail-under=23
