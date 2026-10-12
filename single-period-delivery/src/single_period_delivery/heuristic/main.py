@@ -1,13 +1,15 @@
-import os
 import csv
-import time
-import random
 import datetime
+import os
+import random
+import time
+
 import numpy as np
 import pandas as pd
-from .InputDataHeuristic import InputDataHeuristic
+
 from .HeuristicModel import HeuristicModel
-from .optutility import LogPrinter, POSITIVEEPS
+from .InputDataHeuristic import InputDataHeuristic
+from .optutility import POSITIVEEPS, LogPrinter
 
 random.seed(1234)
 

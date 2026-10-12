@@ -78,15 +78,15 @@ import time
 from typing import Any, Dict, List, Optional
 
 # =========================
-# Third-party types
-# =========================
-from numpy.random import Generator
-
-# =========================
 # External library (ALNS)
 # =========================
 from alns.State import State
-from alns.stop import MaxRuntime, MaxIterations, NoImprovement
+from alns.stop import MaxIterations, MaxRuntime, NoImprovement
+
+# =========================
+# Third-party types
+# =========================
+from numpy.random import Generator
 
 
 class CombinedStoppingCriterion:

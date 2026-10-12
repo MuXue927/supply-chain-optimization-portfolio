@@ -3,9 +3,10 @@
 # 1. Identifying which production plant i serves which dealer j with vehicle type f.
 # 2. Calculating the volume of products loaded on the vehicle.
 # 3. Determining whether the vehicle is fully loaded.
-from .InputDataCG import InputDataCG
 from dataclasses import dataclass, field
 from typing import Dict
+
+from .InputDataCG import InputDataCG
 
 # dataclasses -- Data Classes
 # This module provides a decorator and functions for automatically adding generated special methods such as

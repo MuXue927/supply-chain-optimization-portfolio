@@ -30,11 +30,12 @@ Exception handling strategy:
   safe fallback values or flags so the caller can recover or record the issue.
 """
 
-from collections import defaultdict
-import time
 import logging
 import random
-from typing import Any, Dict, Tuple, Optional, TYPE_CHECKING
+import time
+from collections import defaultdict
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+
 import numpy as np
 
 from .repair_utils import compute_mixed_operator_reward

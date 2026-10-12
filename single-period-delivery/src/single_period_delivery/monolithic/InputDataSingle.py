@@ -1,14 +1,15 @@
 # Data interface for the single-period optimization problem.
 # Loads and normalizes the data stored in datasets/single-period.
 # Exposes each dataset in the representation required by the optimization model.
-import os
 import json
 import math
+import os
 import random
-import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Set
+from typing import Dict, List, Set, Tuple
+
+import pandas as pd
 
 
 @dataclass

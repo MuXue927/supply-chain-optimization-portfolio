@@ -22,17 +22,18 @@ Inputs/Outputs
 # =========================
 # Standard library
 # =========================
-import os
 import logging
+import os
 from dataclasses import dataclass
-from typing import Tuple, Dict, List
+from typing import Dict, List, Tuple
+
+from .alns_config import default_config as ALNSConfig
 
 # =========================
 # Internal project modules
 # =========================
 from .InputDataALNS import DataALNS
 from .OutputDataALNS import OutPutData
-from .alns_config import default_config as ALNSConfig
 
 # Configure logging in the main program; this module only obtains its logger.
 logger = logging.getLogger(__name__)

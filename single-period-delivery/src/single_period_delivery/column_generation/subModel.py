@@ -7,11 +7,14 @@
 # Production plants may supply overlapping SKU sets.
 import math
 import os
-from gurobipy import GRB
-import gurobipy as gp
-from typing import Dict, Tuple, Set, Hashable
 from dataclasses import dataclass, field
+from typing import Dict, Hashable, Set, Tuple
+
+import gurobipy as gp
+from gurobipy import GRB
+
 from .InputDataCG import InputDataCG
+
 
 @dataclass
 class SubModel:

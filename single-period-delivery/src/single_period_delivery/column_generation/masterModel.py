@@ -6,15 +6,17 @@
 # It supports multiple production plants, dealers, vehicle types, and SKUs.
 # Production plants may supply overlapping SKU sets.
 import os
-import time
 import random
-from gurobipy import GRB
-import gurobipy as gp
-from .vehicle import Vehicle
-from typing import Dict, Tuple, Set
+import time
 from dataclasses import dataclass, field
-from .optutility import LogPrinter, POSITIVEEPS
+from typing import Dict, Set, Tuple
+
+import gurobipy as gp
+from gurobipy import GRB
+
 from .InputDataCG import InputDataCG
+from .optutility import POSITIVEEPS, LogPrinter
+from .vehicle import Vehicle
 
 # Create a shared LogPrinter instance.
 log_printer = LogPrinter(time.time())

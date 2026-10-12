@@ -72,6 +72,7 @@ Maintenance guidance:
 # =========================
 import time
 from collections import defaultdict
+from typing import TYPE_CHECKING, Optional
 
 # =========================
 # Third-party libraries
@@ -82,8 +83,6 @@ import numpy.random as rnd
 # =========================
 # Internal project dependencies
 # =========================
-from typing import TYPE_CHECKING, Optional
-
 # Import SolutionState lazily to avoid a circular import with alnsopt; use
 # object as the runtime placeholder.
 if TYPE_CHECKING:
@@ -94,7 +93,6 @@ else:
 # circular dependency.
 
 from .alns_config import default_config as ALNSConfig
-from .inventory_utils import precompute_plant_day_inventory, precompute_dealer_shipments
 
 # Import shared helpers from destroy_utils to keep this file lightweight.
 from .destroy_utils import (
@@ -104,6 +102,7 @@ from .destroy_utils import (
     post_destroy,
     resolve_degree,
 )
+from .inventory_utils import precompute_dealer_shipments, precompute_plant_day_inventory
 
 # Short-lived cache for periodic_shaw_removal KMeans results keyed by
 # (n_clusters, rounded_mean_features). This avoids re-running KMeans when

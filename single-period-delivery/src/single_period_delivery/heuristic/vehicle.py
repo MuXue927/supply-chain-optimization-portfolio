@@ -3,9 +3,10 @@
 # 1. which production plant i serves which dealer j with which vehicle type f;
 # 2. the volume of goods loaded onto the vehicle; and
 # 3. whether the vehicle is full.
-from .InputDataHeuristic import InputDataHeuristic
 from dataclasses import dataclass, field
 from typing import Dict
+
+from .InputDataHeuristic import InputDataHeuristic
 
 # dataclasses -- Data Classes
 # This module provides a decorator and functions for automatically adding generated special methods such as

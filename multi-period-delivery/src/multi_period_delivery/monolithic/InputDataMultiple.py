@@ -1,14 +1,16 @@
 # Define the data interface for the multi-period optimization problem.
 # Organize the data stored under datasets/multiple-periods.
 # Present each dataset in the form required by the optimization model.
-import os
-import math
 import json
+import math
+import os
 import random
-import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Set
+from typing import Dict, List, Set, Tuple
+
+import pandas as pd
+
 
 @dataclass
 class InputDataMultiple:

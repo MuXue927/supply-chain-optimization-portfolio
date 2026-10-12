@@ -1,12 +1,14 @@
 # Data interface for the column-generation model.
 # Normalize the data stored in the datasets/single-period directory.
 # Present each dataset in the structure required by the optimization model.
-import os
 import json
-import pandas as pd
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Set
+from typing import Dict, Set, Tuple
+
+import pandas as pd
+
 
 @dataclass
 class InputDataCG:

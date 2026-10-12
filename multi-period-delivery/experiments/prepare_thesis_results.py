@@ -31,7 +31,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_META_NAME = "run_metadata.json"
 SELECTED_ALL_NAME = "selected_instances_all.csv"

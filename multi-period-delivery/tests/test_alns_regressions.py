@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from multi_period_delivery.alns.InputDataALNS import DataALNS
 from multi_period_delivery.alns.alnsopt import SolutionState
+from multi_period_delivery.alns.InputDataALNS import DataALNS
 from multi_period_delivery.alns.repair_utils import get_unmet_demand
 
 

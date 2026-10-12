@@ -50,11 +50,12 @@ Maintenance:
 import time
 from collections import defaultdict
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project modules
 # =========================
 from .vehicle import Vehicle  # Top-level reference; local imports avoid cycles.
-from .alns_config import default_config as ALNSConfig
 
 
 def improved_initial_solution(state, rng):

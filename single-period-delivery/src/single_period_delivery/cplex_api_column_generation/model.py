@@ -19,8 +19,8 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 
-from ..cplex_api_support import CplexApiModel, CplexApiSolution
 from ..column_generation.InputDataCG import InputDataCG
+from ..cplex_api_support import CplexApiModel, CplexApiSolution
 
 
 @dataclass(frozen=True)

@@ -67,12 +67,12 @@ have been reorganized for maintainability.
 # =========================
 # Standard library
 # =========================
-import os
 import json
 import logging
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Set, Union, Optional
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 # =========================
 # Third-party libraries

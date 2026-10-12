@@ -1,6 +1,6 @@
 from multi_period_delivery import ALNSConfig, DataALNS, run_model
-from multi_period_delivery.cli import build_parser
 from multi_period_delivery.alns import ALNSConfig as SubpackageALNSConfig
+from multi_period_delivery.cli import build_parser
 
 
 def test_cli_parser_defaults_to_small_alns_b() -> None:

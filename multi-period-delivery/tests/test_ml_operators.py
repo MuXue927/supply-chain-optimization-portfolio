@@ -8,10 +8,10 @@ from typing import Any
 
 import numpy as np
 
-from multi_period_delivery.alns.InputDataALNS import DataALNS
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
 from multi_period_delivery.alns.alnsopt import SolutionState
+from multi_period_delivery.alns.InputDataALNS import DataALNS
 from multi_period_delivery.alns.ml_destroy_selection import _DESTROY_OPERATORS
 from multi_period_delivery.alns.ml_operator_selector import (
     DESTROY_OPERATOR_NAMES,

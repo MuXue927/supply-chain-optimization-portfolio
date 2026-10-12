@@ -17,17 +17,18 @@ Notes:
 """
 
 from __future__ import annotations
+
 import argparse
+import glob
 import json
+import multiprocessing as mp
 import os
 import sys
-import glob
 import time
-from contextlib import redirect_stdout, redirect_stderr, nullcontext
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
-import multiprocessing as mp
 
 RUN_META_NAME = "run_metadata.json"
 

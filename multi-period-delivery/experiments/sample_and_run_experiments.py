@@ -25,7 +25,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_EXPERIMENTS = PROJECT_ROOT / "experiments" / "run_experiments.py"
 

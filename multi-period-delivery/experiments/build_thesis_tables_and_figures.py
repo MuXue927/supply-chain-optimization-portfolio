@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -229,10 +228,10 @@ def plot_small_gap_boxplot(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
-    from matplotlib.font_manager import FontProperties
-    from matplotlib.patches import Patch
     from matplotlib import rcParams
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     if df.empty or "gap_to_milp_pct" not in df.columns or "variant" not in df.columns:
         return None

@@ -1,21 +1,22 @@
 # Execution logic for the column-generation algorithm.
 # Solved results are saved to CSV files.
-import os
 import csv
-import time
 import datetime
+import os
 import random
-import pandas as pd
-from typing import Dict, Tuple
+import time
 from dataclasses import field
+from typing import Dict, Tuple
+
 import gurobipy as gp
+import pandas as pd
 from gurobipy import GRB
 
-from .masterModel import MasterModel, log_printer
-from .subModel import SubModel
 from .InputDataCG import InputDataCG
-from .vehicle import Vehicle
+from .masterModel import MasterModel, log_printer
 from .optutility import POSITIVEEPS
+from .subModel import SubModel
+from .vehicle import Vehicle
 
 data: InputDataCG
 # Plant identifier.

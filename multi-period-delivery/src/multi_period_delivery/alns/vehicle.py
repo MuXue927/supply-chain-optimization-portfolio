@@ -22,15 +22,16 @@ Implementation notes:
 """
 
 # =========================
-# Internal project dependencies
-# =========================
-from .InputDataALNS import DataALNS
-
-# =========================
 # Standard library / typing
 # =========================
 from dataclasses import dataclass, field
 from typing import Dict, Tuple
+
+# =========================
+# Internal project dependencies
+# =========================
+from .InputDataALNS import DataALNS
+
 
 # -------------------------
 # CargoDict: a dict wrapper that maintains loaded_volume and capacity.

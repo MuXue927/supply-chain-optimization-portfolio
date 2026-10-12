@@ -16,13 +16,14 @@ from __future__ import annotations
 import copy
 import logging
 from math import isfinite
-import numpy.random as rnd
-from typing import Any, Callable, Optional, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
+import numpy.random as rnd
+
+from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
 from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
-from .alns_config import default_config as ALNSConfig
 
 logger = logging.getLogger(__name__)
 
@@ -241,8 +242,9 @@ def is_candidate_better(
 
 
 if TYPE_CHECKING:
-    from .alns_optimizer import ALNSOptimizer
     from alns.ALNS import ALNS
+
+    from .alns_optimizer import ALNSOptimizer
 
 
 def _used_vehicle_count(state: Optional[SolutionState]) -> int:

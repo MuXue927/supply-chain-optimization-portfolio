@@ -48,7 +48,7 @@ Potential improvements (not implemented):
 # Standard library
 # =========================
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # =========================
 # Third-party libraries
@@ -56,11 +56,13 @@ from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 import numpy.random as rnd
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project dependencies
 # =========================
 from .InputDataALNS import DataALNS
-from .alns_config import default_config as ALNSConfig
+
 
 # ---------------------------------------------------------------------
 # Data structure: parameter container for a single operator

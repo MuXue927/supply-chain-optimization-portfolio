@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+
 from multi_period_delivery.alns import inventory_numba
 from multi_period_delivery.alns.alnsopt import (
     SolutionState,

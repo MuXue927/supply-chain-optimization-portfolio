@@ -39,8 +39,8 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
     - meta (dict): keys include status, wall_seconds, final_obj, best_bound, gap_pct,
                    gurobi_runtime, iterations, output_files, warnings, error (if any)
     """
-    import time
     import os
+    import time
 
     t0 = time.time()
     meta = {}

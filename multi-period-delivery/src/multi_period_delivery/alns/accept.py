@@ -10,6 +10,7 @@ Responsibilities:
 """
 
 from typing import Any, Dict
+
 import numpy as np
 
 from .alns_config import default_config as ALNSConfig

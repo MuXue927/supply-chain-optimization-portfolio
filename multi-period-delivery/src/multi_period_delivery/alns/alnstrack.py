@@ -53,11 +53,11 @@ Possible future improvements:
 # =========================
 # Standard library
 # =========================
-import os
-import csv
-import time
 import copy
-from typing import Optional, Any, Tuple, TYPE_CHECKING
+import csv
+import os
+import time
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 # =========================
 # Third-party libraries
@@ -65,11 +65,12 @@ from typing import Optional, Any, Tuple, TYPE_CHECKING
 import numpy as np
 import numpy.random as rnd
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project dependencies
 # =========================
 from .optutility import LogPrinter
-from .alns_config import default_config as ALNSConfig
 
 if TYPE_CHECKING:  # Import only for type checking to avoid runtime cycles.
     from .alnsopt import SolutionState

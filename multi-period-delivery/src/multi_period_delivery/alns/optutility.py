@@ -57,9 +57,9 @@ Unchanged behavior
 # =========================
 # Standard library
 # =========================
-import time
-import sys
 import re
+import sys
+import time
 from dataclasses import dataclass, field
 
 # =========================

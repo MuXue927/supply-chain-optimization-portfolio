@@ -1,14 +1,15 @@
 # Execute the single-period optimization model
 # and save the solution results to CSV files.
-import os
 import csv
-import time
 import datetime
+import os
+import time
+
 import pandas as pd
 from gurobipy import GRB
 
-from .MonolithicModelSingle import MonolithicModelSingle, log_printer
 from .InputDataSingle import InputDataSingle
+from .MonolithicModelSingle import MonolithicModelSingle, log_printer
 
 data: InputDataSingle
 

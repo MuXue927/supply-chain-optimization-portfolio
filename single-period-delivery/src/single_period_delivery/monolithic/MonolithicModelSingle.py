@@ -5,10 +5,12 @@
 # across plants.
 import os
 import time
-from gurobipy import GRB
-import gurobipy as gp
-from typing import Dict, Tuple, Set, List
 from dataclasses import dataclass, field
+from typing import Dict, List, Set, Tuple
+
+import gurobipy as gp
+from gurobipy import GRB
+
 from .InputDataSingle import InputDataSingle
 from .optutility import LogPrinter
 

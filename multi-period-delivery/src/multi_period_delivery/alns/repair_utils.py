@@ -7,16 +7,16 @@ They are used by operators in repair_operators.py and preserve the original
 implementation behavior.
 """
 
-from typing import Dict, List, Tuple, Set, Optional
 import time
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
+from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
-from .vehicle import Vehicle
 from .InputDataALNS import DataALNS
 from .param_tuner import ParamAutoTuner
-from .alns_config import default_config as ALNSConfig
+from .vehicle import Vehicle
 
 
 # MinimalVehicle: lightweight vehicle surrogate for fast simulation in regret operator

@@ -1,9 +1,10 @@
-import time
-import sys
 import re
-from rich.console import Console
+import sys
+import time
 from dataclasses import dataclass, field
+
 from gurobipy import GRB
+from rich.console import Console
 
 BigNum = 99999
 MYEPS = -0.0001

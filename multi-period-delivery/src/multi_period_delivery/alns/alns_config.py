@@ -8,7 +8,7 @@ Purpose:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass

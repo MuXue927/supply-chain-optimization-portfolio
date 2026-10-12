@@ -6,13 +6,14 @@
 # Each plant can supply the same SKUs, and different plants' SKU sets may overlap.
 import os
 import time
-from gurobipy import GRB
-import gurobipy as gp
-from typing import Dict, Tuple, Set, List
 from dataclasses import dataclass, field
-from .optutility import LogPrinter
-from .InputDataMultiple import InputDataMultiple
+from typing import Dict, List, Set, Tuple
 
+import gurobipy as gp
+from gurobipy import GRB
+
+from .InputDataMultiple import InputDataMultiple
+from .optutility import LogPrinter
 
 # Create a LogPrinter instance.
 log_printer = LogPrinter(time.time())

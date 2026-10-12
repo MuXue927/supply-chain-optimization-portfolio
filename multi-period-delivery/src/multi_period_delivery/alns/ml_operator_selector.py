@@ -96,7 +96,7 @@ from __future__ import annotations
 # Standard library
 # =========================
 import math
-from typing import Dict, List, Tuple, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 # =========================
 # Third-party libraries
@@ -104,15 +104,14 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import numpy.random as rnd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
 # =========================
 # Internal project dependencies
 # =========================
-from typing import TYPE_CHECKING
-from .param_tuner import ParamAutoTuner
 from .alns_config import default_config as ALNSConfig
+from .param_tuner import ParamAutoTuner
 
 if TYPE_CHECKING:
     from .alnsopt import SolutionState

@@ -47,6 +47,7 @@ Compatibility helper, not registered as an ALNS repair operator:
 # -------------------------
 # Standard-library and typing imports
 # -------------------------
+import logging
 import math
 import time
 from typing import Optional
@@ -56,41 +57,41 @@ from typing import Optional
 # -------------------------
 import numpy as np
 from numpy import random as rnd
-import logging
+
+from .alns_config import default_config as ALNSConfig
 
 # -------------------------
 # Package imports; relative imports preserve compatibility with the
 # multi_period_delivery package.
 # -------------------------
 from .alnsopt import SolutionState
-from .vehicle import Vehicle
 from .destroy_operators import (
     infeasible_removal,
 )  # Used to call the external infeasible_removal implementation.
 from .inventory_utils import precompute_plant_day_inventory
-from .alns_config import default_config as ALNSConfig
 
 # helper functions moved to repair_utils
 from .repair_utils import (
     _construct_resource_availability,
     _construct_resource_pool,
-    get_unmet_demand,
-    veh_loading,
-    precompute_total_available,
-    build_resource_pool,
-    get_adaptive_parameters,
-    post_repair,
-    compute_improvement,
-    compute_improvement_fast_add_vehicle,
-    compute_improvement_delta,
-    _get_unsatisfied_demands,
     _create_smart_batches,
-    _process_demand_batch,
     _force_load_remaining_demands,
-    select_vehicle_type_for_volume,
-    find_existing_route_vehicles,
+    _get_unsatisfied_demands,
+    _process_demand_batch,
+    build_resource_pool,
     commit_load_with_tracking,
+    compute_improvement,
+    compute_improvement_delta,
+    compute_improvement_fast_add_vehicle,
+    find_existing_route_vehicles,
+    get_adaptive_parameters,
+    get_unmet_demand,
+    post_repair,
+    precompute_total_available,
+    select_vehicle_type_for_volume,
+    veh_loading,
 )
+from .vehicle import Vehicle
 
 # Module logger.
 logger = logging.getLogger(__name__)

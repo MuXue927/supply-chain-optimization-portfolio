@@ -10,10 +10,10 @@ Purpose
 # =========================
 # Standard library
 # =========================
-import os
 import logging
+import os
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 # =========================
 # Third-party libraries

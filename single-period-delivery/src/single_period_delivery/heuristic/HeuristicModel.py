@@ -1,10 +1,12 @@
 import random
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Set, Tuple
+
 from .InputDataHeuristic import InputDataHeuristic
-from .vehicle import Vehicle
 from .optutility import POSITIVEEPS
+from .vehicle import Vehicle
+
 
 @dataclass
 class HeuristicModel:

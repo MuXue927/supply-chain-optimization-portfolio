@@ -56,10 +56,10 @@ Maintenance notes:
 # =========================
 # Standard library
 # =========================
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, Set, Optional
-import traceback
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # =========================
 # Third-party libraries
@@ -67,18 +67,19 @@ import traceback
 import numpy as np
 import numpy.random as rnd
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project modules
 # =========================
 from .alnstrack import ALNSTracker
-from .vehicle import Vehicle
-from .InputDataALNS import DataALNS
-from .optutility import POSITIVEEPS
 from .initial_solution_utils import improved_initial_solution
-from .param_tuner import ParamAutoTuner
-from .ml_operator_selector import MLOperatorSelector
-from .alns_config import default_config as ALNSConfig
+from .InputDataALNS import DataALNS
 from .inventory_manager import UnifiedInventoryManager
+from .ml_operator_selector import MLOperatorSelector
+from .optutility import POSITIVEEPS
+from .param_tuner import ParamAutoTuner
+from .vehicle import Vehicle
 
 
 @dataclass

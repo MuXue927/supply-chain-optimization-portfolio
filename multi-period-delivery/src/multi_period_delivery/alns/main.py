@@ -11,16 +11,16 @@ Note: importing this module reads the default ALNS configuration and opens the
 log file, so the package root imports it lazily rather than at import time.
 """
 
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
+
 from numpy import random as rnd
 
 # Use package-internal modules via relative imports. This file must be run
 # as a module (python -m multi_period_delivery.alns.main) or the package must
 # be installed.
-
 from .alns_config import default_config as ALNSConfig
 
 PARAM_TUNING_ENABLED = ALNSConfig.ENABLE_PARAM_TUNER
@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Imported after the logging setup above so the optimizer can reuse this logger.
 from .alns_optimizer import ALNSOptimizer  # noqa: E402
+
 
 def run_model(input_file_loc=None, output_file_loc=None):
     """

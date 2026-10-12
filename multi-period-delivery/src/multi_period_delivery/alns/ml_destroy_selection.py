@@ -53,40 +53,41 @@ Optional future enhancements
 # =========================
 # Standard library
 # =========================
-import time
 import math
-from typing import Dict, Any, Optional
+import time
+from typing import Any, Dict, Optional
 
 # =========================
 # Third-party libraries
 # =========================
 import numpy.random as rnd
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project dependencies
 # =========================
 from .alnsopt import SolutionState
+
+# Destroy operator collection
+from .destroy_operators import (
+    cross_period_dealer_removal,
+    infeasible_removal,
+    inventory_level_removal,
+    path_removal,
+    period_range_removal,
+    periodic_shaw_removal,
+    random_removal,
+    shaw_removal,
+    surplus_inventory_removal,
+    worst_removal,
+)
 from .ml_operator_selector import (
     DESTROY_OPERATOR_NAMES,
     PARAMETERLESS_OPERATOR_NAMES,
     MLOperatorSelector,
 )
-from .alns_config import default_config as ALNSConfig
 from .repair_utils import compute_mixed_operator_reward
-
-# Destroy operator collection
-from .destroy_operators import (
-    random_removal,
-    worst_removal,
-    infeasible_removal,
-    surplus_inventory_removal,
-    shaw_removal,
-    periodic_shaw_removal,
-    path_removal,
-    cross_period_dealer_removal,
-    period_range_removal,
-    inventory_level_removal,
-)
 
 # ---------------------------------------------------------------------
 # Internal: operator map construction. Lambda wrappers preserve the call

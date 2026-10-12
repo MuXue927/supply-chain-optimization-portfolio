@@ -29,79 +29,80 @@ Apply behavioral changes incrementally and run tests after each step.
 """
 
 from __future__ import annotations
-import os
-import csv
-import time
-import datetime
-import logging
+
 import builtins
+import csv
+import datetime
 import io
-import pandas as pd
+import logging
+import os
+import time
+from contextlib import contextmanager, redirect_stdout
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
+
 import numpy as np
 import numpy.random as rnd
-from typing import Any, Dict, Optional, TYPE_CHECKING, cast
-from pathlib import Path
-from contextlib import contextmanager, redirect_stdout
+import pandas as pd
+
+from .accept import DemandConstraintAccept
+from .alns_config import default_config as ALNSConfig
 
 # Package-internal imports used by the optimizer
 from .alnsopt import SolutionState, initial_solution
+from .alnstrack import ALNSTracker
+from .callbacks import register_callbacks
+from .combined_stopping import create_standard_combined_criterion
 from .destroy_operators import (
-    infeasible_removal,
+    create_cross_period_dealer_removal,
+    create_inventory_level_removal,
+    create_path_removal,
+    create_period_range_removal,
+    create_periodic_shaw_removal,
     # wrappers / factories
     create_random_removal,
     create_shaw_removal,
-    create_periodic_shaw_removal,
-    create_worst_removal,
     create_surplus_inventory_removal,
-    create_path_removal,
-    create_inventory_level_removal,
-    create_cross_period_dealer_removal,
-    create_period_range_removal,
+    create_worst_removal,
+    infeasible_removal,
     wrap_operator_no_args,
 )
-from .repair_operators import (
-    greedy_repair,
-    inventory_balance_repair,
-    cross_period_consolidation_repair,
-    # wrapper factories for repair operators
-    wrap_repair_no_args,
-    create_cross_period_consolidation_repair,
-    create_local_search_repair,
-    create_smart_batch_repair,
-    create_regret_repair,
-    create_sequential_repair,
-    create_lookahead_repair,
-    FleetConsolidationRepairOperator,
-)
 from .InputDataALNS import DataALNS
+from .ml_destroy_selection import ml_based_destroy
+from .ml_operator_selector import MLOperatorSelector
+from .ml_repair_selection import ml_based_repair
 from .optutility import LogPrinter
-from .alnstrack import ALNSTracker
-from .combined_stopping import create_standard_combined_criterion
-from .alns_config import default_config as ALNSConfig
+
 # visualization functions are imported lazily in _generate_reports / startup plotting
 # to reduce module import overhead (matplotlib/pandas are heavy). They will be imported
 # inside those functions when actually needed.
-
-
 from .param_tuner import ParamAutoTuner
-from .ml_operator_selector import MLOperatorSelector
-from .ml_destroy_selection import ml_based_destroy
-from .ml_repair_selection import ml_based_repair
+from .repair_operators import (
+    FleetConsolidationRepairOperator,
+    create_cross_period_consolidation_repair,
+    create_local_search_repair,
+    create_lookahead_repair,
+    create_regret_repair,
+    create_sequential_repair,
+    create_smart_batch_repair,
+    cross_period_consolidation_repair,
+    greedy_repair,
+    inventory_balance_repair,
+    # wrapper factories for repair operators
+    wrap_repair_no_args,
+)
 from .repair_utils import consolidate_route_vehicles
-from .accept import DemandConstraintAccept
-from .callbacks import register_callbacks
-
 
 # For type checking only (avoid runtime import when modules are optional)
 if TYPE_CHECKING:
-    from .param_tuner import ParamAutoTuner
     from .ml_operator_selector import MLOperatorSelector
+    from .param_tuner import ParamAutoTuner
 
 # Third-party ALNS imports
 from alns import ALNS
 from alns.accept import SimulatedAnnealing
-from alns.select import SegmentedRouletteWheel
 from alns.Result import Result
+from alns.select import SegmentedRouletteWheel
 
 
 @contextmanager
@@ -1558,9 +1559,9 @@ class ALNSOptimizer:
             # delayed import of visualization tools to avoid importing matplotlib at module import time
             try:
                 from .visualization import (
+                    plot_gap_changes,
                     plot_objective_changes,
                     plot_operator_performance,
-                    plot_gap_changes,
                 )
             except Exception as e:
                 logger.debug(f"Visualization tools unavailable: {e}")
