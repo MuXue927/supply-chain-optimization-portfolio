@@ -185,17 +185,23 @@ class ALNSOptimizer:
             Output file location. Uses the default directory when omitted.
         """
         # Set default paths.
+        #
+        # Defaults are resolved against the working directory, matching the CLI
+        # (`--data-dir` / `--output-dir`), ``alns.main.run_model`` and the
+        # documented layout: `datasets/multiple-periods/<scale>` sits in the
+        # project checkout, not inside the installed package. Resolving them
+        # relative to this module pointed inside `src/` and therefore at a
+        # directory that does not exist.
         if input_file_loc is None or output_file_loc is None:
-            current_dir = Path(__file__).parent
-            par_path = current_dir.parent
+            project_root = Path.cwd()
 
             if input_file_loc is None:
                 input_file_loc = (
-                    par_path / "datasets" / "multiple-periods" / DATASET_TYPE
+                    project_root / "datasets" / "multiple-periods" / DATASET_TYPE
                 )
             if output_file_loc is None:
                 output_file_loc = (
-                    par_path / "OutPut-ALNS" / "multiple-periods" / DATASET_TYPE
+                    project_root / "OutPut-ALNS" / "multiple-periods" / DATASET_TYPE
                 )
 
         self.input_file_loc = Path(input_file_loc)
