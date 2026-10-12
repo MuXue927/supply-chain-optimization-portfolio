@@ -441,6 +441,36 @@ def greedy_repair(
     return state
 
 
+def _suffix_available(
+    state: SolutionState,
+    plant: str,
+    sku_id: str,
+    day: int,
+    inventory_fresh: bool,
+) -> float:
+    """Largest quantity that can be added on ``day`` without breaking feasibility.
+
+    Shipping ``delta`` units on day ``d`` lowers the closing balance of every
+    day from ``d`` to the end of the horizon, so the binding limit is the
+    smallest closing balance over that suffix rather than the balance of day
+    ``d`` alone. ``inventory_fresh`` says whether ``s_ikt`` already reflects the
+    loads committed earlier in the pass. When it does not, nothing is reported
+    as available: a stale table reads too high, and over-filling is exactly the
+    failure this guard exists to prevent.
+    """
+    if not inventory_fresh:
+        return 0.0
+
+    horizons = int(getattr(state.data, "horizons", day))
+    balances = [
+        float(state.s_ikt.get((plant, sku_id, horizon), 0))
+        for horizon in range(int(day), horizons + 1)
+    ]
+    if not balances:
+        return 0.0
+    return max(0.0, min(balances))
+
+
 def fill_minimum_load_repair(
     partial: SolutionState,
     rng: rnd.Generator,
@@ -455,13 +485,23 @@ def fill_minimum_load_repair(
     The operator is deliberately conservative: it only adds cargo to vehicles
     already present in the state, only uses SKUs available from that vehicle's
     plant to its dealer, and never creates a new vehicle.
+
+    Availability accounting:
+        Shipping ``delta`` units on day ``d`` lowers the closing balance of
+        every day from ``d`` to the end of the horizon by ``delta``. A fill is
+        therefore only safe while it stays below the *smallest* closing balance
+        over that suffix, not merely below the balance of day ``d`` itself.
+        ``s_ikt`` is also refreshed after each successful commit, so a load
+        placed earlier in the same pass is visible when a later vehicle is
+        served.
     """
     state = partial
     data = state.data
 
     try:
-        if not getattr(state, "s_initialized", False):
-            state.compute_inventory()
+        # Always start from a freshly computed table: callers frequently hand
+        # over a state whose s_ikt is stale after their own edits.
+        state.compute_inventory()
     except Exception:
         return state
 
@@ -478,6 +518,10 @@ def fill_minimum_load_repair(
         ),
         reverse=False,
     )
+
+    # ``s_ikt`` is treated as fresh here; it is refreshed after every commit
+    # because a commit invalidates it for the next availability query.
+    inventory_fresh = True
 
     for veh in vehicle_snapshot:
         try:
@@ -505,11 +549,16 @@ def fill_minimum_load_repair(
             if sku_size <= 0:
                 continue
 
-            available = _construct_resource_availability(
-                state,
-                veh.fact_id,
-                sku_id,
-                veh.day,
+            if not inventory_fresh:
+                try:
+                    state.compute_inventory()
+                    inventory_fresh = True
+                except Exception:
+                    # Fall back to the cached helper when the refresh fails.
+                    inventory_fresh = False
+
+            available = _suffix_available(
+                state, veh.fact_id, sku_id, veh.day, inventory_fresh
             )
             if available <= 0:
                 continue
@@ -534,6 +583,7 @@ def fill_minimum_load_repair(
             if actual_loaded > 0:
                 current_load += actual_loaded * sku_size
                 deficit = min_load - current_load
+                inventory_fresh = False
 
     try:
         state.mark_objective_dirty()
@@ -864,9 +914,19 @@ def inventory_balance_repair(
     # Record inserted vehicles for post_repair.
     inserted_vehicles = []
 
+    # Tracks whether s_ikt still reflects every load committed in this pass.
+    inventory_fresh = True
+
     for (plant, day), _ in sorted_plant_days:
         dealers = [dealer for (p, dealer), skus in supply_chain.items() if p == plant]
         for dealer in dealers:
+            if not inventory_fresh:
+                try:
+                    state.compute_inventory()
+                    inventory_fresh = True
+                except Exception:
+                    inventory_fresh = False
+
             # Build constrained orders: each SKU is limited by unmet demand and
             # available quantity for this (plant, sku, day).
             candidate_orders = {}
@@ -874,7 +934,9 @@ def inventory_balance_repair(
             for (dealer_id, sku_id), qty in unsatisfied.items():
                 if dealer_id != dealer:
                     continue
-                avail = _construct_resource_availability(state, plant, sku_id, day)
+                avail = _suffix_available(
+                    state, plant, sku_id, day, inventory_fresh
+                )
                 take = min(qty, avail)
                 if take <= 0:
                     continue
@@ -932,6 +994,7 @@ def inventory_balance_repair(
                     unsatisfied[(dealer, sku_id)] = max(
                         0, unsatisfied[(dealer, sku_id)] - loaded
                     )
+                inventory_fresh = False
             except Exception:
                 # Fall back to a call that does not suppress compute_inventory.
                 try:
