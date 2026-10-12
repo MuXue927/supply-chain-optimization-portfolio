@@ -19,26 +19,15 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: |
-            **/pyproject.toml
+            **/uv.lock
 
-      # The repository is not a single uv project: there is no root
-      # pyproject.toml and no uv.lock, and the two packages are independent.
-      # CI therefore uses uv's pip-compatible interface, exactly like the
-      # documented local setup in docs/uv_environment.md.
-      - name: Create the shared virtual environment
-        run: uv venv --python 3.10 .venv
-
-      # Editable installs bring in each project's declared dependencies
-      # (numpy, pandas, numba, scikit-learn, gurobipy, ...).
-      # The optional `cplex` extra is deliberately NOT installed: the CPLEX
-      # tests skip themselves via pytest.importorskip, and the Community
-      # Edition runtime has a size limit that would make runs flaky.
-      - name: Install both packages and the dev tools
-        run: |
-          uv pip install --python .venv \
-            -e ./single-period-delivery \
-            -e ./multi-period-delivery \
-            pytest ruff
+      # One locked environment for the whole workspace: uv reads
+      # .python-version (3.10) and uv.lock, then installs both workspace
+      # members in editable mode plus the dev group (pytest, ruff).
+      # The optional `cplex` extra is deliberately not synced here, so the
+      # CPLEX tests keep skipping themselves through pytest.importorskip.
+      - name: Sync the workspace environment
+        run: uv sync
 
       # Ruff picks up the nearest pyproject.toml, so each project is checked
       # against its own [tool.ruff.lint] baseline.

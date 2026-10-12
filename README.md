@@ -81,29 +81,23 @@ run command:
 
 ## Environment
 
-Both projects share one `uv`-managed virtual environment at the repository
-root. Full setup, including the CPLEX Community-to-Full runtime upgrade and
-the solver-version matching rules, is documented in
+Both projects form one [uv](https://docs.astral.sh/uv/) workspace: the
+repository root declares the two members, pins Python 3.10 in
+`.python-version` and locks every dependency in `uv.lock`. Full setup,
+including the CPLEX Community-to-Full runtime upgrade and the solver-version
+matching rules, is documented in
 [`docs/uv_environment.md`](docs/uv_environment.md).
 
 ```powershell
-# create the shared environment and install both projects in editable mode
-uv venv --python 3.10 .venv
-uv pip install --python .venv `
-  numpy numba pandas matplotlib seaborn rich `
-  alns scikit-learn openpyxl networkx plotly vrplib `
-  pytest ruff setuptools wheel
-uv pip install --python .venv --no-build-isolation --no-deps `
-  -e single-period-delivery -e multi-period-delivery
+uv sync                  # locked environment for both packages
 
 # optional: CPLEX Python API (see docs/uv_environment.md)
-uv pip install --python .venv cplex==22.1.2.0 docplex==2.32.264
+uv sync --extra cplex
 .\.venv\Scripts\docplex.exe config --upgrade "C:\Program Files\IBM\ILOG\CPLEX_Studio2212"
 ```
 
 Gurobi requires a valid license; the ALNS, the heuristic, and the CPLEX Python
 API paths do not.
-
 ## Testing
 
 Run the full suite from the repository root:

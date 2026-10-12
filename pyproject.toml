@@ -1,0 +1,43 @@
+# Root of the uv workspace.
+#
+# The portfolio is two independent packages that share one virtual environment,
+# so the root is a *virtual* project: it is never built or published. It only
+# declares the workspace members, the shared dev tools and where the members
+# come from.
+[project]
+name = "supply-chain-optimization-portfolio"
+version = "0.0.0"
+description = "Workspace root for the single-period and multi-period delivery packages"
+requires-python = ">=3.10"
+dependencies = [
+    "single-period-delivery",
+    "multi-period-delivery",
+]
+
+# The CPLEX runtime is optional: CI syncs without it (the CPLEX tests skip
+# themselves), while a local checkout can opt in with
+# `uv sync --extra cplex` and then re-run the Studio runtime upgrade documented
+# in docs/uv_environment.md. The pins live in the members; this just re-exports
+# their `cplex` extras so they stay in one place.
+[project.optional-dependencies]
+cplex = [
+    "single-period-delivery[cplex]",
+    "multi-period-delivery[cplex]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.6.0",
+]
+
+[tool.uv]
+# The root is a container for the two packages, not a package itself.
+package = false
+
+[tool.uv.sources]
+single-period-delivery = { workspace = true }
+multi-period-delivery = { workspace = true }
+
+[tool.uv.workspace]
+members = ["single-period-delivery", "multi-period-delivery"]

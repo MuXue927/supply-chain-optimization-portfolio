@@ -1,18 +1,47 @@
 # Shared uv Environment
 
-The portfolio uses one shared virtual environment for both subprojects:
+The portfolio is one [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/):
+the repository root declares both packages as members, pins the interpreter in
+`.python-version` and locks every dependency in `uv.lock`. Everything installs
+into a single virtual environment:
 
 ```text
 supply-chain-optimization-portfolio/.venv
 ```
 
-The environment uses Python 3.10 because the official CPLEX Python API wheel
-used here (`cplex==22.1.2.0`) is available for Python 3.10. Both packages are
-installed in editable mode from the same environment.
+The interpreter is pinned to Python 3.10 because the official CPLEX Python API
+wheel used here (`cplex==22.1.2.0`) only ships wheels for CPython 3.10-3.12.
+Both packages are installed in editable mode from the same environment.
 
 ## Create the Environment
 
 Run from the portfolio root:
+
+```powershell
+uv sync
+```
+
+That single command creates `.venv`, installs both workspace members in
+editable mode, and installs the root dev group (`pytest`, `ruff`) at the
+versions recorded in `uv.lock`. uv reads `.python-version` (3.10) to pick the
+interpreter, so the CPLEX wheel stays installable for anyone who asks for it.
+
+### Optional: the CPLEX runtime
+
+```powershell
+uv sync --extra cplex
+.\.venv\Scripts\docplex.exe config --upgrade "C:\Program Files\IBM\ILOG\CPLEX_Studio2212"
+```
+
+The second command is required after any sync that reinstalls the `cplex`
+wheel: the Community Edition runtime replaces the size-unlimited one that the
+upgrade copies in (see the next section).
+
+> **`uv sync` prunes whatever the lock does not list.** Packages that were
+> installed into `.venv` by hand are removed on the next sync. Declare them,
+> pass `--extra cplex`, or use `uv sync --inexact` to keep unrelated packages.
+
+### The earlier uv-pip flow (kept for reference)
 
 ```powershell
 $env:UV_CACHE_DIR = "$PWD\outputs\work\uv-cache"
@@ -26,6 +55,9 @@ uv pip install --python .venv --no-build-isolation --no-deps `
   -e single-period-delivery `
   -e multi-period-delivery
 ```
+
+This path still works, but it does not pin versions and it needs
+`setuptools`/`wheel` inside the environment for the editable installs.
 
 ## CPLEX Community Edition Size Limit
 
@@ -87,26 +119,17 @@ folders, so no extra flags are required and generated folders such as
 `.github/workflows/ci.yml` runs the same checks on GitHub Actions for every
 push to `main` and for every pull request:
 
-1. install [uv](https://docs.astral.sh/uv/) and create the shared Python 3.10
-   environment with `uv venv`;
-2. install both packages in editable mode plus `pytest` and `ruff`:
-
-   ```text
-   uv pip install --python .venv -e ./single-period-delivery -e ./multi-period-delivery pytest ruff
-   ```
-
-3. `ruff check` each project - each one declares its own baseline rule set in
+1. install [uv](https://docs.astral.sh/uv/) and run `uv sync`, which reads
+   `.python-version` and `uv.lock` and installs both workspace members plus the
+   root dev group into `.venv`;
+2. `ruff check` each project - each one declares its own baseline rule set in
    `[tool.ruff.lint]` inside its `pyproject.toml`;
-4. run the combined test suite (`pytest -q`, 30 cases).
+3. run the combined test suite (`pytest -q`: 26 passed + 4 skipped, because the
+   CPLEX tests skip themselves when the optional extra is absent).
 
-The optional `cplex` extra is deliberately **not** installed in CI: the CPLEX
+The optional `cplex` extra is deliberately **not** synced in CI: the CPLEX
 tests skip themselves through `pytest.importorskip`, and the Community Edition
 runtime carries a size limit that would make CI runs flaky.
-
-The repository is not a single uv project (there is no root `pyproject.toml`
-and no `uv.lock`), so CI uses uv's pip-compatible interface instead of
-`uv sync`. Moving the two packages into a uv workspace with a committed lock
-file is the next step towards a one-command, fully reproducible environment.
 
 ## Network and Proxy Note
 
