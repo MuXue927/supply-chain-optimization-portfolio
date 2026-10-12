@@ -1,0 +1,19 @@
+# Line-ending policy for the whole repository.
+#
+# The repository stores LF. Declaring it here makes the policy travel with the
+# repository instead of depending on each contributor's core.autocrlf setting.
+* text=auto
+
+# Text sources, documentation and configuration data are always LF - in the
+# repository and in the working tree, on every platform.
+*.py           text eol=lf
+*.md           text eol=lf
+*.toml         text eol=lf
+*.json         text eol=lf
+*.ini          text eol=lf
+*.csv          text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+# Binary assets must never be normalized.
+*.png binary
