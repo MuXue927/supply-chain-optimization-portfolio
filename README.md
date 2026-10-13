@@ -49,6 +49,7 @@ per-project READMEs for the headline numbers.
 ```text
 .
 ├── docs/
+│   ├── engineering_lessons.md       # reusable pitfalls and review checklist
 │   └── uv_environment.md            # shared environment + CPLEX runtime notes
 ├── results/                          # committed summary tables and figures
 ├── tools/
@@ -157,6 +158,9 @@ The complete English mathematical model references are:
 
 - [single-period monolithic and column-generation models](single-period-delivery/docs/mathematical_models.md);
 - [multi-period monolithic model](multi-period-delivery/docs/mathematical_models.md).
+
+The reusable engineering and verification lessons are collected in
+[`docs/engineering_lessons.md`](docs/engineering_lessons.md).
 
 ## Notes
 

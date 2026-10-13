@@ -11,6 +11,14 @@ This review covers:
 The monolithic and column-generation models were reviewed statically. They were
 not solved because the local machine does not have a valid Gurobi license.
 
+> **Status update (2026-10-13).** This review records the historical state
+> before the route-local refactor. The current Gurobi and CPLEX monolithic
+> models use route-local slots, and the CPLEX column-generation objective has
+> been corrected. The historical Gurobi column-generation implementation is
+> retained unchanged and its old behavior is documented below as a pitfall.
+> See [`mathematical_models.md`](mathematical_models.md) for the current
+> formulations.
+
 ## Heuristic Result Validation
 
 The heuristic output for `dataset_9` was validated independently.

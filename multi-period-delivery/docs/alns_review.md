@@ -1,5 +1,11 @@
 # ALNS Implementation Review
 
+> **Status note (2026-10-13).** References below to the `38.57` CPLEX
+> incumbent describe the historical global vehicle-indexed validation run.
+> The ALNS review and regression results remain the public record for the
+> search path; the current monolithic formulation is documented in
+> [`mathematical_models.md`](mathematical_models.md).
+
 For the provenance of this code relative to the thesis implementation, and for
 the explanation of why the revised ALNS outperforms the thesis baseline, see
 [`thesis_relationship.md`](thesis_relationship.md).

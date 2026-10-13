@@ -26,6 +26,17 @@
 
 Everything else that was checked lines up; see §8.
 
+> **Status update (2026-10-13).** The route-local reformulation in §7.1 has
+> been implemented in both Gurobi and CPLEX monolithic models for the
+> single-period and multi-period projects. The single-period column-generation
+> implementation has the corrected objective accounting described in §7.1.
+> The public model specifications are
+> [`single-period-delivery/docs/mathematical_models.md`](../single-period-delivery/docs/mathematical_models.md)
+> and
+> [`multi-period-delivery/docs/mathematical_models.md`](../multi-period-delivery/docs/mathematical_models.md).
+> The sections below preserve the historical audit language so the reason for
+> each change remains visible.
+
 ---
 
 ## 2. Finding 1 (High): the model is not reproducible
@@ -257,7 +268,7 @@ not determine how many of them are underloaded.
 
 ## 7. Recommendations
 
-### 7.1 Route-local vehicle slots (recommended; measured at 14.8× on `dataset_1`)
+### 7.1 Route-local vehicle slots (implemented; measured at 14.8× on `dataset_1`)
 
 Because Constraint 1 already forbids a vehicle from serving more than one route
 per period, vehicle identities are **not shared between routes**. The global
@@ -288,6 +299,11 @@ The reformulation is implemented in
 `single-period-delivery/src/single_period_delivery/cplex_api_monolithic/model.py`
 and checked two ways.
 
+The same route-local structure is now implemented by the Gurobi single-period
+model, the Gurobi and CPLEX multi-period models, and the CPLEX
+column-generation implementation. The current model specifications and
+implementation maps are in the linked `mathematical_models.md` files.
+
 **1. Equivalence on a synthetic instance.** The bundled instances cannot settle
 an equivalence question: `BIG_NUM = 99999` makes the LP relaxation weak enough
 that even `small/dataset_3` stops on the time limit. A hand-built instance
@@ -314,7 +330,7 @@ reach in ten minutes. This is not an equivalence violation: the final plan uses
 15 vehicles against an old cap of 20, so the cap was never binding and both
 formulations share the same optimum — the old one simply never got there.
 
-### 7.2 Make the fleet deterministic (do this regardless)
+### 7.2 Make the legacy fleet deterministic
 
 Whatever formulation is chosen, the vehicle-type draw must stop being an
 unseeded global side effect:
@@ -326,18 +342,27 @@ unseeded global side effect:
   vehicle types are chosen by cost, so the type mix belongs to the model, not
   to the instance data.
 
-### 7.3 Correct the bound
+The route-local monolithic models no longer use the loader's global fleet
+fields. They are retained for compatibility with historical code paths; the
+legacy fleet draw should still be made deterministic or removed when those
+paths are retired.
+
+### 7.3 Correct the legacy bound
 
 Use `math.ceil` for the two volume-based terms. Note that this **changes the
 model size** (36 → 37 vehicles on `dataset_1`), so it belongs in a deliberate
 model revision with the benchmark re-run, not a drive-by edit.
 
+This remains a legacy-loader issue. It does not determine the size of the
+current route-local monolithic models, whose slots are derived from route
+demand and minimum vehicle capacity rather than from `max_veh_num`.
+
 ### 7.4 Align the documentation
 
-Until the model is revised, the problem descriptions should say what the code
-does. The assumption is currently stated as an unqualified property of the
-problem; it should note that the archived monolithic implementation approximates
-it with a pre-estimated, randomly typed fleet.
+The problem descriptions now distinguish the stated unlimited-fleet business
+assumption from the legacy loader's pre-estimated, randomly typed fleet. The
+route-local models use the stated assumption directly; historical loader
+behavior is documented as compatibility behavior.
 
 ---
 
@@ -374,16 +399,11 @@ Verified against the descriptions, no action needed:
 
 ---
 
-## 9. One documented deviation worth stating explicitly
+## 9. Demand coverage is an inequality
 
-The thesis' mathematical model writes the demand constraint as an **equality**;
-the code uses `>=`. The single-period source says so directly:
-
-> Gurobi uses `>=` here; the mathematical model states equality to express the
-> requirement more strictly.
-
-This is deliberate and it is what makes over-delivery legal — which in turn is
-what allows an underloaded but already-paid-for vehicle to be topped up to its
-minimum load without adding a new activation. The ALNS implementation relies on
-exactly that freedom (`fill_minimum_load_repair`). It should be stated in the
-problem descriptions rather than only in a code comment.
+The final thesis document and the implementation use the coverage form
+`sum(x) >= demand`. This makes over-delivery legal, which allows an
+underloaded but already-paid-for vehicle to be topped up without activating
+another vehicle. The ALNS implementation relies on exactly that freedom
+(`fill_minimum_load_repair`). An earlier audit note described the constraint
+as an equality; that note was inaccurate and has been corrected here.

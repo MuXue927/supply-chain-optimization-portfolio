@@ -98,14 +98,14 @@ Vehicle-type selection is associated with a fixed activation cost.
    The 3PL can provide an unlimited number of vehicles. Vehicle-type selection
    is driven only by cost.
 
-   *Implementation note:* the archived monolithic model does **not** implement
-   this literally. `InputDataSingle.load()` derives one global fleet size
-   (`max_veh_num`), assigns each vehicle a type **at random**, and the model can
-   then use that fixed fleet. On `small/dataset_1` this yields 235 vehicles,
-   which is what makes the monolithic model large enough to need a
-   column-generation alternative; see
+   *Implementation note:* the legacy loader still derives a global fleet size
+   (`max_veh_num`) and assigns vehicle types for compatibility with historical
+   code paths. The current route-local Gurobi and CPLEX monolithic models do
+   not use that random fleet; their vehicle type is selected by the model.
+   See
    [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md)
-   for the measurements and the recommended reformulation.
+   for the historical measurements and
+   [`mathematical_models.md`](mathematical_models.md) for the current model.
 
 ## Problem Diagram
 

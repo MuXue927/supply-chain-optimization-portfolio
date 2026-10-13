@@ -111,15 +111,14 @@ whose loaded volume falls below the minimum shipment quantity.
    The 3PL can provide an unlimited number of vehicles. Vehicle-type selection
    is driven only by cost.
 
-   *Implementation note:* the archived monolithic model does **not** implement
-   this literally. `InputDataMultiple.load()` derives one global fleet size
-   (`max_veh_num`), assigns each vehicle a type **at random**, and the model can
-   then use that fixed fleet in every period. Because no constraint ties a
-   vehicle across periods, the cap is effectively "*max_veh_num* vehicles per
-   period". This makes the model size and the available type mix vary from run
-   to run; see
+   *Implementation note:* the legacy loader still derives a global fleet size
+   and assigns vehicle types for compatibility with historical code paths. The
+   current route-local Gurobi and CPLEX monolithic models do not use that
+   random fleet; they select the type on each route-local slot and period.
+   Historical measurements are retained in
    [`../../docs/model_implementation_audit.md`](../../docs/model_implementation_audit.md)
-   for the measurements and the recommended reformulation.
+   and the current formulation is documented in
+   [`mathematical_models.md`](mathematical_models.md).
 
 ## Problem Diagram
 

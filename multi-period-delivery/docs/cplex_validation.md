@@ -4,10 +4,17 @@
 
 The `cplex_api_monolithic/` package is an independent CPLEX Python API
 implementation of the multi-period monolithic model. It uses `cplex.Cplex`
-and `SparsePair` directly and does not modify the thesis-aligned Gurobi
+and `SparsePair` directly and runs in parallel with the Gurobi
 `monolithic/` package. The shared environment setup, including the
 Community-to-Full runtime upgrade, is documented in
 [`../../docs/uv_environment.md`](../../docs/uv_environment.md).
+
+> **Status note (2026-10-13).** The objective and model counts below describe
+> the global vehicle-indexed formulation used before the route-local
+> reformulation. The current model on `small/dataset_1` has 98 route-local
+> slots, 9,636 variables, and 2,794 constraints. The current formulation and
+> tiny-instance equivalence check are documented in
+> [`mathematical_models.md`](mathematical_models.md).
 
 ## Reproduction Command
 
@@ -23,7 +30,7 @@ python -m multi_period_delivery.cplex_api_monolithic `
   --seed 1
 ```
 
-## Verified Result
+## Historical pre-refactor result
 
 | Item | Result |
 | --- | ---: |
@@ -43,13 +50,13 @@ python -m multi_period_delivery.cplex_api_monolithic `
 | Below-minimum-load vehicles | 0 |
 | Recomputed objective | 38.57 |
 
-The independent checks recompute the objective from the result CSV files and
+The historical checks recompute the objective from the result CSV files and
 verify the inventory staircase, plant capacity, vehicle capacity, and demand
 coverage directly. The result is a time-limited feasible incumbent, not a
 zero-gap certificate or evidence that a previously reported objective is
 globally optimal.
 
-## Model Consistency
+## Historical model consistency
 
 The Python API model was constructed independently from the reviewed
 multi-period formulation and checked before solving: 41,136 variables and

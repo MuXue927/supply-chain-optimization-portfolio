@@ -1,5 +1,11 @@
 # CPLEX / ALNS Objective Reconciliation
 
+> **Status note (2026-10-13).** The `38.57` incumbent below was produced by
+> the pre-refactor, global vehicle-indexed CPLEX model. The objective
+> reconciliation and over-delivery analysis remain valid for the ALNS path;
+> the current route-local formulation is documented in
+> [`mathematical_models.md`](mathematical_models.md).
+
 ## Question
 
 Why can CPLEX report a much smaller objective than ALNS on `dataset_1`?

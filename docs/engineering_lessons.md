@@ -1,0 +1,438 @@
+# Engineering Lessons and Verification Checklist
+
+This document records the reusable engineering lessons discovered while
+reviewing, reproducing, and refactoring this portfolio. It is intentionally
+practical: each lesson states the symptom, the underlying cause, how the issue
+is detected, and what evidence is required before calling the fix complete.
+
+The file complements the mathematical model specifications and validation
+reports. It is also a checklist for future code review, interview preparation,
+and regression work.
+
+---
+
+## 1. Model and solver lessons
+
+### 1.1 A global vehicle index can couple unrelated routes
+
+**Symptom:** The monolithic model grows rapidly with plants, dealers, SKUs, and
+the estimated fleet. Medium instances may return no integer solution, and
+large instances may run out of memory.
+
+**Root cause:** The original formulation indexes loading variables by an
+individual vehicle in a global set. The model then uses an assignment variable
+to connect that vehicle to one route. However, the physical decision allows
+vehicles to be selected per route, and the stated problem assumes unlimited
+vehicle availability.
+
+**Remediation:** Replace the global vehicle identity with route-local,
+type-agnostic slots:
+
+```text
+z_ijfn = 1 if slot n of route (i,j) uses type f
+sum_f z_ijfn <= 1
+```
+
+The loading variable is then indexed by `(route, slot, SKU)` rather than
+`(route, SKU, global vehicle)`.
+
+**Evidence required:**
+
+- the legacy and new models have equal optimal objective on a tiny instance;
+- the route-local slot count is sufficient for every non-dominated plan;
+- the refreshed model size and solve results are recorded;
+- both Gurobi and CPLEX implementations use the same reformulation.
+
+### 1.2 Vehicle-type mix must be a decision, not a random parameter
+
+**Symptom:** Two runs of the same benchmark can solve different models.
+Reported objectives, bounds, and run times are not comparable.
+
+**Root cause:** The legacy loader assigns a random type to each vehicle
+identity before optimization. The Gurobi paths did not seed that draw, and the
+model could not change a vehicle's type.
+
+**Remediation:** Let the model choose the type for each activated route slot
+through `z_ijfn`. Do not use the randomly generated fleet fields in the
+route-local monolithic models.
+
+**Evidence required:**
+
+- a fixed seed or no random draw at all;
+- the realized fleet fields are documented as legacy compatibility data if
+  they remain in the loader;
+- the Gurobi and CPLEX models produce identical objectives on the same tiny
+  instance;
+- the benchmark result can be reproduced from a clean checkout.
+
+### 1.3 A minimum-load penalty is a per-vehicle cost
+
+**Symptom:** Aggregating vehicles by route or type can make the model smaller
+but can also lose the number of underloaded vehicles, changing the objective.
+
+**Root cause:** The penalty is charged per activated vehicle whose loaded
+volume is below its type threshold. A route-level aggregate does not determine
+how many individual vehicles are underloaded.
+
+**Remediation:** Keep one binary penalty indicator per route-local slot and
+the selected type:
+
+```text
+z_ijfn + zz_ijn - 1 <= p_ijfn
+```
+
+**Evidence required:**
+
+- an underloaded vehicle is penalized exactly once;
+- an unused slot has no penalty;
+- the objective can be recomputed from the output CSV files;
+- the same accounting is used by monolithic, column generation, and ALNS.
+
+### 1.4 Time-limit status is not optimality
+
+**Symptom:** A solver reports a feasible objective, but the model is not
+proven optimal within the time budget.
+
+**Root cause:** MIP solvers can return a primal incumbent without closing the
+dual gap. `time_limit_feasible` is not an optimum certificate.
+
+**Remediation:** Always record the objective, best bound, gap, status, wall
+time, and time limit separately.
+
+**Evidence required:**
+
+- the status and solver status code are saved;
+- the gap is computed from the objective and bound;
+- a zero-gap result is described as optimal only when the solver status says
+  so;
+- tiny equivalence tests use proven optimal solves rather than time-limit
+  incumbents.
+
+### 1.5 A bound variable is not automatically a valid plan
+
+**Symptom:** A model reports a best bound lower than the incumbent but no
+integer solution exists yet.
+
+**Root cause:** A dual bound is not a delivery plan and cannot be written to
+the result files.
+
+**Remediation:** Distinguish `objective` from `best_bound`, and require
+primal feasibility before exporting result rows.
+
+**Evidence required:**
+
+- no result CSV is produced from a bound alone;
+- every exported shipment has a positive integer quantity;
+- demand, inventory, capacity, and minimum-load validation passes.
+
+### 1.6 Over-delivery is part of the model
+
+**Symptom:** Reviewers may assume the demand constraint is an equality and
+incorrectly flag over-delivery as a bug.
+
+**Root cause:** The final thesis and implementation use a coverage inequality.
+This allows an already activated vehicle to be topped up to the
+minimum-load threshold without activating another vehicle.
+
+**Remediation:** State the inequality explicitly in the model documentation
+and validation reports.
+
+**Evidence required:**
+
+- the symbol table and model equations use `>=` consistently;
+- over-delivery is reported separately from shortages;
+- the validator distinguishes a shortage from legal over-delivery.
+
+---
+
+## 2. Data and reproducibility lessons
+
+### 2.1 Synthetic data must be clearly separated from commercial data
+
+**Symptom:** A public repository can unintentionally expose a real customer
+network, parameters, or business identifiers.
+
+**Root cause:** The model may be derived from a real case even when the
+published numbers are simulated.
+
+**Remediation:** Publish only synthetic instances and generic operational
+structure. Keep company names, real parameters, confidential documents, and
+potentially identifying network details out of the tracked repository.
+
+**Evidence required:**
+
+- data generation is deterministic from a documented seed;
+- the public README states that the data are simulated;
+- no real company names, credentials, or private files are committed;
+- the confidentiality boundary is reviewed before publishing a license.
+
+### 2.2 Relative paths must be resolved against a documented base
+
+**Symptom:** A script works from one directory and fails from another, or
+writes results into an unexpected nested folder.
+
+**Root cause:** The script resolves relative paths against the module location
+while the user expects them relative to the current working directory, or vice
+versa.
+
+**Remediation:** Define the base directory explicitly in the CLI, and test the
+documented invocation from the repository root.
+
+**Evidence required:**
+
+- the same command produces the same output location from a clean checkout;
+- the path-resolution rule is stated in the README;
+- no generated results are written inside a package source folder.
+
+### 2.3 Raw and curated results have different retention rules
+
+**Symptom:** Large logs and solver dumps are committed, or a curated result
+cannot be traced back to its run.
+
+**Root cause:** Raw run artifacts and committed summary tables have different
+purposes.
+
+**Remediation:** Keep raw runs under ignored `results/*/raw/`; commit only
+small, deterministic summaries and the command that regenerates them.
+
+**Evidence required:**
+
+- the raw directory is ignored;
+- the summary has a stable schema;
+- the report builder can regenerate the comparison table.
+
+---
+
+## 3. CI and quality lessons
+
+### 3.1 Duplicate test filenames require an explicit import mode
+
+**Symptom:** Running pytest from the repository root imports the wrong
+`test_cli.py` or `test_cplex_api.py`.
+
+**Root cause:** Both packages have tests with identical basenames.
+
+**Remediation:** Configure `--import-mode=importlib` at the workspace root and
+restrict collection to the two package test directories.
+
+**Evidence required:**
+
+- `pytest -q` from the repository root collects both projects;
+- generated folders such as `outputs/` are not scanned;
+- the CI command uses the same configuration as local development.
+
+### 3.2 Optional solvers should skip, not fail
+
+**Symptom:** CI fails because CPLEX or Gurobi is not installed.
+
+**Root cause:** Solver-dependent tests are collected in the normal test suite,
+while the optional runtime is intentionally absent from CI.
+
+**Remediation:** Use `pytest.importorskip` for optional CPLEX tests and keep
+the standard CI environment solver-free where possible.
+
+**Evidence required:**
+
+- skipped tests are visible in the summary;
+- solver-independent paths still run in CI;
+- the documented local command exercises the optional solver path.
+
+### 3.3 Coverage gates must be meaningful but not brittle
+
+**Symptom:** A coverage limit either blocks ordinary refactoring or is so low
+that it provides no signal.
+
+**Root cause:** Coverage is a baseline metric, not a proof of correctness.
+
+**Remediation:** Measure branch and statement coverage over the two packages,
+set the gate below the measured baseline, and raise it only after real
+coverage improves.
+
+**Evidence required:**
+
+- the current baseline is recorded;
+- CI uses the same command as the documented local check;
+- solver-dependent modules are explained when they are not covered.
+
+### 3.4 Lint rules should be adopted in controlled groups
+
+**Symptom:** Turning on the full Ruff rule set creates hundreds of unrelated
+changes and hides real defects.
+
+**Root cause:** A clean-code baseline is being introduced into an existing
+research codebase.
+
+**Remediation:** Enable focused groups first (`E4`, `E7`, `E9`, `F`, `I`,
+`UP`) and expand only when the current gate is clean.
+
+**Evidence required:**
+
+- the rule set is declared in each package;
+- CI runs the same lint command;
+- fixes are separated from behavior-changing refactors where practical.
+
+### 3.5 uv lock and workspace pruning are features, not surprises
+
+**Symptom:** A package installed manually disappears after `uv sync`.
+
+**Root cause:** `uv sync` makes `.venv` match the lock file and prunes
+undeclared packages.
+
+**Remediation:** Declare every required dependency in the correct workspace
+member, use the `cplex` extra when needed, or explicitly use `uv sync --inexact`
+only for a deliberate local exception.
+
+**Evidence required:**
+
+- `pyproject.toml` and `uv.lock` agree;
+- clean `uv sync` installs both members;
+- the optional CPLEX flow is documented separately.
+
+### 3.6 CPLEX Community Edition has a size limit
+
+**Symptom:** A modest model fails with CPLEX error `1016`.
+
+**Root cause:** The PyPI CPLEX wheel contains the Community runtime, which
+limits model size.
+
+**Remediation:** Install the matching Studio runtime and run
+`docplex config --upgrade`, ensuring the wheel and runtime versions match.
+
+**Evidence required:**
+
+- the upgrade command is documented;
+- the installed wheel and DLL versions match;
+- a model beyond the Community limit is constructed successfully.
+
+### 3.7 Gurobi license state must be explicit
+
+**Symptom:** Gurobi fails with an error about a missing license file, or a
+restricted license is used without the solver run being described correctly.
+
+**Root cause:** Gurobi license lookup depends on environment variables and the
+installed license type.
+
+**Remediation:** Record the license environment used for local verification;
+do not commit license files or credentials. Do not use a restricted license to
+claim production-scale performance.
+
+**Evidence required:**
+
+- the validation report states the license mode;
+- tiny tests are solved under the restricted mode when that is sufficient;
+- large benchmark claims are made only with the appropriate runtime.
+
+---
+
+## 4. Git and repository hygiene lessons
+
+### 4.1 Generated model dumps and logs belong in ignored output directories
+
+**Symptom:** LP, ILP, console, and raw experiment files pollute the repository.
+
+**Root cause:** Solver APIs write their own diagnostic artifacts by default.
+
+**Remediation:** Write solver artifacts under the run output directory and
+ignore `*.lp`, `*.ilp`, `*.log`, and raw result directories.
+
+**Evidence required:**
+
+- `git status` is clean after a solve;
+- generated artifacts can be recreated by the documented command.
+
+### 4.2 Line endings should be declared once
+
+**Symptom:** Git reports the entire file as changed because of CRLF/LF churn.
+
+**Root cause:** Windows editors and Git defaults can disagree.
+
+**Remediation:** Keep a repository-level `.gitattributes` and avoid converting
+line endings as part of unrelated fixes.
+
+**Evidence required:**
+
+- `git diff --check` is clean;
+- line-ending warnings are understood before commit;
+- behavioral diffs are not mixed with formatting-only churn.
+
+### 4.3 Local-only material must remain local
+
+**Symptom:** Interview notes, private resume drafts, or sensitive setup notes
+are accidentally committed.
+
+**Root cause:** Personal notes are stored next to the public codebase.
+
+**Remediation:** Keep them under an ignored `local-only/` directory and verify
+`git status --ignored` before publishing.
+
+**Evidence required:**
+
+- `local-only/` is ignored;
+- public docs contain no private credentials or company data;
+- local notes can still reference public files by relative path.
+
+---
+
+## 5. Mathematical documentation lessons
+
+### 5.1 Keep legacy and new formulations side by side
+
+The document should show the thesis model, the route-local model, and the
+equivalence argument. A reader must be able to see what changed without
+reverse-engineering the code.
+
+Required sections:
+
+- symbol tables;
+- objective;
+- every constraint and its business meaning;
+- variable domains;
+- legacy defects and motivation;
+- new-model advantages;
+- validation evidence;
+- implementation file map.
+
+### 5.2 Markdown math needs renderer-compatible inline syntax
+
+Use `$...$` for inline math and `$$...$$` for display math. Do not mix
+renderer-specific syntax such as `\(...\)` if the target renderer treats it as
+plain text.
+
+**Verification:** render the document in the target Markdown viewer and check
+that set membership, subscripts, Greek letters, and fractions appear as
+mathematical symbols rather than raw TeX.
+
+### 5.3 Every result claim needs a provenance trail
+
+For each headline result, record:
+
+- the instance or whether it is synthetic;
+- the solver and version;
+- the seed;
+- the time limit;
+- the status;
+- the objective and best bound;
+- the source CSV or JSON;
+- the command that regenerates it.
+
+Without this trail, a result is a claim rather than evidence.
+
+---
+
+## 6. Final review checklist
+
+Before describing the portfolio as complete, answer all of these:
+
+1. Can I explain the legacy model, the route-local model, and the exact
+   equivalence argument without reading code?
+2. Can I explain why the old fleet index grows and why the new slot count is
+   sufficient?
+3. Can I explain why minimum-load penalties must remain per vehicle?
+4. Can I explain the difference between an incumbent, a best bound, and an
+   optimal solution?
+5. Can I reproduce one small CPLEX model, one Gurobi model, and one ALNS run?
+6. Can I run Ruff, pytest, coverage, and the CI workflow locally?
+7. Can I explain what `uv sync`, the lock file, and the CPLEX extra do?
+8. Can I explain the CPLEX Community/Studio upgrade and why it matters?
+9. Can I identify every generated artifact that must not be committed?
+10. Can I point to a document and a command for every line in my resume?

@@ -5,9 +5,18 @@
 The `cplex_api_monolithic/` and `cplex_api_column_generation/` packages are
 independent CPLEX Python API implementations of the single-period models.
 They use `cplex.Cplex` and `SparsePair` directly and do not modify the
-thesis-aligned Gurobi packages. The shared environment setup, including the
+parallel Gurobi packages. The shared environment setup, including the
 Community-to-Full runtime upgrade, is documented in
 [`../../docs/uv_environment.md`](../../docs/uv_environment.md).
+
+> **Status note (2026-10-13).** The result and variable count in the
+> "Historical pre-refactor validation" section below describe the global
+> vehicle-indexed model. The current implementation uses route-local slots.
+> On `small/dataset_9` the route-local CPLEX model has 306 slots, 5,518
+> variables, and 1,944 constraints. Current performance results are committed
+> in [`../../results/single-period/comparison.csv`](../../results/single-period/comparison.csv),
+> and the current formulation is documented in
+> [`mathematical_models.md`](mathematical_models.md).
 
 ## Reproduction Commands
 
@@ -36,7 +45,7 @@ python -m single_period_delivery.cplex_api_column_generation `
   --seed-result-csv OutPut-Heuristic/single-period/small/dataset_9/opt_result.csv
 ```
 
-## Verified Results
+## Historical pre-refactor validation
 
 | Model | Status | Objective | Recomputed objective | Feasibility checks |
 | --- | --- | ---: | ---: | --- |
@@ -49,7 +58,7 @@ from a validated heuristic solution and reproduces its objective exactly; it
 validates the corrected minimum-load penalty and objective accounting in the
 master model.
 
-## Model Consistency Checks
+## Historical model consistency checks
 
 Before solving, the Python API model construction was checked against the
 reviewed formulation:
