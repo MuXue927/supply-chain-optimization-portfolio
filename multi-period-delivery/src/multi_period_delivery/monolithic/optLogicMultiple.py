@@ -149,7 +149,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
 
     try:
         # Match the model convention: vehicles = sum_{v,t} z[v,t].
-        z_vars = getattr(model, "z_lt", None)
+        z_vars = getattr(model, "z_ijfn_t", None)
         if z_vars is not None:
             vehicle_count = int(
                 round(
@@ -263,16 +263,16 @@ def output_result(model: MonolithicModelMultiple):
 def create_dataframe(model: MonolithicModelMultiple):
     rows = []
     if model.model.Status == GRB.OPTIMAL:  # Read variable values only for an optimal status.
-        for (plant, dealer, sku_id, v_id, t), var in model.x_ijklt.items():
+        for (plant, dealer, sku_id, slot, t), var in model.x_ijkn_t.items():
             # Save only positive loaded quantities.
-            if var.Xn > 0 and model.z_lt[v_id, t].Xn > 0 and model.y_ijlt[plant, dealer, v_id, t].Xn > 0:
+            if var.Xn > 0:
                 rows.append({
                     'day': t,
                     'plant_code': plant,
                     'client_code': dealer,
                     'product_code': sku_id,
-                    'vehicle_id': int(v_id),
-                    'vehicle_type': model.veh_type[int(v_id)],
+                    'vehicle_id': int(slot),
+                    'vehicle_type': model.slot_type(plant, dealer, slot, t),
                     'qty': round(var.Xn)
                 })
     return pd.DataFrame(rows)

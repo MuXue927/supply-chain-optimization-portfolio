@@ -80,9 +80,17 @@ class InputDataMultiple:
     veh_type: dict[int, str] = field(init=False)
     # Conversely, each vehicle type identifies its vehicle IDs {v_type: {v_id}}.
     veh_ids: dict[str, set[int]] = field(init=False)
+    # Vehicle-type attributes used by the route-local formulation.
+    veh_type_cap: dict[str, int] = field(init=False)
+    veh_type_min_load: dict[str, int] = field(init=False)
+    veh_type_cost: dict[str, float] = field(init=False)
 
     # Supply relationships between plants and dealers {(plant, dealer): {sku}}.
     supply_chain: dict[tuple[str, str], set[str]] = field(init=False)
+    # Route-local slots: {(plant, dealer): [slot, ...]}.
+    route_slots: dict[tuple[str, str], list[int]] = field(init=False)
+    # Total number of route-local slots across all routes.
+    route_slot_count: int = field(init=False)
     
     # Upper bound on the number of vehicles that can be used.
     max_veh_num: int = field(init=False)
@@ -290,3 +298,37 @@ class InputDataMultiple:
                     if sku in skus_supply:
                         self.supply_chain[plant, dealer].add(sku)
         self.supply_chain = dict(self.supply_chain)
+
+        # Route-local vehicle slots mirror the single-period formulation. A
+        # slot belongs to one route and its type is a model decision. Demand is
+        # aggregated across the planning horizon because a route can receive
+        # shipments in any period; the slot count is therefore a safe upper
+        # bound for every individual period as well.
+        self.veh_type_cap = {
+            v_type: int(each_type_cap[v_type]) for v_type in self.all_veh_types
+        }
+        self.veh_type_min_load = {
+            v_type: int(each_type_min_load[v_type]) for v_type in self.all_veh_types
+        }
+        self.veh_type_cost = {
+            v_type: float(each_type_cost[v_type]) for v_type in self.all_veh_types
+        }
+
+        self.route_demand_volume = {}
+        for (plant, dealer), skus in self.supply_chain.items():
+            self.route_demand_volume[(plant, dealer)] = sum(
+                float(self.demands[dealer, sku]) * float(self.sku_sizes[sku])
+                for sku in skus
+                if (dealer, sku) in self.demands
+            )
+
+        min_cap = min(
+            (cap for cap in self.veh_type_cap.values() if cap > 0), default=0
+        )
+        self.min_veh_cap = min_cap
+
+        self.route_slots = {}
+        for route, volume in self.route_demand_volume.items():
+            copies = math.ceil(volume / min_cap) + 1 if min_cap > 0 else 1
+            self.route_slots[route] = list(range(1, copies + 1))
+        self.route_slot_count = sum(len(slots) for slots in self.route_slots.values())

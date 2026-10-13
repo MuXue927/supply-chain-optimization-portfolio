@@ -153,6 +153,11 @@ and operator families, and fixes the implementation defects and missing
 neighborhoods described in
 [`multi-period-delivery/docs/thesis_relationship.md`](multi-period-delivery/docs/thesis_relationship.md).
 
+The complete English mathematical model references are:
+
+- [single-period monolithic and column-generation models](single-period-delivery/docs/mathematical_models.md);
+- [multi-period monolithic model](multi-period-delivery/docs/mathematical_models.md).
+
 ## Notes
 
 - Do not commit credentials, cookies, private databases, virtual

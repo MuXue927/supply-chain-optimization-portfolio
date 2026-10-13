@@ -34,6 +34,12 @@ English problem diagram are documented here:
 
 [`docs/problem_description.md`](docs/problem_description.md)
 
+The complete English monolithic and column-generation mathematical models,
+including the route-local reformulation and the modelling-interface defects
+of the legacy formulation, are documented here:
+
+[`docs/mathematical_models.md`](docs/mathematical_models.md)
+
 The static code review and heuristic result checks are documented in:
 
 [`docs/code_review.md`](docs/code_review.md)

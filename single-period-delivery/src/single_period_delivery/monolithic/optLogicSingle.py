@@ -70,16 +70,17 @@ def output_result(model: MonolithicModelSingle):
 def create_dataframe(model: MonolithicModelSingle):
     rows = []
     if model.model.Status == GRB.OPTIMAL:  # Access the Xn attribute only when an optimal solution is available.
-        for (plant, dealer, sku_id, v_id), var in model.x_ijkl.items():
-            # Save a record only when vehicle l is used, route (i, j) is active, and the loaded quantity of SKU k is positive.
-            if var.Xn > 0 and model.z_l[v_id].Xn > 0 and model.y_ijl[plant, dealer, v_id].Xn > 0:
+        for (plant, dealer, sku_id, slot), var in model.x_ijkn.items():
+            # Save a record only when the route-local slot is used and the
+            # loaded quantity of SKU k is positive.
+            if var.Xn > 0:
                 rows.append({
                     'day': model.day,
                     'plant_code': plant,
                     'client_code': dealer,
                     'product_code': sku_id,
-                    'vehicle_id': int(v_id),
-                    'vehicle_type': model.veh_type[int(v_id)],
+                    'vehicle_id': int(slot),
+                    'vehicle_type': model.slot_type(plant, dealer, slot),
                     'qty': round(var.Xn)
                 })
     return pd.DataFrame(rows)

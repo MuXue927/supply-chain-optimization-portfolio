@@ -1,11 +1,11 @@
 scale,dataset_name,approach,objective,best_bound,mip_gap_pct,status,wall_seconds,return_code
-large,dataset_1,cplex,,,,solver_error: CPLEX Error  1001: Out of memory.,428.28,0
+large,dataset_1,cplex,1028.0000000000007,992.2512994747842,3.4775,time limit exceeded,3625.76,0
 large,dataset_1,heuristic,1763.0800000000047,,,success,3.72,0
-medium,dataset_1,cplex,,72.65045379842937,,"time limit exceeded, no integer solution",626.31,0
+medium,dataset_1,cplex,601.9599999999994,584.5485699930977,2.8925,time limit exceeded,1809.49,0
 medium,dataset_1,heuristic,844.76,,,success,2.53,0
-medium,dataset_3,cplex,,38.302554304556345,,"time limit exceeded, no integer solution",623.83,0
+medium,dataset_3,cplex,456.88,442.84694353042835,3.0715,time limit exceeded,3647.0,0
 medium,dataset_3,heuristic,632.4800000000014,,,success,3.85,0
-small,dataset_1,cplex,227.05999999999995,172.65472941176478,23.9607,time limit exceeded,608.26,0
+small,dataset_1,cplex,179.39999999999998,178.92163837042148,0.2666,time limit exceeded,601.83,0
 small,dataset_1,heuristic,310.6,,,success,2.33,0
-small,dataset_3,cplex,15.36,13.54,11.849,time limit exceeded,604.63,0
+small,dataset_3,cplex,15.06,15.06,0.0,optimal,2.36,0
 small,dataset_3,heuristic,39.92,,,success,2.32,0

@@ -1,8 +1,7 @@
 """Official CPLEX Python API monolithic model for the multi-period problem.
 
-This module is intentionally parallel to ``monolithic``. It preserves the same
-decision variables, objective, and constraints while using the official
-``cplex`` Python API.
+This module is intentionally parallel to ``monolithic``. It implements the same
+route-local slot reformulation with the official ``cplex`` Python API.
 
 The CPLEX Python package is imported only when the model is constructed. This
 keeps the module importable in environments that do not have IBM CPLEX Python
@@ -21,10 +20,10 @@ import pandas as pd
 
 from ..monolithic.InputDataMultiple import InputDataMultiple
 
-IndexVehiclePeriod = tuple[int, int]
-IndexPlantDealerVehiclePeriod = tuple[str, str, int, int]
+IndexRouteSlotPeriod = tuple[str, str, int, int]
+IndexRouteTypeSlotPeriod = tuple[str, str, str, int, int]
+IndexRouteSkuSlotPeriod = tuple[str, str, str, int, int]
 IndexPlantSkuPeriod = tuple[str, str, int]
-IndexPlantDealerSkuVehiclePeriod = tuple[str, str, str, int, int]
 
 
 def _load_cplex() -> Any:
@@ -79,11 +78,13 @@ class MultiPeriodCplexApiMonolithic:
 
         # Variable dictionaries map mathematical indices to CPLEX column
         # indices. The index-to-name mapping is retained for solution export.
-        self.z: dict[IndexVehiclePeriod, int] = {}
-        self.zz: dict[IndexVehiclePeriod, int] = {}
-        self.p: dict[IndexVehiclePeriod, int] = {}
-        self.y: dict[IndexPlantDealerVehiclePeriod, int] = {}
-        self.x: dict[IndexPlantDealerSkuVehiclePeriod, int] = {}
+        # Route-local slots: a slot belongs to one route and its vehicle type is
+        # a decision variable in every period, so neither a global fleet index
+        # nor a y assignment variable is required.
+        self.z: dict[IndexRouteTypeSlotPeriod, int] = {}
+        self.zz: dict[IndexRouteSlotPeriod, int] = {}
+        self.p: dict[IndexRouteTypeSlotPeriod, int] = {}
+        self.x: dict[IndexRouteSkuSlotPeriod, int] = {}
         self.s: dict[IndexPlantSkuPeriod, int] = {}
 
         self._variable_names: list[str] = []
@@ -137,39 +138,38 @@ class MultiPeriodCplexApiMonolithic:
         return index
 
     def _build_variables(self) -> None:
-        """Create z, zz, p, y, s, and x variables."""
+        """Create route-local z, zz, p, x variables and plant inventory s."""
         data = self.data
 
-        for vehicle in sorted(data.all_vehicles):
-            for period in self.periods:
-                self._add_variable(
-                    f"z_{vehicle}_{period}",
-                    kind="binary",
-                    target=self.z,
-                    key=(vehicle, period),
-                )
-                self._add_variable(
-                    f"zz_{vehicle}_{period}",
-                    kind="binary",
-                    target=self.zz,
-                    key=(vehicle, period),
-                )
-                self._add_variable(
-                    f"p_{vehicle}_{period}",
-                    kind="binary",
-                    target=self.p,
-                    key=(vehicle, period),
-                )
-
-        for plant, dealer in sorted(data.supply_chain):
-            for vehicle in sorted(data.all_vehicles):
+        for plant, dealer in sorted(data.route_slots):
+            for slot in data.route_slots[plant, dealer]:
                 for period in self.periods:
                     self._add_variable(
-                        f"y_{plant}_{dealer}_{vehicle}_{period}",
+                        f"zz_{plant}_{dealer}_{slot}_{period}",
                         kind="binary",
-                        target=self.y,
-                        key=(plant, dealer, vehicle, period),
+                        target=self.zz,
+                        key=(plant, dealer, slot, period),
                     )
+                    for sku in sorted(data.supply_chain[plant, dealer]):
+                        self._add_variable(
+                            f"x_{plant}_{dealer}_{sku}_{slot}_{period}",
+                            kind="integer",
+                            target=self.x,
+                            key=(plant, dealer, sku, slot, period),
+                        )
+                    for v_type in sorted(data.all_veh_types):
+                        self._add_variable(
+                            f"z_{plant}_{dealer}_{v_type}_{slot}_{period}",
+                            kind="binary",
+                            target=self.z,
+                            key=(plant, dealer, v_type, slot, period),
+                        )
+                        self._add_variable(
+                            f"p_{plant}_{dealer}_{v_type}_{slot}_{period}",
+                            kind="binary",
+                            target=self.p,
+                            key=(plant, dealer, v_type, slot, period),
+                        )
 
         for plant, skus in sorted(data.skus_plant.items()):
             for sku in sorted(skus):
@@ -185,17 +185,6 @@ class MultiPeriodCplexApiMonolithic:
                         key=(plant, sku, period),
                     )
 
-        for plant, dealer in sorted(data.supply_chain):
-            for sku in sorted(data.supply_chain[plant, dealer]):
-                for vehicle in sorted(data.all_vehicles):
-                    for period in self.periods:
-                        self._add_variable(
-                            f"x_{plant}_{dealer}_{sku}_{vehicle}_{period}",
-                            kind="integer",
-                            target=self.x,
-                            key=(plant, dealer, sku, vehicle, period),
-                        )
-
         self.model.variables.add(
             lb=self._variable_lower_bounds,
             ub=self._variable_upper_bounds,
@@ -205,11 +194,13 @@ class MultiPeriodCplexApiMonolithic:
 
     def _build_objective(self) -> None:
         """Set fixed vehicle cost plus the alpha-scaled minimum-load penalty."""
-        for (vehicle, _period), index in self.z.items():
-            self._objective_coefficients[index] = float(self.data.veh_cost[vehicle])
-        for (vehicle, _period), index in self.p.items():
+        for (plant, dealer, v_type, slot, period), index in self.z.items():
+            self._objective_coefficients[index] = float(
+                self.data.veh_type_cost[v_type]
+            )
+        for (plant, dealer, v_type, slot, period), index in self.p.items():
             self._objective_coefficients[index] = float(self.data.param_alpha) * float(
-                self.data.veh_cost[vehicle]
+                self.data.veh_type_cost[v_type]
             )
 
         self.model.objective.set_linear(
@@ -245,95 +236,86 @@ class MultiPeriodCplexApiMonolithic:
         self._constraint_names.append(_safe_name(name))
 
     def _build_constraints(self) -> None:
-        """Add all constraints in the same order and sense as the original model."""
+        """Add the route-local constraints for every route slot and period."""
         data = self.data
 
-        # Constraint 1: vehicle use. A vehicle is marked used when at least one
-        # plant-dealer assignment is selected in a period.
-        for vehicle in sorted(data.all_vehicles):
-            for period in self.periods:
-                terms: dict[int, float] = {
-                    self.y[plant, dealer, vehicle, period]: 1.0
-                    for plant, dealer in data.supply_chain
-                }
-                terms[self.z[vehicle, period]] = -1.0
-                self._add_constraint(
-                    f"vehicle_use_{vehicle}_{period}",
-                    terms,
-                    "E",
-                    0.0,
-                )
-
-        # Constraint 2: x-y linking. SKU quantity can be loaded only when the
-        # corresponding plant-dealer-vehicle assignment is active.
-        for plant, dealer in sorted(data.supply_chain):
-            for vehicle in sorted(data.all_vehicles):
+        for plant, dealer in sorted(data.route_slots):
+            skus = sorted(data.supply_chain[plant, dealer])
+            for slot in data.route_slots[plant, dealer]:
                 for period in self.periods:
-                    terms = {
-                        self.x[plant, dealer, sku, vehicle, period]: 1.0
-                        for sku in data.supply_chain[plant, dealer]
-                    }
-                    terms[self.y[plant, dealer, vehicle, period]] = -float(
-                        data.param_BIG_NUM
-                    )
                     self._add_constraint(
-                        f"link_x_y_{plant}_{dealer}_{vehicle}_{period}",
-                        terms,
+                        f"one_type_{plant}_{dealer}_{slot}_{period}",
+                        {
+                            self.z[plant, dealer, v_type, slot, period]: 1.0
+                            for v_type in data.all_veh_types
+                        },
+                        "L",
+                        1.0,
+                    )
+
+                    capacity_terms: dict[int, float] = {
+                        self.x[plant, dealer, sku, slot, period]: float(
+                            data.sku_sizes[sku]
+                        )
+                        for sku in skus
+                    }
+                    for v_type in data.all_veh_types:
+                        capacity_terms[
+                            self.z[plant, dealer, v_type, slot, period]
+                        ] = -float(data.veh_type_cap[v_type])
+                    self._add_constraint(
+                        f"capacity_{plant}_{dealer}_{slot}_{period}",
+                        capacity_terms,
                         "L",
                         0.0,
                     )
 
-        # Constraints 3-5: minimum load, penalty linking, and capacity.
-        for vehicle in sorted(data.all_vehicles):
-            for period in self.periods:
-                load_terms: dict[int, float] = {}
-                for plant, dealer in data.supply_chain:
-                    for sku in data.supply_chain[plant, dealer]:
-                        load_terms[self.x[plant, dealer, sku, vehicle, period]] = float(
+                    load_terms: dict[int, float] = {
+                        self.x[plant, dealer, sku, slot, period]: float(
                             data.sku_sizes[sku]
                         )
-                load_terms[self.zz[vehicle, period]] = float(data.param_BIG_NUM)
-                self._add_constraint(
-                    f"minimum_load_{vehicle}_{period}",
-                    load_terms,
-                    "G",
-                    float(data.veh_min_load[vehicle]),
-                )
+                        for sku in skus
+                    }
+                    load_terms[self.zz[plant, dealer, slot, period]] = float(
+                        data.param_BIG_NUM
+                    )
+                    for v_type in data.all_veh_types:
+                        load_terms[
+                            self.z[plant, dealer, v_type, slot, period]
+                        ] = -float(data.veh_type_min_load[v_type])
+                    self._add_constraint(
+                        f"minimum_load_{plant}_{dealer}_{slot}_{period}",
+                        load_terms,
+                        "G",
+                        0.0,
+                    )
 
-                self._add_constraint(
-                    f"penalty_link_{vehicle}_{period}",
-                    {
-                        self.z[vehicle, period]: 1.0,
-                        self.zz[vehicle, period]: 1.0,
-                        self.p[vehicle, period]: -1.0,
-                    },
-                    "L",
-                    1.0,
-                )
-
-                capacity_terms: dict[int, float] = {}
-                for plant, dealer in data.supply_chain:
-                    for sku in data.supply_chain[plant, dealer]:
-                        capacity_terms[self.x[plant, dealer, sku, vehicle, period]] = (
-                            float(data.sku_sizes[sku])
+                    for v_type in data.all_veh_types:
+                        self._add_constraint(
+                            f"penalty_link_{plant}_{dealer}_{v_type}_{slot}_{period}",
+                            {
+                                self.z[
+                                    plant, dealer, v_type, slot, period
+                                ]: 1.0,
+                                self.zz[plant, dealer, slot, period]: 1.0,
+                                self.p[
+                                    plant, dealer, v_type, slot, period
+                                ]: -1.0,
+                            },
+                            "L",
+                            1.0,
                         )
-                self._add_constraint(
-                    f"vehicle_capacity_{vehicle}_{period}",
-                    capacity_terms,
-                    "L",
-                    float(data.veh_cap[vehicle]),
-                )
 
-        # Constraint 6: aggregate demand. The original model uses a >=
-        # inequality, so over-delivery is feasible even though it consumes
-        # vehicle capacity and therefore has an economic consequence.
+        # Constraint 3: minimum load, penalty linking, and capacity were added
+        # above for each route-local slot. The remaining rows below are the
+        # unchanged aggregate demand, inventory balance, and plant capacity.
         for dealer, sku in sorted(data.demands):
             terms = {
-                self.x[plant, dealer, sku, vehicle, period]: 1.0
+                self.x[plant, dealer, sku, slot, period]: 1.0
                 for plant in data.plants
-                for vehicle in data.all_vehicles
+                for slot in data.route_slots.get((plant, dealer), [])
                 for period in self.periods
-                if (plant, dealer, sku, vehicle, period) in self.x
+                if (plant, dealer, sku, slot, period) in self.x
             }
             self._add_constraint(
                 f"demand_{dealer}_{sku}",
@@ -342,17 +324,16 @@ class MultiPeriodCplexApiMonolithic:
                 float(data.demands[dealer, sku]),
             )
 
-        # Constraint 7: inventory balance for every plant, SKU, and period.
         inventory_keys = {
             (plant, sku) for plant, skus in data.skus_plant.items() for sku in skus
         }
         for plant, sku in sorted(inventory_keys):
             for period in self.periods:
                 terms = {
-                    self.x[plant, dealer, sku, vehicle, period]: 1.0
+                    self.x[plant, dealer, sku, slot, period]: 1.0
                     for dealer in data.dealers
-                    for vehicle in data.all_vehicles
-                    if (plant, dealer, sku, vehicle, period) in self.x
+                    for slot in data.route_slots.get((plant, dealer), [])
+                    if (plant, dealer, sku, slot, period) in self.x
                 }
                 terms[self.s[plant, sku, period]] = 1.0
                 terms[self.s[plant, sku, period - 1]] = -1.0
@@ -363,8 +344,6 @@ class MultiPeriodCplexApiMonolithic:
                     float(data.sku_prod_each_day.get((plant, sku, period), 0)),
                 )
 
-        # Constraint 8: total remaining plant inventory cannot exceed the
-        # storage capacity of the plant in any planning period.
         for plant in sorted(data.plants):
             for period in self.periods:
                 terms = {
@@ -545,15 +524,17 @@ class MultiPeriodCplexApiMonolithic:
             value = solution.variables.get(self._variable_names[index], 0.0)
             if value <= 1e-7:
                 continue
-            plant, dealer, sku, vehicle, period = key
+            plant, dealer, sku, slot, period = key
             rows.append(
                 {
                     "day": period,
                     "plant_code": plant,
                     "client_code": dealer,
                     "product_code": sku,
-                    "vehicle_id": vehicle,
-                    "vehicle_type": self.data.veh_type[vehicle],
+                    "vehicle_id": slot,
+                    "vehicle_type": self._slot_type(
+                        solution, plant, dealer, slot, period
+                    ),
                     "qty": int(round(value)),
                 }
             )
@@ -575,11 +556,11 @@ class MultiPeriodCplexApiMonolithic:
         details = result.copy()
         if not details.empty:
             details["standard_size"] = details["product_code"].map(self.data.sku_sizes)
-            details["carry_standard_size"] = details["vehicle_id"].map(
-                self.data.veh_cap
+            details["carry_standard_size"] = details["vehicle_type"].map(
+                self.data.veh_type_cap
             )
-            details["min_standard_size"] = details["vehicle_id"].map(
-                self.data.veh_min_load
+            details["min_standard_size"] = details["vehicle_type"].map(
+                self.data.veh_type_min_load
             )
             details["occupied_size"] = details["qty"] * details["standard_size"]
         details.to_csv(output_path / "opt_details.csv", index=False)
@@ -602,7 +583,9 @@ class MultiPeriodCplexApiMonolithic:
             summary["below_min_load"] = (
                 summary["occupied_size"] + 1e-9 < summary["min_standard_size"]
             )
-            summary["fixed_cost"] = summary["vehicle_id"].map(self.data.veh_cost)
+            summary["fixed_cost"] = summary["vehicle_type"].map(
+                self.data.veh_type_cost
+            )
             summary["minimum_load_penalty"] = (
                 summary["below_min_load"].astype(float)
                 * float(self.data.param_alpha)
@@ -646,7 +629,35 @@ class MultiPeriodCplexApiMonolithic:
             "status": solution.status,
             "objective": solution.objective,
             "deliveries": int(len(result)),
-            "vehicles": int(summary["vehicle_id"].nunique())
-            if not summary.empty
-            else 0,
+            "vehicles": int(
+                round(
+                    sum(
+                        solution.variables.get(self._variable_names[index], 0.0)
+                        for index in self.z.values()
+                    )
+                )
+            ),
         }
+
+    def _slot_type(
+        self,
+        solution: CplexApiSolution,
+        plant: str,
+        dealer: str,
+        slot: int,
+        period: int,
+    ) -> str:
+        """Return the vehicle type a used route slot selected in a period."""
+        best_type = self.data.all_veh_types[0]
+        best_value = 0.0
+        for v_type in self.data.all_veh_types:
+            value = solution.variables.get(
+                self._variable_names[
+                    self.z[plant, dealer, v_type, slot, period]
+                ],
+                0.0,
+            )
+            if value > best_value:
+                best_value = value
+                best_type = v_type
+        return best_type

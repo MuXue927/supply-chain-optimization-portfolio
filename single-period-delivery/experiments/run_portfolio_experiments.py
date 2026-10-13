@@ -36,8 +36,11 @@ INSTANCES: dict[str, list[str]] = {
     "large": ["dataset_1"],
 }
 
-# CPLEX time limit in seconds per instance.
-CPLEX_TIME_LIMITS: dict[str, int] = {"small": 600, "medium": 600, "large": 600}
+# CPLEX time limit in seconds per instance. The route-local reformulation
+# solves the small instances quickly; the medium and large instances retain
+# longer budgets so the refreshed comparison is not bound by old, oversized
+# global-fleet models.
+CPLEX_TIME_LIMITS: dict[str, int] = {"small": 600, "medium": 1800, "large": 3600}
 
 
 @dataclass
@@ -176,7 +179,10 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     results_dir = args.results_dir
     if not results_dir.is_absolute():
-        results_dir = project_root / results_dir
+        # Relative paths are intentionally resolved against the caller's
+        # working directory (normally the repository root), matching the
+        # documented `--results-dir results` convention.
+        results_dir = (Path.cwd() / results_dir).resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
 
     approaches = [a.strip() for a in args.approaches.split(",") if a.strip()]

@@ -40,6 +40,12 @@ constraints, assumptions, and English problem diagram are documented here:
 
 [`docs/problem_description.md`](docs/problem_description.md)
 
+The complete English multi-period monolithic mathematical model, including
+the route-local slot reformulation and the limitations of the legacy global
+fleet index, is documented here:
+
+[`docs/mathematical_models.md`](docs/mathematical_models.md)
+
 The result, cost, constraint, and plot validation for `dataset_1` is documented
 in:
 
