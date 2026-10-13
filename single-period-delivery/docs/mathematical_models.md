@@ -36,10 +36,10 @@ The implementation paths are:
 
 Consider one planning period in a two-echelon inventory system.
 
-- Production plants are indexed by \(i \in I\).
-- Dealers are indexed by \(j \in J\).
-- SKUs are indexed by \(k \in K\).
-- Vehicle types are indexed by \(f \in F\).
+- Production plants are indexed by $i \in I$.
+- Dealers are indexed by $j \in J$.
+- SKUs are indexed by $k \in K$.
+- Vehicle types are indexed by $f \in F$.
 
 The supply network is many-to-many: one SKU can be supplied by several plants,
 one plant can serve several dealers, and one dealer can receive shipments from
@@ -72,32 +72,32 @@ route-local symbols required by the reformulation.
 
 | Symbol | Type | Meaning |
 | --- | --- | --- |
-| \(I\) | set | Production plants |
-| \(J\) | set | Dealers |
-| \(K\) | set | SKUs |
-| \(F\) | set | Vehicle types |
-| \(A \subseteq I \times J\) | set | Routes \((i,j)\) for which plant \(i\) can supply at least one SKU required by dealer \(j\) |
-| \(K^S_{ij}\) | set | SKUs that can be shipped on route \((i,j)\): \(K^S_{ij}=\{k:(i,k)\in \text{inventory and }(j,k)\in \text{demand}\}\) |
-| \(v_k\) | parameter | Volume per unit of SKU \(k\) |
-| \(s_{ik}\) | parameter | Inventory of SKU \(k\) at plant \(i\) |
-| \(d_{jk}\) | parameter | Demand of dealer \(j\) for SKU \(k\) |
-| \(c_f\) | parameter | Fixed activation cost of vehicle type \(f\) |
-| \(u_f\) | parameter | Capacity of vehicle type \(f\) |
-| \(e_f\) | parameter | Minimum-load threshold of vehicle type \(f\) |
-| \(\alpha\) | parameter | Minimum-load penalty multiplier, with \(\alpha \ge 1\) |
-| \(M\) | parameter | A sufficiently large positive constant |
-| \(D_{ij}\) | parameter | Upper bound on route demand volume, \(D_{ij}=\sum_{k\in K^S_{ij}} v_k d_{jk}\) |
-| \(u_{\min}\) | parameter | Smallest positive capacity, \(u_{\min}=\min_{f\in F:u_f>0} u_f\) |
-| \(K_{ij}\) | parameter | Number of route-local slots, \(K_{ij}=\lceil D_{ij}/u_{\min}\rceil+1\) |
-| \(N_{ij}\) | set | Route-local slot indices, \(N_{ij}=\{1,\ldots,K_{ij}\}\) |
-| \(z_{ijfn}\) | binary | 1 if slot \(n\) on route \((i,j)\) uses vehicle type \(f\), 0 otherwise |
-| \(z'_{ijn}\) | binary | 1 if slot \(n\) is allowed to be below the selected type's minimum load |
-| \(p_{ijfn}\) | binary | 1 if slot \(n\) is used with type \(f\) and is below its minimum load |
-| \(x_{ijkn}\) | integer | Units of SKU \(k\) loaded on slot \(n\) of route \((i,j)\) |
+| $I$ | set | Production plants |
+| $J$ | set | Dealers |
+| $K$ | set | SKUs |
+| $F$ | set | Vehicle types |
+| $A \subseteq I \times J$ | set | Routes $(i,j)$ for which plant $i$ can supply at least one SKU required by dealer $j$ |
+| $K^S_{ij}$ | set | SKUs that can be shipped on route $(i,j)$: $K^S_{ij}=\{k:(i,k)\in \text{inventory and }(j,k)\in \text{demand}\}$ |
+| $v_k$ | parameter | Volume per unit of SKU $k$ |
+| $s_{ik}$ | parameter | Inventory of SKU $k$ at plant $i$ |
+| $d_{jk}$ | parameter | Demand of dealer $j$ for SKU $k$ |
+| $c_f$ | parameter | Fixed activation cost of vehicle type $f$ |
+| $u_f$ | parameter | Capacity of vehicle type $f$ |
+| $e_f$ | parameter | Minimum-load threshold of vehicle type $f$ |
+| $\alpha$ | parameter | Minimum-load penalty multiplier, with $\alpha \ge 1$ |
+| $M$ | parameter | A sufficiently large positive constant |
+| $D_{ij}$ | parameter | Upper bound on route demand volume, $D_{ij}=\sum_{k\in K^S_{ij}} v_k d_{jk}$ |
+| $u_{\min}$ | parameter | Smallest positive capacity, $u_{\min}=\min_{f\in F:u_f>0} u_f$ |
+| $K_{ij}$ | parameter | Number of route-local slots, $K_{ij}=\lceil D_{ij}/u_{\min}\rceil+1$ |
+| $N_{ij}$ | set | Route-local slot indices, $N_{ij}=\{1,\ldots,K_{ij}\}$ |
+| $z_{ijfn}$ | binary | 1 if slot $n$ on route $(i,j)$ uses vehicle type $f$, 0 otherwise |
+| $z'_{ijn}$ | binary | 1 if slot $n$ is allowed to be below the selected type's minimum load |
+| $p_{ijfn}$ | binary | 1 if slot $n$ is used with type $f$ and is below its minimum load |
+| $x_{ijkn}$ | integer | Units of SKU $k$ loaded on slot $n$ of route $(i,j)$ |
 
-The legacy model uses the thesis notation \(z_l\), \(z'_l\), \(p_l\),
-\(y_{ijl}\), and \(x_{ijkl}\), where \(l\in L\) is an individual vehicle.
-The implementation uses `zz` for the thesis symbol \(z'\).
+The legacy model uses the thesis notation $z_l$, $z'_l$, $p_l$,
+$y_{ijl}$, and $x_{ijkl}$, where $l\in L$ is an individual vehicle.
+The implementation uses `zz` for the thesis symbol $z'$.
 
 ---
 
@@ -111,15 +111,15 @@ reproducibility defects motivated the route-local reformulation.
 
 | Symbol | Meaning |
 | --- | --- |
-| \(L\) | Fixed set of individual vehicles available to the carrier |
-| \(c_l\) | Fixed activation cost of vehicle \(l\) |
-| \(u_l\) | Capacity of vehicle \(l\) |
-| \(e_l\) | Minimum-load threshold of vehicle \(l\) |
-| \(z_l\) | 1 if vehicle \(l\) is used |
-| \(z'_l\) | 1 if vehicle \(l\) is allowed to be below its minimum load |
-| \(p_l\) | 1 if vehicle \(l\) is used and below its minimum load |
-| \(y_{ijl}\) | 1 if vehicle \(l\) is assigned to route \((i,j)\) |
-| \(x_{ijkl}\) | Units of SKU \(k\) loaded on vehicle \(l\) on route \((i,j)\) |
+| $L$ | Fixed set of individual vehicles available to the carrier |
+| $c_l$ | Fixed activation cost of vehicle $l$ |
+| $u_l$ | Capacity of vehicle $l$ |
+| $e_l$ | Minimum-load threshold of vehicle $l$ |
+| $z_l$ | 1 if vehicle $l$ is used |
+| $z'_l$ | 1 if vehicle $l$ is allowed to be below its minimum load |
+| $p_l$ | 1 if vehicle $l$ is used and below its minimum load |
+| $y_{ijl}$ | 1 if vehicle $l$ is assigned to route $(i,j)$ |
+| $x_{ijkl}$ | Units of SKU $k$ loaded on vehicle $l$ on route $(i,j)$ |
 
 ### 3.2 Legacy objective and constraints
 
@@ -186,14 +186,14 @@ Constraint interpretations:
 
 - **(L1)** Minimizes fixed vehicle activation cost plus the penalty for used
   vehicles that do not reach their minimum-load threshold.
-- **(L2)** Links the use indicator of vehicle \(l\) to its route assignment.
+- **(L2)** Links the use indicator of vehicle $l$ to its route assignment.
   A vehicle can be assigned to at most one route because the left-hand side
   counts at most one selected route.
 - **(L3)** Allows SKU quantities to be loaded only when the vehicle is
   assigned to the route.
 - **(L4)** Enforces the minimum-load threshold unless the slack variable
-  \(z'_l\) is activated.
-- **(L5)** Defines the penalty indicator \(p_l\). Together with minimization,
+  $z'_l$ is activated.
+- **(L5)** Defines the penalty indicator $p_l$. Together with minimization,
   it becomes 1 exactly when a used vehicle is below its minimum load.
 - **(L6)** Enforces vehicle capacity.
 - **(L7)** Covers dealer demand. The inequality allows top-up shipments.
@@ -208,22 +208,22 @@ actual problem assumption is an unlimited fleet whose types are chosen by
 cost:
 
 1. **The fleet index conflicts with unlimited availability.** The model
-   requires a finite set \(L\) before it can create variables. The size of
-   \(L\) is therefore a modelling approximation rather than a business
+   requires a finite set $L$ before it can create variables. The size of
+   $L$ is therefore a modelling approximation rather than a business
    parameter.
-2. **Vehicle type is a parameter, not a decision.** Once \(l\) is defined,
-   \(c_l\), \(u_l\), and \(e_l\) are fixed. The solver cannot choose an
+2. **Vehicle type is a parameter, not a decision.** Once $l$ is defined,
+   $c_l$, $u_l$, and $e_l$ are fixed. The solver cannot choose an
    alternative type for that vehicle. The archived loader even generated the
    type mix randomly, so two runs of the same instance could solve different
    models.
-3. **The global fleet couples unrelated routes.** Vehicle \(l\) is shared by
+3. **The global fleet couples unrelated routes.** Vehicle $l$ is shared by
    every route in the index set. Even though a route assignment consumes the
    vehicle only once, the single global fleet creates symmetry and makes the
-   model larger as \(I\times J\times K\times L\).
+   model larger as $I\times J\times K\times L$.
 4. **Interchangeable vehicles create massive symmetry.** Many solutions are
    permutations of the same physical plan. Branch-and-bound must repeatedly
    rediscover equivalent assignments.
-5. **The bound on \(L\) is implementation-sensitive.** In the archived code,
+5. **The bound on $L$ is implementation-sensitive.** In the archived code,
    the fleet-size bound used floor division and a randomly typed fleet. This
    introduced both an unnecessarily loose or mismatched bound and
    non-reproducible parameter values.
@@ -237,13 +237,13 @@ cost:
 ## 4. New Route-Local Monolithic Model
 
 The new model treats a vehicle as a type choice on a route-local slot rather
-than as a member of a global fleet roster. A slot \((i,j,n)\) belongs to one
-route. Its type is selected by \(z_{ijfn}\). This removes \(y_{ijl}\), removes
+than as a member of a global fleet roster. A slot $(i,j,n)$ belongs to one
+route. Its type is selected by $z_{ijfn}$. This removes $y_{ijl}$, removes
 the global fleet index, and makes the vehicle-type decision explicit.
 
 ### 4.1 Why the slot count is safe
 
-For route \((i,j)\), define
+For route $(i,j)$, define
 
 $$
 D_{ij}=\sum_{k\in K^S_{ij}} v_k d_{jk}.
@@ -266,19 +266,19 @@ slots. The additional slot is deliberate slack for splitting a load around
 the minimum-load threshold. Because every activation has nonnegative fixed
 cost and has no benefit beyond carrying demand, a plan with more route
 activations than this bound is dominated by a plan using the available slots.
-When \(D_{ij}=0\) or \(u_{\min}=0\), the implementation uses one slot.
+When $D_{ij}=0$ or $u_{\min}=0$, the implementation uses one slot.
 
 ### 4.2 New decision variables
 
 | Symbol | Domain | Meaning |
 | --- | --- | --- |
-| \(z_{ijfn}\) | \(\{0,1\}\) | Slot \(n\) on route \((i,j)\) uses type \(f\) |
-| \(z'_{ijn}\) | \(\{0,1\}\) | Slot \(n\) is allowed to be below minimum load |
-| \(p_{ijfn}\) | \(\{0,1\}\) | Slot \(n\) is used with type \(f\) and is below minimum load |
-| \(x_{ijkn}\) | \(\mathbb{Z}_{+}\) | Units of SKU \(k\) loaded on slot \(n\) of route \((i,j)\) |
+| $z_{ijfn}$ | $\{0,1\}$ | Slot $n$ on route $(i,j)$ uses type $f$ |
+| $z'_{ijn}$ | $\{0,1\}$ | Slot $n$ is allowed to be below minimum load |
+| $p_{ijfn}$ | $\{0,1\}$ | Slot $n$ is used with type $f$ and is below minimum load |
+| $x_{ijkn}$ | $\mathbb{Z}_{+}$ | Units of SKU $k$ loaded on slot $n$ of route $(i,j)$ |
 
-All variables are defined only for \((i,j)\in A\), \(n\in N_{ij}\),
-\(f\in F\), and \(k\in K^S_{ij}\).
+All variables are defined only for $(i,j)\in A$, $n\in N_{ij}$,
+$f\in F$, and $k\in K^S_{ij}$.
 
 ### 4.3 Objective
 
@@ -336,7 +336,7 @@ $$
 
 The load must satisfy the selected type's minimum threshold unless the
 minimum-load slack is activated. The slack does not mean that the threshold
-disappears from the economic problem; it triggers the penalty in \((N5)\).
+disappears from the economic problem; it triggers the penalty in $(N5)$.
 
 #### Penalty linkage
 
@@ -348,7 +348,7 @@ $$
 
 If a slot is used and the minimum-load slack is active, the corresponding
 penalty indicator must be one. If the slot's selected type is different from
-\(f\), or if the slot is unused, the left-hand side is non-positive and the
+$f$, or if the slot is unused, the left-hand side is non-positive and the
 penalty is not forced.
 
 #### Dealer demand coverage
@@ -360,7 +360,7 @@ $$
 \tag{N6}
 $$
 
-The total quantity of SKU \(k\) delivered to dealer \(j\) must cover its
+The total quantity of SKU $k$ delivered to dealer $j$ must cover its
 demand. The inequality permits over-delivery, which is consistent with the
 final thesis model and is useful for reaching a minimum-load threshold.
 
@@ -373,8 +373,8 @@ $$
 \tag{N7}
 $$
 
-The quantity shipped from plant \(i\) cannot exceed the available inventory
-of SKU \(k\).
+The quantity shipped from plant $i$ cannot exceed the available inventory
+of SKU $k$.
 
 #### Variable domains
 
@@ -388,14 +388,14 @@ $$
 
 | Constraint | Economic and algorithmic meaning |
 | --- | --- |
-| \((N1)\) | Minimize fixed activation cost plus per-vehicle minimum-load penalties |
-| \((N2)\) | Prevent assigning two vehicle types to one route-local slot |
-| \((N3)\) | Enforce type-dependent vehicle capacity |
-| \((N4)\) | Enforce the selected type's minimum-load threshold unless penalized |
-| \((N5)\) | Make the penalty indicator exact under minimization |
-| \((N6)\) | Cover each dealer-SKU demand over the period |
-| \((N7)\) | Respect each plant's SKU inventory |
-| \((N8)\) | State integer load and binary type, slack, and penalty variables |
+| $(N1)$ | Minimize fixed activation cost plus per-vehicle minimum-load penalties |
+| $(N2)$ | Prevent assigning two vehicle types to one route-local slot |
+| $(N3)$ | Enforce type-dependent vehicle capacity |
+| $(N4)$ | Enforce the selected type's minimum-load threshold unless penalized |
+| $(N5)$ | Make the penalty indicator exact under minimization |
+| $(N6)$ | Cover each dealer-SKU demand over the period |
+| $(N7)$ | Respect each plant's SKU inventory |
+| $(N8)$ | State integer load and binary type, slack, and penalty variables |
 
 ---
 
@@ -409,10 +409,10 @@ The reformulation is equivalent under the stated assumptions:
 2. The number of route-local slots is sufficient to reproduce every
    non-dominated shipment plan. The construction uses the smallest possible
    vehicle capacity and adds one slack slot.
-3. Vehicle type becomes explicit through \(z_{ijfn}\). There is no need to
+3. Vehicle type becomes explicit through $z_{ijfn}$. There is no need to
    pre-draw a fleet type mix, so the solver chooses the type that minimizes
    total cost.
-4. The \(y_{ijl}\) assignment variable is unnecessary. A slot belongs to a
+4. The $y_{ijl}$ assignment variable is unnecessary. A slot belongs to a
    route by construction.
 5. The minimum-load penalty remains per activated vehicle. It is not
    aggregated across a route, so the objective keeps its original economic
@@ -451,7 +451,7 @@ The idea is:
 2. Select the use of patterns in a restricted master problem.
 3. Read the dual prices of demand and inventory constraints.
 4. Price new patterns by solving a small integer problem for each
-   \((i,j,f)\).
+   $(i,j,f)$.
 5. Add every pattern with positive reduced-cost contribution and repeat.
 6. Solve the resulting pattern master as an integer program.
 
@@ -459,19 +459,19 @@ The idea is:
 
 | Symbol | Meaning |
 | --- | --- |
-| \(a_{ijkf}\) | Quantity of SKU \(k\) in one load pattern on route \((i,j)\) using type \(f\) |
-| \(\lambda_{ijf}\) | Number of times the corresponding pattern is selected |
-| \(\phi_{ijf}\) | Cost of one use of the pattern |
-| \(\delta_{ijf}\) | 1 if the pattern is below the type's minimum load |
-| \(\pi^D_{jk}\) | Dual price of the dealer-demand constraint |
-| \(\pi^S_k\) | Dual price of the total-SKU-supply constraint |
-| \(\pi^I_{ik}\) | Dual price of the plant-SKU inventory constraint |
-| \(M_1,M_2,M_3\) | Large penalties on artificial variables in the initial master |
-| \(r^D_{jk},r^S_k,r^I_{ik}\) | Nonnegative artificial variables for demand, total supply, and plant inventory |
+| $a_{ijkf}$ | Quantity of SKU $k$ in one load pattern on route $(i,j)$ using type $f$ |
+| $\lambda_{ijf}$ | Number of times the corresponding pattern is selected |
+| $\phi_{ijf}$ | Cost of one use of the pattern |
+| $\delta_{ijf}$ | 1 if the pattern is below the type's minimum load |
+| $\pi^D_{jk}$ | Dual price of the dealer-demand constraint |
+| $\pi^S_k$ | Dual price of the total-SKU-supply constraint |
+| $\pi^I_{ik}$ | Dual price of the plant-SKU inventory constraint |
+| $M_1,M_2,M_3$ | Large penalties on artificial variables in the initial master |
+| $r^D_{jk},r^S_k,r^I_{ik}$ | Nonnegative artificial variables for demand, total supply, and plant inventory |
 
-The thesis uses the artificial variables \(\alpha_{jk}\), \(\beta_k\), and
-\(\gamma_{ik}\). They are renamed here to avoid a collision with the
-minimum-load coefficient \(\alpha\).
+The thesis uses the artificial variables $\alpha_{jk}$, $\beta_k$, and
+$\gamma_{ik}$. They are renamed here to avoid a collision with the
+minimum-load coefficient $\alpha$.
 
 ### 6.2 Thesis restricted master problem
 
@@ -512,9 +512,9 @@ $$
 \tag{CG5}
 $$
 
-Constraint \((CG3)\) is a global SKU inventory cut. Constraint \((CG4)\) is
+Constraint $(CG3)$ is a global SKU inventory cut. Constraint $(CG4)$ is
 stronger at the plant-SKU level and is the inventory row used by the
-implementation. The final master fixes \(\lambda_{ijf}\in\mathbb{Z}_{+}\);
+implementation. The final master fixes $\lambda_{ijf}\in\mathbb{Z}_{+}$;
 during pricing, the restricted master is solved as a linear program.
 
 ### 6.3 Initial master with artificial coverage
@@ -561,11 +561,11 @@ $$
 
 The artificial variables make the restricted master feasible before enough
 vehicle patterns have been generated. They are driven to zero by the large
-penalties \(M_1,M_2,M_3\).
+penalties $M_1,M_2,M_3$.
 
 ### 6.4 Pricing problem
 
-For fixed \((i,j,f)\), the pricing problem searches for a load pattern with
+For fixed $(i,j,f)$, the pricing problem searches for a load pattern with
 the largest reduced-cost contribution:
 
 $$
@@ -597,7 +597,7 @@ $$
 \tag{CG14}
 $$
 
-Here \(\eta_{ijf}\) is the minimum-load penalty of the pattern. The corrected
+Here $\eta_{ijf}$ is the minimum-load penalty of the pattern. The corrected
 implementation uses
 
 $$
@@ -609,34 +609,34 @@ $$
 
 Thus the same column cost is used in the master, the pricing objective, and
 the final objective recomputation. This corrects the historical mismatch in
-which the master used only \(c_f\) while the pricing model charged a
+which the master used only $c_f$ while the pricing model charged a
 minimum-load penalty directly.
 
 Constraint interpretations:
 
-- \((CG11)\) is the pricing objective. A positive value means that adding the
+- $(CG11)$ is the pricing objective. A positive value means that adding the
   pattern improves the restricted master objective.
-- \((CG12)\) enforces the type capacity.
-- \((CG13)\) is the minimum-load threshold. The binary \(\delta_{ijf}\)
+- $(CG12)$ enforces the type capacity.
+- $(CG13)$ is the minimum-load threshold. The binary $\delta_{ijf}$
   activates the large-M relaxation when the pattern is below threshold.
-- \((CG14)\) bounds each SKU quantity by demand and plant inventory and
+- $(CG14)$ bounds each SKU quantity by demand and plant inventory and
   requires integer units.
 
 ### 6.5 Mapping between thesis and implementation
 
 | Thesis concept | Repository representation |
 | --- | --- |
-| Pattern load \(a_{ijkf}\) | `Pattern.load` |
-| Pattern selection \(\lambda_{ijf}\) | `pattern_vars[index]` |
+| Pattern load $a_{ijkf}$ | `Pattern.load` |
+| Pattern selection $\lambda_{ijf}$ | `pattern_vars[index]` |
 | Minimum-load indicator | `Pattern.penalty_indicator` |
-| Pattern cost \(\phi_{ijf}\) | `Pattern.cost` |
-| Demand dual \(\pi^D_{jk}\) | `demand_duals[(dealer, sku)]` |
-| Plant-inventory dual \(\pi^I_{ik}\) | `supply_duals[(plant, sku)]` |
+| Pattern cost $\phi_{ijf}$ | `Pattern.cost` |
+| Demand dual $\pi^D_{jk}$ | `demand_duals[(dealer, sku)]` |
+| Plant-inventory dual $\pi^I_{ik}$ | `supply_duals[(plant, sku)]` |
 | Pricing problem | `solve_pricing_subproblem(...)` |
 | Integer final master | `_build_master(integer_patterns=True)` |
 
-The implementation uses the same route-specific inventory row as \((CG4)\)
-and omits the redundant aggregate row \((CG3)\). It also uses one artificial
+The implementation uses the same route-specific inventory row as $(CG4)$
+and omits the redundant aggregate row $(CG3)$. It also uses one artificial
 variable family for demand coverage in the CPLEX API version; the original
 Gurobi version retains the thesis's three artificial families for historical
 comparison.
