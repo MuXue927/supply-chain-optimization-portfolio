@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from .alns_config import default_config as ALNSConfig
+from .progress import resolve_progress
 
 
 def _safe_float(value: Any, default: float = float("inf")) -> float:
@@ -133,21 +134,15 @@ class DemandConstraintAccept:
         self._total_penalty = 0.0
 
     def _resolve_progress(self, *states) -> float:
-        for state in states:
-            tracker = getattr(state, "tracker", None)
-            if tracker is None:
-                continue
-            try:
-                iteration = int(getattr(tracker, "iteration", 0))
-            except Exception:
-                iteration = 0
-            try:
-                max_iterations = int(getattr(tracker, "max_iterations", 0))
-            except Exception:
-                max_iterations = 0
-            if max_iterations > 0:
-                return max(0.0, min(1.0, iteration / max_iterations))
-        return 0.0
+        """
+        Fraction of the search budget already consumed (0.0 - 1.0).
+
+        Delegates to ``progress.resolve_progress``, which measures elapsed
+        runtime against ``MAX_RUNTIME`` so the phase thresholds mean the same
+        thing on every machine; see that module for why the iteration-based
+        measure cannot be machine-independent.
+        """
+        return resolve_progress(states)
 
     def _count_used_vehicles(self, state) -> int:
         if state is None:

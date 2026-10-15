@@ -68,26 +68,47 @@ class ALNSConfig:
     # Hard iteration cap. The dynamic cap below may raise it further; whichever
     # of runtime and iteration limits fires first stops the search.
     MAX_ITERATIONS: int = 1000
-    # Observed iterations per second, used to size the dynamic iteration cap so
-    # that it roughly matches MAX_RUNTIME on the current machine.
+    # Upper bound on iterations per second, used only to keep the dynamic
+    # iteration ceiling from being absurdly small.
     #
-    # Calibrated (2026-10-16) against measured end-to-end ALNS throughput on the
-    # bundled instances, because the dynamic cap feeds ``progress`` in
-    # ``accept._resolve_progress`` and ``progress`` drives the phase gates
-    # (ACTUAL_PRIORITY_START_PROGRESS 0.70, LATE_FLEET_HARD_PRIORITY_START 0.60,
-    # the light-intensify and elite-relink windows, ML takeover at 0.30).
+    # This is **a safety net, not a schedule input.** The phase policies
+    # (LIGHT_INTENSIFY_MIN_PROGRESS 0.20, LATE_FLEET_HARD_PRIORITY_START 0.60,
+    # ACTUAL_PRIORITY_START_PROGRESS 0.70, the elite-relink window, ML takeover
+    # at 0.30, the tuner decay and the epsilon schedule) measure progress as
+    # elapsed-runtime / MAX_RUNTIME - see ``progress.py`` - so they no longer
+    # depend on this number at all.
     #
-    # The previous value (1000.0) assumed a throughput 100-10000x faster than
-    # reality and produced a cap of 900,200 iterations, so ``progress`` stayed
-    # near zero and none of those gates could ever fire. Measured throughput:
-    # small 3663 iterations / 90 s, medium 15 / 90 s (0.1-40 iter/s). A value of
-    # 5.0 with the 1.5 safety factor puts the cap near what MAX_RUNTIME=600 can
-    # actually execute, which is what the gate thresholds assume.
-    DYNAMIC_MAX_ITERATIONS_PER_SECOND: float = 5.0
+    # That change makes the ceiling's only remaining job to stop a pathological
+    # run. It must therefore NOT bind in normal operation: if the iteration
+    # ceiling fires before MAX_RUNTIME, the run is truncated and the later phase
+    # gates never execute. Sizing this to *measured* throughput (an earlier
+    # revision used 5.0) caused exactly that - on ``small/dataset_1`` the
+    # ceiling bound after ~152 s of a 600 s budget, so progress only reached
+    # ~0.25 and the 0.60/0.70 gates still could not fire.
+    #
+    # Measured throughput on one host spans 0.1-40 iterations/second, so any
+    # value that a real machine can reach is safe here; the default is
+    # deliberately generous.
+    DYNAMIC_MAX_ITERATIONS_PER_SECOND: float = 1000.0
     # Flat number of extra iterations added on top of the estimated dynamic cap.
     DYNAMIC_MAX_ITERATION_BUFFER: int = 200
     # Multiplier applied to the estimated dynamic cap (1.5 = 50% headroom).
     DYNAMIC_MAX_ITERATION_SAFETY_FACTOR: float = 1.5
+    # Measure phase progress as elapsed-runtime / MAX_RUNTIME (True) instead of
+    # iteration / iteration-ceiling (False).
+    #
+    # The phase thresholds all read as fractions of the budget: 0.70 means "the
+    # last 30% of the run". Against elapsed time that statement is
+    # machine-independent - a machine twice as fast simply executes twice the
+    # iterations in the same fraction of the budget - so the gates activate at
+    # the same point of the run on any host. Against iterations it required
+    # assuming a throughput, and measured throughput spans two orders of
+    # magnitude across instance sizes, so no constant can be correct everywhere.
+    #
+    # Set False to use the iteration measure (kept for tests that pin an
+    # iteration budget); it is also the automatic fallback when MAX_RUNTIME or
+    # the tracker's start time is unavailable.
+    DYNAMIC_PROGRESS_USE_ELAPSED_TIME: bool = True
     # Report the final solution chosen by the actual (Gurobi-aligned) objective
     # instead of the best state seen by the search objective.
     PREFER_FINAL_BEST_ACTUAL_SOLUTION: bool = True

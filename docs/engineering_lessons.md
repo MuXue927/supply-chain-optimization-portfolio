@@ -179,13 +179,13 @@ written to protect, because CPLEX concurrency is licence-bound.
 
 Regression tests: `multi-period-delivery/tests/test_p1_fixes.py`.
 
-#### 1.4.3 A time budget needs a calibrated iteration ceiling
+#### 1.4.3 Phase schedules must be measured against the budget, not an iteration ceiling
 
 **Symptom (observed 2026-10-16):** phase-dependent search policies never
 activated: actual-priority acceptance, late fleet priority, light
 intensification, elite relinking and ML takeover were all dead code.
 
-**Root cause:** those policies gate on `progress`, and `progress` is
+**Root cause:** those policies gate on `progress`, which was computed as
 `iteration / max_iterations`, where `max_iterations` is a runtime-derived
 ceiling `MAX_RUNTIME x iterations_per_second x safety_factor + buffer`. The
 configured `iterations_per_second` was `1000.0`, an assumption three orders of
@@ -193,26 +193,42 @@ magnitude above measured throughput (0.1-40 iterations/second on the bundled
 instances). The ceiling became 900,200 iterations, so `progress` stayed around
 0.001 and no threshold in the 0.20-0.70 range could be reached.
 
-**Remediation:** calibrate the constant to measured throughput and keep the
-derivation in one testable function (`compute_dynamic_iteration_cap`). With
-`5.0` and the same safety factor the ceiling is 4,700, which is within reach of
-a `MAX_RUNTIME` of 600 s.
+**A first attempt, and why it was wrong.** The obvious repair was to calibrate
+that constant to measured throughput. That is a dead end: it converts a
+*statement about the run* ("the last 30% of the budget") into a statement about
+the *host and instance* ("this many iterations"), and measured throughput varies
+by two orders of magnitude across instance sizes on one machine - and again
+across machines. Worse, sizing the ceiling to measured throughput makes the
+ceiling **bind**: on `small/dataset_1` a value of `5.0` capped the run at 4,700
+iterations, which it reached after ~152 s of a 600 s budget, so progress peaked
+at ~0.25 and the 0.60/0.70 gates still never fired. A ceiling derived from
+throughput cannot both be generous enough to let the schedule finish and tight
+enough to be meaningful.
 
-**Trade-off, stated explicitly:** the ceiling can now stop a very fast run
-before the wall-clock budget expires (measured: 4,700 iterations in 152 s on
-`small/dataset_1`). That is the intended meaning of a ceiling derived from
-throughput - the runtime budget remains the primary control - but it is a
-behaviour change, not a pure bug fix.
+**Remediation:** measure progress against **elapsed runtime / `MAX_RUNTIME`**
+(`alns/progress.py`), which is machine-independent by construction - a host
+twice as fast executes twice the iterations in the same fraction of the budget -
+and demote the iteration ceiling to a pure safety net that must not bind in
+normal operation.
+
+Three call sites shared the same faulty measure and now share one implementation:
+`accept.DemandConstraintAccept` (phase gates), `ml_operator_selector`
+(ML takeover **and** the epsilon-greedy exploration decay) and
+`param_tuner.ParamAutoTuner` (destroy-strength decay).
 
 **Evidence required:**
 
-- the ceiling respects the documented formula and never undercuts
-  `MAX_ITERATIONS`;
-- the throughput estimate does not exceed the fastest measured throughput;
-- at least the earliest phase gate is reachable within one runtime budget;
-- zeroing the dynamic knobs still pins the budget.
+- progress equals elapsed-runtime / `MAX_RUNTIME` on a real tracker;
+- every documented gate is reachable within one runtime budget;
+- the same elapsed point reports the same progress for hosts whose iteration
+  counts differ by orders of magnitude;
+- the iteration ceiling does **not** bind before `MAX_RUNTIME` at measured
+  throughput (otherwise the run is truncated and later gates are skipped);
+- the ceiling still respects its formula and never undercuts `MAX_ITERATIONS`;
+- a tracker without a start time still yields a usable (iteration-based) value.
 
-Regression tests: `multi-period-delivery/tests/test_p1_fixes.py`.
+Regression tests: `multi-period-delivery/tests/test_progress_measure.py`,
+`test_phase_progress.py`, `test_p1_fixes.py`.
 
 ### 1.5 A bound variable is not automatically a valid plan
 

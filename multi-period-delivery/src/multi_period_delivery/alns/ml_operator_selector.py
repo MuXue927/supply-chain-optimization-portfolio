@@ -112,6 +112,7 @@ from sklearn.preprocessing import StandardScaler
 # =========================
 from .alns_config import default_config as ALNSConfig
 from .param_tuner import ParamAutoTuner
+from .progress import elapsed_progress, iteration_progress, resolve_progress
 
 if TYPE_CHECKING:
     from .alnsopt import SolutionState
@@ -252,28 +253,30 @@ class MLOperatorSelector:
             pass
 
     def _resolve_progress(self, state: SolutionState | None) -> float:
-        if state is not None:
-            tracker = getattr(state, "tracker", None)
-            if tracker is not None:
-                try:
-                    stats = tracker.get_statistics() or {}
-                    current_iter = _finite_float(
-                        stats.get("total_iterations", 0), 0.0
-                    )
-                    max_iter = _finite_float(stats.get("max_iterations", 0), 0.0)
-                    if max_iter > 0:
-                        progress = current_iter / max_iter
-                        return max(0.0, min(1.0, progress))
-                except Exception:
-                    pass
+        """
+        Fraction of the search budget consumed, via the shared measure.
+
+        Gated by this value: the ML takeover threshold
+        (``ML_TAKEOVER_MIN_PROGRESS``) and the epsilon-greedy exploration decay
+        ``base + (1 - progress) * early_boost``. Both are fractions of the
+        budget, so they must not depend on how fast the host is; see
+        ``progress.py``.
+        """
+        tracker = getattr(state, "tracker", None) if state is not None else None
+        if tracker is not None:
+            fraction = elapsed_progress(tracker)
+            if fraction is not None:
+                return fraction
+            fraction = iteration_progress(
+                getattr(tracker, "iteration", 0),
+                getattr(tracker, "max_iterations", 0),
+            )
+            if fraction is not None:
+                return fraction
         if self.param_tuner is not None:
-            try:
-                max_iter = int(getattr(self.param_tuner, "max_iterations", 0))
-                cur_iter = int(getattr(self.param_tuner, "iteration", 0))
-                if max_iter > 0:
-                    return max(0.0, min(1.0, cur_iter / max_iter))
-            except Exception:
-                pass
+            fraction = resolve_progress(tracker=self.param_tuner)
+            if fraction:
+                return fraction
         return 0.0
 
     def _sample_count(self, op_type: str) -> int:

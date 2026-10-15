@@ -24,8 +24,7 @@ from multi_period_delivery.alns.alns_optimizer import compute_dynamic_iteration_
 
 #: End-to-end ALNS throughput measured on the bundled instances (2026-10-16):
 #: small/dataset_1 ran 3663 iterations within a 90 s budget, medium/dataset_13
-#: ran 15. Recorded so the calibration cannot silently drift back to an
-#: assumption that no machine actually reaches.
+#: ran 15. Recorded so the safety net can be checked against reality.
 _MEASURED_FASTEST_ITERATIONS_PER_SECOND = 40.0
 
 
@@ -33,12 +32,12 @@ def test_dynamic_cap_follows_the_documented_formula() -> None:
     config = SimpleNamespace(
         MAX_RUNTIME=600,
         MAX_ITERATIONS=1000,
-        DYNAMIC_MAX_ITERATIONS_PER_SECOND=5.0,
+        DYNAMIC_MAX_ITERATIONS_PER_SECOND=7.0,
         DYNAMIC_MAX_ITERATION_SAFETY_FACTOR=1.5,
         DYNAMIC_MAX_ITERATION_BUFFER=200,
     )
 
-    assert compute_dynamic_iteration_cap(config) == int(600 * 5.0 * 1.5) + 200
+    assert compute_dynamic_iteration_cap(config) == int(600 * 7.0 * 1.5) + 200
 
 
 def test_dynamic_cap_never_undercuts_the_hard_iteration_cap() -> None:
@@ -55,55 +54,55 @@ def test_dynamic_cap_never_undercuts_the_hard_iteration_cap() -> None:
 
 
 def test_shared_ceiling_propagates_to_stop_and_tracker() -> None:
-    """The ceiling that gates ``progress`` must be the one the run uses."""
+    """The ceiling that gates the stopping rule must be the shared one."""
     config = SimpleNamespace(
         MAX_RUNTIME=600,
         MAX_ITERATIONS=1000,
-        DYNAMIC_MAX_ITERATIONS_PER_SECOND=5.0,
+        DYNAMIC_MAX_ITERATIONS_PER_SECOND=7.0,
         DYNAMIC_MAX_ITERATION_SAFETY_FACTOR=1.5,
         DYNAMIC_MAX_ITERATION_BUFFER=200,
     )
 
     cap = compute_dynamic_iteration_cap(config)
 
-    # Both consumers are fed the same number, so accept._resolve_progress and
-    # the stopping rule cannot disagree about how far the run has advanced.
-    assert cap == 4700
+    assert cap == 6500
     assert ALNSConfig.MAX_ITERATIONS <= cap
 
 
-def test_default_throughput_estimate_stays_within_measured_range() -> None:
-    """The calibration must not drift back to an unreachable assumption.
+def test_iteration_ceiling_is_a_safety_net_not_a_schedule_input() -> None:
+    """The ceiling must not bind before MAX_RUNTIME in normal operation.
 
-    ``progress`` is ``iteration / cap``, and the phase thresholds are 0.20-0.70
-    of that scale. If ``iter_per_second`` x ``safety_factor`` dwarfs measured
-    throughput, the cap sits far beyond what MAX_RUNTIME can execute and every
-    one of those gates becomes dead code - which is exactly what the previous
-    value (1000.0) caused, yielding a 900,200-iteration ceiling.
+    Phase progress is measured against the runtime budget, so if the iteration
+    ceiling fires first the run is truncated and the later phase gates never
+    execute. That is why the throughput bound is deliberately generous: any
+    value a real machine can reach keeps the runtime budget in control.
+
+    An earlier revision sized this to *measured* throughput (5.0), which made
+    the ceiling bind after ~152 s of a 600 s run on ``small/dataset_1`` and left
+    progress at ~0.25 - so the 0.60/0.70 gates still could not fire.
     """
     effective = (
         ALNSConfig.DYNAMIC_MAX_ITERATIONS_PER_SECOND
         * max(ALNSConfig.DYNAMIC_MAX_ITERATION_SAFETY_FACTOR, 1.0)
     )
 
-    assert effective <= _MEASURED_FASTEST_ITERATIONS_PER_SECOND, (
-        f"DYNAMIC_MAX_ITERATIONS_PER_SECOND x safety factor = {effective} "
-        f"exceeds the fastest throughput ever measured on these instances "
-        f"({_MEASURED_FASTEST_ITERATIONS_PER_SECOND} iter/s)"
+    assert effective > _MEASURED_FASTEST_ITERATIONS_PER_SECOND, (
+        f"the safety net ({effective} iter/s) would bind on a machine measured "
+        f"at {_MEASURED_FASTEST_ITERATIONS_PER_SECOND} iter/s, truncating the "
+        f"run before MAX_RUNTIME and skipping the later phase gates"
     )
 
 
 def test_phase_gates_are_reachable_within_the_default_budget() -> None:
-    """At least the earliest phase gate must be reachable in one budget."""
-    cap = compute_dynamic_iteration_cap(ALNSConfig)
-    reachable = _MEASURED_FASTEST_ITERATIONS_PER_SECOND * ALNSConfig.MAX_RUNTIME
+    """Every gate must be reachable while MAX_RUNTIME is still the binding limit."""
+    budget = float(ALNSConfig.MAX_RUNTIME)
+    reachable = _MEASURED_FASTEST_ITERATIONS_PER_SECOND * budget
+    ceiling = compute_dynamic_iteration_cap(ALNSConfig)
 
-    threshold = int(ALNSConfig.ACTUAL_PRIORITY_START_PROGRESS * cap)
-
-    assert reachable >= threshold, (
-        f"progress {ALNSConfig.ACTUAL_PRIORITY_START_PROGRESS} needs "
-        f"{threshold} iterations, but MAX_RUNTIME={ALNSConfig.MAX_RUNTIME} can "
-        f"only execute about {reachable:.0f} at measured throughput"
+    # The runtime budget stays in control, so progress can span the full [0, 1].
+    assert ceiling > reachable, (
+        f"iteration ceiling {ceiling} would bind before the runtime budget "
+        f"(~{reachable:.0f} iterations at measured throughput)"
     )
     # The other documented gates live earlier in the same window.
     assert (

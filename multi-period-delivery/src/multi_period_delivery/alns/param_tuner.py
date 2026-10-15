@@ -48,6 +48,7 @@ Potential improvements (not implemented):
 # Standard library
 # =========================
 import copy
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -63,6 +64,7 @@ from .alns_config import default_config as ALNSConfig
 # Internal project dependencies
 # =========================
 from .InputDataALNS import DataALNS
+from .progress import elapsed_progress, iteration_progress
 
 
 # ---------------------------------------------------------------------
@@ -184,6 +186,10 @@ class ParamAutoTuner:
         self.max_iterations = 1000
         self.phase = "exploration"
         self.no_improve_iters = 0
+        # Wall-clock origin for the progress measure. The tuner is fed iteration
+        # counts, not a tracker, so it keeps its own start time to derive
+        # elapsed-runtime progress from the shared MAX_RUNTIME budget.
+        self.start_time = time.time()
 
         # Control parameters, overridable through central configuration
         self.exploration_rate = getattr(ALNSConfig, "TUNER_EXPLORATION_INITIAL", 0.3)
@@ -655,7 +661,16 @@ class ParamAutoTuner:
         if self.max_iterations <= 0 or self.iteration <= 0:
             return base_degree
 
-        progress = min(1.0, self.iteration / (0.7 * self.max_iterations))
+        # Prefer the elapsed-runtime measure so the decay schedule does not
+        # depend on the host's speed (and therefore on how the iteration ceiling
+        # was sized). Falls back to the iteration measure when no time budget is
+        # available. The [0, 0.7] normalization is preserved: in iteration mode
+        # progress reaches 1.0 at 70% of the iteration ceiling.
+        progress = elapsed_progress(self)
+        if progress is None:
+            progress = iteration_progress(self.iteration, 0.7 * self.max_iterations)
+        if progress is None:
+            return base_degree
         adaptive_value = base_degree * (1 - decay_rate * progress)
 
         stagnation_iters = max(0, int(getattr(self, "no_improve_iters", 0)))

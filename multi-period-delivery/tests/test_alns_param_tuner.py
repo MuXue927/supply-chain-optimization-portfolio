@@ -9,6 +9,7 @@ search run.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,17 @@ def _make_tuner() -> ParamAutoTuner:
     # Force the "large instance" branch so the schedule is not further capped.
     tuner.small_instance = False
     return tuner
+
+
+def _advance_tuner_clock(tuner: ParamAutoTuner, fraction: float) -> None:
+    """Place the tuner ``fraction`` of the way through the runtime budget.
+
+    The tuner derives its progress from elapsed time, so a test that calls
+    ``set_iteration`` immediately after construction sees ~0 elapsed time and no
+    decay. Setting the origin explicitly keeps these tests deterministic.
+    """
+    budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 600))
+    tuner.start_time = time.time() - fraction * budget
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +255,8 @@ def test_adaptive_degree_returns_base_before_the_search_starts() -> None:
 def test_adaptive_degree_decays_and_stays_in_bounds() -> None:
     tuner = _make_tuner()
     tuner.set_iteration(100, 200)
+    # Progress is measured against the runtime budget, so advance the clock too.
+    _advance_tuner_clock(tuner, 0.5)
 
     value = tuner.adaptive_degree(0.5, min_degree=0.05, max_degree=0.5)
 
@@ -252,9 +266,19 @@ def test_adaptive_degree_decays_and_stays_in_bounds() -> None:
 def test_adaptive_degree_boosts_after_stagnation() -> None:
     tuner = _make_tuner()
     tuner.set_iteration(100, 200)
+    _advance_tuner_clock(tuner, 0.5)
     baseline = tuner.adaptive_degree(0.4)
 
     tuner.no_improve_iters = 400  # far past the stagnation threshold
     boosted = tuner.adaptive_degree(0.4)
 
     assert boosted > baseline
+
+
+def test_adaptive_degree_is_unchanged_early_in_the_run() -> None:
+    """No decay while little of the runtime budget has been consumed."""
+    tuner = _make_tuner()
+    tuner.set_iteration(100, 200)  # half the *iteration* ceiling
+    _advance_tuner_clock(tuner, 0.0)  # but the run has just started
+
+    assert tuner.adaptive_degree(0.4) == pytest.approx(0.4)
