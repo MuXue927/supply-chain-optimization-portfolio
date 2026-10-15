@@ -90,6 +90,7 @@ from .repair_utils import (
     select_vehicle_type_for_volume,
     veh_loading,
 )
+from .swallowed import record_swallowed
 from .vehicle import Vehicle
 
 # Module logger.
@@ -121,11 +122,22 @@ def _coerce_float(value, default: float = 0.0) -> float:
 
 
 def _safe_prev_obj(state) -> float:
-    try:
-        value = state.objective()
-    except Exception:
+    """
+    Return the state's current objective for improvement bookkeeping.
+
+    Only a *non-numeric* result is normalised. A state whose ``objective()``
+    raises is a defect, not a zero: rewriting it to ``0.0`` made every later
+    "improvement" look enormous (observed error: ``AttributeError`` from a state
+    missing an expected attribute), which in turn corrupted the operator
+    performance records that drive adaptive operator weights.
+    """
+    value = state.objective()
+    if value is None:
         return 0.0
-    return float(value if value is not None else 0.0)
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        return 0.0
+    return number
 
 
 # ---------------------------
@@ -360,7 +372,8 @@ def greedy_repair(
                             day,
                             skip_compute_inventory=True,
                         )
-                    except Exception:
+                    except Exception as exc:
+                        record_swallowed("repair_operators.greedy_repair", exc)
                         continue
                     if actual_loaded <= 0:
                         continue
@@ -402,7 +415,8 @@ def greedy_repair(
                             day,
                             skip_compute_inventory=False,
                         )
-                    except Exception:
+                    except Exception as exc:
+                        record_swallowed("repair_operators.greedy_repair", exc)
                         continue
 
                 if actual_loaded > 0:
@@ -435,7 +449,8 @@ def greedy_repair(
         logger.debug(
             f"[OPLOG] greedy_repair: inserted {len(inserted_vehicles)} vehicles ({elapsed:.4f}s)"
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.greedy_repair", exc)
         pass
 
     return state
@@ -527,7 +542,8 @@ def fill_minimum_load_repair(
         try:
             if veh.is_empty():
                 continue
-        except Exception:
+        except Exception as exc:
+            record_swallowed("repair_operators.fill_minimum_load_repair", exc)
             continue
 
         min_load = float(data.veh_type_min_load.get(veh.type, 0.0))
@@ -578,7 +594,8 @@ def fill_minimum_load_repair(
                     veh.day,
                     skip_compute_inventory=True,
                 )
-            except Exception:
+            except Exception as exc:
+                record_swallowed("repair_operators.fill_minimum_load_repair", exc)
                 continue
             if actual_loaded > 0:
                 current_load += actual_loaded * sku_size
@@ -587,7 +604,8 @@ def fill_minimum_load_repair(
 
     try:
         state.mark_objective_dirty()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.fill_minimum_load_repair", exc)
         pass
     return state
 
@@ -740,7 +758,8 @@ def cross_period_consolidation_repair(
                     if not feasible:
                         continue
                     candidate_cost = float(candidate.calculate_cost())
-                except Exception:
+                except Exception as exc:
+                    record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
                     continue
                 if np.isfinite(candidate_cost) and candidate_cost < best_cost - 1e-9:
                     best_candidate = candidate
@@ -869,7 +888,8 @@ def local_search_repair(
         logger.debug(
             f"[OPLOG] local_search_repair: attempted vehicle-type replacements only, inserted no new vehicles, complete ({elapsed:.4f}s)"
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.local_search_repair", exc)
         pass
 
     return state
@@ -1022,7 +1042,8 @@ def inventory_balance_repair(
                         unsatisfied[(dealer, sku_id)] = max(
                             0, unsatisfied[(dealer, sku_id)] - loaded
                         )
-                except Exception:
+                except Exception as exc:
+                    record_swallowed("repair_operators.inventory_balance_repair", exc)
                     continue
 
     post_repair(
@@ -1038,7 +1059,8 @@ def inventory_balance_repair(
         logger.debug(
             f"[OPLOG] inventory_balance_repair: inserted {len(inserted_vehicles)} vehicles, complete ({elapsed:.4f}s)"
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.inventory_balance_repair", exc)
         pass
 
     return state
@@ -1060,7 +1082,8 @@ def infeasible_repair(partial: SolutionState, rng: rnd.Generator) -> SolutionSta
     elapsed = time.time() - t0
     try:
         logger.debug(f"[OPLOG] infeasible_repair(wrapper): returned ({elapsed:.4f}s)")
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.infeasible_repair", exc)
         pass
     return result
 
@@ -1158,7 +1181,8 @@ def smart_batch_repair(
         logger.debug(
             f"[OPLOG] smart_batch_repair: inserted {len(total_inserted)} vehicles ({elapsed:.4f}s)"
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.smart_batch_repair", exc)
         pass
 
     return state
@@ -1254,7 +1278,8 @@ def regret_based_repair(
         try:
             if getattr(state, "shipped_cache", None) is None:
                 state.compute_shipped()
-        except Exception:
+        except Exception as exc:
+            record_swallowed("repair_operators.regret_based_repair", exc)
             pass
 
         # Stronger cross-demand memoization keyed by (dealer + candidate key) and current state snapshot.
@@ -1463,7 +1488,8 @@ def regret_based_repair(
                                 tmp = state.copy()
                                 try:
                                     tmp.suppress_compute_inventory()
-                                except Exception:
+                                except Exception as exc:
+                                    record_swallowed("repair_operators.regret_based_repair", exc)
                                     pass
                             except Exception:
                                 tmp = None
@@ -1550,8 +1576,11 @@ def regret_based_repair(
                     else:
                         # Use fast estimate as memoized score (may be negative/zero)
                         global_memo[combined_key] = (float(fast_impr), bool(fast_ok))
-                except Exception:
-                    # On any unexpected error, mark as non-promising
+                except Exception as exc:
+                    # Mark as non-promising, but never silently: a systematic
+                    # failure here removes candidates from the list and turns the
+                    # operator into a no-op while the run still looks healthy.
+                    record_swallowed("repair_operators.candidate_score", exc)
                     global_memo[combined_key] = (0.0, False)
 
             # Build final candidates list from memo results, keep best topN by true improvement
@@ -1625,28 +1654,34 @@ def regret_based_repair(
                             # fallback to manual invalidation
                             try:
                                 state.shipped_cache = None
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                             try:
                                 state.last_objective = None
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                             try:
                                 state.objective_dirty = True
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                     else:
                         try:
                             state.shipped_cache = None
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                         try:
                             state.last_objective = None
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                         try:
                             state.objective_dirty = True
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                 except Exception:
                     # Ignore failures to avoid disrupting the main loop.
@@ -1667,28 +1702,34 @@ def regret_based_repair(
                             # fallback to manual invalidation
                             try:
                                 state.shipped_cache = None
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                             try:
                                 state.last_objective = None
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                             try:
                                 state.objective_dirty = True
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed("repair_operators.regret_based_repair", exc)
                                 pass
                     else:
                         try:
                             state.shipped_cache = None
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                         try:
                             state.last_objective = None
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                         try:
                             state.objective_dirty = True
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.regret_based_repair", exc)
                             pass
                 except Exception:
                     # Ignore failures to avoid disrupting the main loop.
@@ -1714,7 +1755,8 @@ def regret_based_repair(
         logger.debug(
             f"[OPLOG] regret_based_repair: inserted {len(inserted_vehicles)} vehicles ({elapsed:.4f}s)"
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.regret_based_repair", exc)
         pass
 
     return state
@@ -1808,7 +1850,8 @@ def fleet_consolidation_repair(
                 logger.debug(
                     f"[OPLOG] fleet_consolidation_repair: post_repair exception: {e}"
                 )
-            except Exception:
+            except Exception as exc:
+                record_swallowed("repair_operators.fleet_consolidation_repair", exc)
                 pass
 
         # Log the consolidation result.
@@ -1817,7 +1860,8 @@ def fleet_consolidation_repair(
                 f"[OPLOG] fleet_consolidation_repair: merged {merged_count} pairs "
                 f"({before_count} -> {after_count} vehicles)"
             )
-        except Exception:
+        except Exception as exc:
+            record_swallowed("repair_operators.fleet_consolidation_repair", exc)
             pass
 
         return state
@@ -1828,7 +1872,8 @@ def fleet_consolidation_repair(
             logger.warning(
                 f"[OPLOG] fleet_consolidation_repair: exception {e}; returning original state"
             )
-        except Exception:
+        except Exception as exc:
+            record_swallowed("repair_operators.fleet_consolidation_repair", exc)
             pass
         return current.copy()
 
@@ -1879,7 +1924,8 @@ def sequential_repair(
     # Initialize inventory.
     try:
         state.compute_inventory()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.sequential_repair", exc)
         pass
 
     # Compute the current shipped-inventory cache.
@@ -1991,7 +2037,8 @@ def sequential_repair(
                                     "veh_type": veh_type,
                                     "score": score,
                                 }
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.sequential_repair", exc)
                             continue
 
                 if best_choice is None:
@@ -2053,7 +2100,8 @@ def sequential_repair(
     try:
         state.compute_inventory()
         state.mark_objective_dirty()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.sequential_repair", exc)
         pass
 
     logger.debug(f"[OPLOG] sequential_repair: complete ({time.time() - t0:.4f}s)")
@@ -2124,7 +2172,8 @@ def lookahead_repair(
 
     try:
         state.compute_inventory()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.lookahead_repair", exc)
         pass
 
     try:
@@ -2262,7 +2311,8 @@ def lookahead_repair(
                                     "veh_type": veh_type,
                                     "score": score,
                                 }
-                        except Exception:
+                        except Exception as exc:
+                            record_swallowed("repair_operators.lookahead_repair", exc)
                             continue
 
                 if best_choice is None:
@@ -2324,7 +2374,8 @@ def lookahead_repair(
     try:
         state.compute_inventory()
         state.mark_objective_dirty()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.lookahead_repair", exc)
         pass
 
     post_repair(

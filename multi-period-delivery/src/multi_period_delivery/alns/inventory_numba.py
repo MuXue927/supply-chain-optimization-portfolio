@@ -21,9 +21,12 @@ Notes:
 """
 
 import hashlib
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Try to import numba; if not available we fall back to a numpy-only implementation.
 try:
@@ -421,9 +424,27 @@ def compute_inventory_numba_safe(state):
             pass
 
         return True
-    except Exception:
+    except Exception as exc:
         # Let the caller (alnsopt.compute_inventory) decide the fallback path to
         # avoid recursively calling this wrapper.
+        #
+        # The fast path stores a reusable cache on the state *before* it writes
+        # the authoritative ``state.s_ikt`` back (see the ``setattr(state,
+        # "_inventory_cache", ...)`` calls above), so a failure in between leaves
+        # a cache that no completed inventory run produced. Drop it rather than
+        # let a later call treat it as a verified baseline, and record the
+        # failure: the caller only sees ``False`` and would otherwise fall back
+        # with no trace of why the fast path was abandoned.
+        try:
+            state._inventory_cache = None
+        except Exception:
+            pass
+        logger.warning(
+            "numba inventory fast path failed; falling back to the Python "
+            "baseline: %s",
+            exc,
+            exc_info=True,
+        )
         return False
 
 

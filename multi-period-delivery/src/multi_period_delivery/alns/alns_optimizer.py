@@ -92,6 +92,7 @@ from .repair_operators import (
     wrap_repair_no_args,
 )
 from .repair_utils import consolidate_route_vehicles
+from .swallowed import report_swallowed
 
 # For type checking only (avoid runtime import when modules are optional)
 if TYPE_CHECKING:
@@ -1050,6 +1051,12 @@ class ALNSOptimizer:
             self._generate_reports()
             self.log_printer.print(f"Step 10 elapsed: {time.time() - t0:.2f}s")
 
+            # Report every exception that a handler deliberately swallowed during
+            # the run. The search tolerates local failures, but "tolerated" must
+            # not mean "invisible": a systematically failing site shows up here
+            # instead of silently disabling an operator.
+            report_swallowed(self.log_printer)
+
             self.log_printer.print_title(f"Optimization complete! {datetime.datetime.now()}")
 
             return True
@@ -1192,8 +1199,24 @@ class ALNSOptimizer:
                             f"vehicles, cost {before_cross_period_cost:.2f} -> "
                             f"{after_cross_period_cost:.2f}."
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # The consolidation may have failed after replacing
+                    # self.best_solution, and the run still reports
+                    # "Optimization complete!". Never leave that silent: report it
+                    # and restore the pre-consolidation solution so the delivered
+                    # answer is the verified one.
+                    self.log_printer.print(
+                        "Warning: final cross-period consolidation failed "
+                        f"({type(exc).__name__}: {exc}); "
+                        + (
+                            "restored the pre-consolidation solution."
+                            if snapshot_before is not None
+                            else "kept the previous solution."
+                        ),
+                        color="bold red",
+                    )
+                    if snapshot_before is not None:
+                        self.best_solution = snapshot_before
 
             # Validate the final solution.
             final_feasibility, violations = self.best_solution.validate()
