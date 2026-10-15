@@ -94,6 +94,11 @@ else:
 
 from .alns_config import default_config as ALNSConfig
 
+# Numeric coercion lives in one module so the three former copies cannot drift
+# apart; the shared implementation also refuses to truncate a multi-element array.
+from .coercion import coerce_float as _coerce_float
+from .coercion import coerce_int as _coerce_int
+
 # Import shared helpers from destroy_utils to keep this file lightweight.
 from .destroy_utils import (
     ensure_pyint,
@@ -108,30 +113,6 @@ from .inventory_utils import precompute_dealer_shipments, precompute_plant_day_i
 # (n_clusters, rounded_mean_features). This avoids re-running KMeans when
 # feature summaries are effectively unchanged between successive calls.
 _periodic_shaw_cache = {}
-
-
-def _coerce_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        try:
-            return float(np.array(value).flat[0])
-        except Exception:
-            return float(default)
-
-
-def _coerce_int(value, default: int = 0) -> int:
-    try:
-        if value is None:
-            return int(default)
-        return int(value)
-    except Exception:
-        try:
-            return int(np.array(value).flat[0])
-        except Exception:
-            return int(default)
 
 
 # Wrapper utilities for registering destroy operators with ALNS

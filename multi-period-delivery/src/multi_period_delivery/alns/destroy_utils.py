@@ -38,6 +38,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+# Numeric coercion lives in one place so the three copies cannot drift apart; the
+# shared implementation also refuses to truncate a multi-element array.
+from .coercion import coerce_int as _coerce_int
 from .repair_utils import compute_mixed_operator_reward
 
 logger = logging.getLogger(__name__)
@@ -50,35 +53,8 @@ else:
     SolutionState = object
 
 
-def _coerce_int(value: Any, default: int = 0) -> int:
-    try:
-        if isinstance(value, (int, np.integer)):
-            return int(value)
-        if isinstance(value, np.ndarray):
-            arr = np.atleast_1d(value)
-            return int(arr.flatten()[0])
-        return int(value)
-    except Exception:
-        try:
-            return int(np.array(value).flat[0])
-        except Exception:
-            return default
-
-
-def _coerce_optional_float(
-    value: Any, default: float | None = None
-) -> float | None:
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        try:
-            return float(np.array(value).flat[0])
-        except Exception:
-            return default
-
-
+# Numeric coercion lives in one place so the three copies cannot drift apart; the
+# shared implementation also refuses to truncate a multi-element array.
 def to_native(v: Any):
     """Convert numpy scalars and arrays to native Python types for logging.
 
@@ -413,30 +389,38 @@ def build_opjson_log(
 
 
 def ensure_pyint(x):
+    """Return ``x`` as a single Python int, or 0 when it has no single value."""
     try:
         if isinstance(x, np.ndarray):
-            arr = np.atleast_1d(x)
-            return int(arr.flatten()[0])
-        if isinstance(x, (np.generic,)):
+            if x.size == 0:
+                return 0
+            return int(np.atleast_1d(x).flatten()[0])
+        if isinstance(x, np.generic):
             return int(x.item())
         if isinstance(x, (list, tuple)):
-            return int(x[0])
+            return int(x[0]) if x else 0
         return int(x)
-    except Exception:
-        try:
-            return int(np.array(x).flat[0])
-        except Exception:
-            return int(x) if isinstance(x, (int,)) else 0
+    except (TypeError, ValueError, IndexError):
+        return 0
 
 
 def ensure_pylist(x):
+    """
+    Return ``x`` as a list of ints.
+
+    A 0-d array (``np.array(9)``) yields ``[9]``, matching
+    :func:`ensure_pyint`, which reports ``9`` for the same input. It previously
+    returned ``[]`` - the two helpers disagreed about what a 0-d array means.
+    """
     try:
         if isinstance(x, np.ndarray):
+            if x.ndim == 0:
+                return [int(x.item())]
             return [int(i) for i in x.tolist()]
         if isinstance(x, (list, tuple)):
             return [int(i) for i in x]
         return [int(x)]
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         return []
 
 

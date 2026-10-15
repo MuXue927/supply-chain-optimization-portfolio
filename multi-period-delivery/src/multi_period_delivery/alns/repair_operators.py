@@ -64,6 +64,11 @@ from .alns_config import default_config as ALNSConfig
 # multi_period_delivery package.
 # -------------------------
 from .alnsopt import SolutionState
+
+# Numeric coercion lives in one module so the three former copies cannot drift
+# apart; the shared implementation also refuses to truncate a multi-element array.
+from .coercion import coerce_float as _coerce_float
+from .coercion import coerce_int as _coerce_int
 from .destroy_operators import (
     infeasible_removal,
 )  # Used to call the external infeasible_removal implementation.
@@ -95,30 +100,6 @@ from .vehicle import Vehicle
 
 # Module logger.
 logger = logging.getLogger(__name__)
-
-
-def _coerce_int(value, default: int = 0) -> int:
-    try:
-        if value is None:
-            return int(default)
-        return int(value)
-    except Exception:
-        try:
-            return int(np.array(value).flat[0])
-        except Exception:
-            return int(default)
-
-
-def _coerce_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        try:
-            return float(np.array(value).flat[0])
-        except Exception:
-            return float(default)
 
 
 def _safe_prev_obj(state) -> float:
