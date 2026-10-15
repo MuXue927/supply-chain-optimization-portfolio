@@ -171,6 +171,104 @@ def test_reward_recording_sanitizes_nonfinite_values() -> None:
     assert selector.destroy_performances == [0.0, 1e6, -1e6]
 
 
+def test_selector_caps_destroy_buffers_at_the_configured_window() -> None:
+    """Destroy buffers must keep only the most recent ML_MAX_SAMPLES samples.
+
+    Without the cap the buffers grow with every recorded operator execution and
+    are never released, so memory and retraining cost scale with the total
+    number of iterations. The tracker already applies the same window in
+    ``ALNSTracker.update_ml_data``.
+    """
+    state = _load_state()
+    selector = MLOperatorSelector(_DummyTuner(), np.random.default_rng(11))
+    cap = int(getattr(ALNSConfig, "ML_MAX_SAMPLES", 1000))
+
+    for index in range(cap + 5):
+        selector.record_operator_performance(
+            "random_removal",
+            "destroy",
+            state,
+            float(index),
+        )
+
+    assert len(selector.destroy_features) == cap
+    assert len(selector.destroy_performances) == cap
+    # The window keeps the newest samples, not the oldest.
+    assert selector.destroy_performances[-1] == float(cap + 4)
+    # Performance labels stay aligned with their feature rows.
+    assert all(
+        feature.shape == selector.destroy_features[0].shape
+        for feature in selector.destroy_features
+    )
+
+
+def test_selector_caps_repair_buffers_at_the_configured_window() -> None:
+    """Repair buffers are bounded by the same window as the destroy buffers."""
+    state = _load_state()
+    selector = MLOperatorSelector(_DummyTuner(), np.random.default_rng(12))
+    cap = int(getattr(ALNSConfig, "ML_MAX_SAMPLES", 1000))
+
+    for index in range(cap + 3):
+        selector.record_operator_performance(
+            "greedy_repair",
+            "repair",
+            state,
+            float(index),
+        )
+
+    assert len(selector.repair_features) == cap
+    assert len(selector.repair_performances) == cap
+    assert selector.repair_performances[-1] == float(cap + 2)
+    # Untouched buffers stay empty.
+    assert selector.destroy_features == []
+
+
+def test_selector_window_honours_a_lower_configured_cap(monkeypatch) -> None:
+    """A smaller ML_MAX_SAMPLES must take effect without code changes."""
+    monkeypatch.setattr(ALNSConfig, "ML_MAX_SAMPLES", 4)
+    state = _load_state()
+    selector = MLOperatorSelector(_DummyTuner(), np.random.default_rng(13))
+
+    for index in range(9):
+        selector.record_operator_performance(
+            "random_removal",
+            "destroy",
+            state,
+            float(index),
+        )
+        selector.record_operator_performance(
+            "greedy_repair",
+            "repair",
+            state,
+            float(index),
+        )
+
+    assert selector.destroy_performances == [5.0, 6.0, 7.0, 8.0]
+    assert selector.repair_performances == [5.0, 6.0, 7.0, 8.0]
+
+
+def test_selector_falls_back_to_a_positive_cap(monkeypatch) -> None:
+    """A non-positive or non-numeric cap must fall back instead of unbounded."""
+    state = _load_state()
+    selector = MLOperatorSelector(_DummyTuner(), np.random.default_rng(14))
+
+    monkeypatch.setattr(ALNSConfig, "ML_MAX_SAMPLES", 0)
+    assert MLOperatorSelector._max_samples() == 1000
+
+    monkeypatch.setattr(ALNSConfig, "ML_MAX_SAMPLES", "not-a-number")
+    assert MLOperatorSelector._max_samples() == 1000
+
+    monkeypatch.setattr(ALNSConfig, "ML_MAX_SAMPLES", 3)
+    for index in range(5):
+        selector.record_operator_performance(
+            "random_removal",
+            "destroy",
+            state,
+            float(index),
+        )
+    assert len(selector.destroy_features) == 3
+
+
 def test_selection_returns_valid_operator_without_training_or_candidates() -> None:
     """Cold-start and empty-candidate paths must always return a usable name."""
     state = _load_state()

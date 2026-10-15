@@ -272,6 +272,12 @@ class ALNSConfig:
     ML_INITIAL_SAMPLE_SIZE: int = 25
     # Retrain the ridge / random-forest models every this many iterations.
     ML_RETRAIN_INTERVAL: int = 80
+    # Hard cap on the number of samples kept in the ML operator selector's
+    # training buffers. Keeping only the most recent window bounds memory (the
+    # buffers would otherwise grow with every iteration and never shrink) and
+    # keeps each retraining pass O(window) instead of O(samples so far).
+    # Matches the sliding window already used by ALNSTracker.update_ml_data.
+    ML_MAX_SAMPLES: int = 1000
     # Samples required before ML selection may replace the default selector.
     ML_TAKEOVER_MIN_SAMPLE_SIZE: int = 80
     # Higher takeover requirement for small instances, which converge quickly

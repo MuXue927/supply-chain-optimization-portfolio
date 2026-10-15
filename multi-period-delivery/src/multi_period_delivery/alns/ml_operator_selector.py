@@ -582,9 +582,40 @@ class MLOperatorSelector:
         if op_type == "destroy":
             self.destroy_features.append(features)
             self.destroy_performances.append(improvement)
+            self._trim_buffers("destroy")
         else:
             self.repair_features.append(features)
             self.repair_performances.append(improvement)
+            self._trim_buffers("repair")
+
+    @staticmethod
+    def _max_samples() -> int:
+        """Return the configured buffer cap, falling back to the tracker's cap."""
+        try:
+            cap = int(getattr(ALNSConfig, "ML_MAX_SAMPLES", 1000))
+        except (TypeError, ValueError):
+            cap = 1000
+        return cap if cap > 0 else 1000
+
+    def _trim_buffers(self, op_type: str) -> None:
+        """
+        Keep only the most recent samples, mirroring
+        ``ALNSTracker.update_ml_data``.
+
+        Without this the feature/performance buffers grow with every recorded
+        operator execution and are never released, so memory scales with the
+        total number of iterations and each retraining pass rebuilds a model
+        from an ever-larger sample set.
+        """
+        cap = self._max_samples()
+        if op_type == "destroy":
+            if len(self.destroy_features) > cap:
+                self.destroy_features = self.destroy_features[-cap:]
+                self.destroy_performances = self.destroy_performances[-cap:]
+        else:
+            if len(self.repair_features) > cap:
+                self.repair_features = self.repair_features[-cap:]
+                self.repair_performances = self.repair_performances[-cap:]
 
     # ------------------------------------------------------------------
     # Model training
