@@ -51,11 +51,11 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
     if time_limit is not None:
         try:
             model.model.Params.TimeLimit = int(time_limit)
-        except Exception:
+        except (TypeError, ValueError):
             try:
                 # some wrappers expose param_time_limit on data
                 data.param_time_limit = int(time_limit)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
     # run model
@@ -99,7 +99,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         if best_bound is not None:
             try:
                 best_bound = float(best_bound)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     except Exception:
         best_bound = None
@@ -109,7 +109,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         if gurobi_runtime is not None:
             try:
                 gurobi_runtime = float(gurobi_runtime)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     except Exception:
         gurobi_runtime = None
@@ -127,7 +127,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         if iterations is not None:
             try:
                 iterations = int(iterations)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     except Exception:
         iterations = None
@@ -142,7 +142,7 @@ def run_model(data: InputDataMultiple, model: MonolithicModelMultiple,
         if node_count is not None:
             try:
                 node_count = int(node_count)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     except Exception:
         node_count = None

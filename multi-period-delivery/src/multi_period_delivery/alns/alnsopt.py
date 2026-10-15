@@ -761,7 +761,7 @@ class SolutionState:
                 # ensure s_initialized semantics preserved by fallback/core
                 try:
                     self.s_initialized = True
-                except Exception:
+                except (TypeError, ValueError):
                     pass
                 return res
             except Exception:
@@ -809,7 +809,7 @@ class SolutionState:
             self.s_initialized = True
             try:
                 self._inventory_cache = None
-            except Exception:
+            except (TypeError, ValueError):
                 pass
             return True
         finally:
@@ -817,7 +817,7 @@ class SolutionState:
             try:
                 # calling mark_objective_dirty false here would be incorrect; preserve existing behavior by not forcing it
                 pass
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
     def copy(self, clone_vehicles: bool = True):

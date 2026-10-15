@@ -337,14 +337,14 @@ def veh_loading(
             # the caller can execute fallback logic.
             try:
                 state.compute_inventory = orig_compute
-            except Exception:
+            except (TypeError, ValueError):
                 pass
             raise
         finally:
             # Protectively restore the original function.
             try:
                 state.compute_inventory = orig_compute
-            except Exception:
+            except (TypeError, ValueError):
                 pass
         return True
     else:
@@ -475,7 +475,7 @@ class ResourcePool:
         # Accept either tuple key (plant, sku, day) or explicit (plant, sku, day)
         try:
             plant, sku, day = key
-        except Exception:
+        except (TypeError, ValueError):
             return default
         return self._data.get(plant, {}).get(sku, {}).get(day, default)
 
@@ -488,21 +488,21 @@ class ResourcePool:
         """
         try:
             plant, sku = key_or_tuple
-        except Exception:
+        except (TypeError, ValueError):
             return {}
         return self._data.get(plant, {}).get(sku, {})
 
     def __getitem__(self, key):
         try:
             plant, sku, day = key
-        except Exception:
+        except (TypeError, ValueError):
             raise KeyError(key)
         return self._data[plant][sku][day]
 
     def __setitem__(self, key, value):
         try:
             plant, sku, day = key
-        except Exception:
+        except (TypeError, ValueError):
             raise KeyError(key)
         self._ensure(plant, sku)
         self._data[plant][sku][day] = value
@@ -510,7 +510,7 @@ class ResourcePool:
     def __contains__(self, key):
         try:
             plant, sku, day = key
-        except Exception:
+        except (TypeError, ValueError):
             return False
         return day in self._data.get(plant, {}).get(sku, {})
 
@@ -1347,7 +1347,7 @@ def compute_improvement(state: SolutionState, prev_obj: float | None = None):
             try:
                 state.last_objective = new_obj
                 state.objective_dirty = False
-            except Exception:
+            except (TypeError, ValueError):
                 # Ignore caching failures, such as on read-only wrappers.
                 pass
 

@@ -67,6 +67,15 @@ testpaths = ["tests"]
 #
 # All four groups are clean as of 2026-10-13; keep new code clean rather than
 # switching on the whole default rule set at once.
+#
+# NOTE on ruff's `BLE001` (blind-except). The audit of 2026-10-16 counted 419
+# bare `except Exception` handlers in the ALNS package. Enabling BLE001 here
+# would fail immediately on that backlog, and the standing convention is that a
+# gate which is red from the first push gets ignored - so BLE001 stays off and
+# the backlog is instead held by a ratchet test,
+# `tests/test_exception_hygiene.py::test_blind_except_count_does_not_grow`,
+# which fails when the count rises. Narrow the handler when you can; the ratchet
+# keeps the total from growing in the meantime.
 [tool.ruff]
 target-version = "py310"
 

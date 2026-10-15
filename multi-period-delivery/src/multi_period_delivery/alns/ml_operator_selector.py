@@ -164,7 +164,7 @@ def _finite_float(value: Any, default: float = 0.0) -> float:
     """Return a finite float, replacing NaN and infinities with safe values."""
     try:
         result = float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return float(default)
 
     if math.isnan(result):
@@ -419,7 +419,7 @@ class MLOperatorSelector:
             def _veh_type_sort_key(v):
                 try:
                     return (0, float(v))
-                except Exception:
+                except (TypeError, ValueError):
                     return (1, str(v))
 
             for veh_type in sorted(

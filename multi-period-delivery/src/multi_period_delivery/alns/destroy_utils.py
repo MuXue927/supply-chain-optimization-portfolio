@@ -72,7 +72,7 @@ def _coerce_optional_float(
         return default
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         try:
             return float(np.array(value).flat[0])
         except Exception:
@@ -115,10 +115,10 @@ def to_native(v: Any):
         # Fall back progressively to guarantee a native or stringifiable value.
         try:
             return int(v)
-        except Exception:
+        except (TypeError, ValueError):
             try:
                 return float(v)
-            except Exception:
+            except (TypeError, ValueError):
                 try:
                     return str(v)
                 except Exception:
@@ -221,7 +221,7 @@ def partial_updates_overlap_removed_cargo(
     for key in partial_updates:
         try:
             plant, sku_id, day = key
-        except Exception:
+        except (TypeError, ValueError):
             continue
         partial_keys.add((plant, sku_id, int(day)))
 
@@ -241,7 +241,7 @@ def partial_updates_overlap_removed_cargo(
             continue
         try:
             start_day = int(shipped_day)
-        except Exception:
+        except (TypeError, ValueError):
             continue
         for day in range(start_day, horizons + 1):
             if (plant, sku_id, day) in partial_keys:
@@ -268,7 +268,7 @@ def apply_partial_inventory_updates(state, partial_updates: dict | None):
     for key, raw_delta in partial_updates.items():
         try:
             plant, sku_id, day = key
-        except Exception:
+        except (TypeError, ValueError):
             continue
         delta = _coerce_int(raw_delta, default=0)
         if delta == 0:
@@ -537,10 +537,10 @@ def resolve_degree(op_name: str, state, degree):
 
     try:
         val = float(raw)
-    except Exception:
+    except (TypeError, ValueError):
         try:
             val = float(base)
-        except Exception:
+        except (TypeError, ValueError):
             val = 0.25
 
     # Integrate adaptive_degree when param_tuner is available.

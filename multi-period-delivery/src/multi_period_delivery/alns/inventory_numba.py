@@ -172,7 +172,7 @@ def arrays_to_state_s_ikt(state, maps: IndexMaps, s_ikt_arr: np.ndarray):
     if not hasattr(state, "s_ikt") or getattr(state, "s_ikt") is None:
         try:
             state.s_ikt = {}
-        except Exception:
+        except (TypeError, ValueError):
             # if cannot set attribute, try to modify existing mapping if it exists
             pass
     s_dict = getattr(state, "s_ikt", {})
@@ -206,7 +206,7 @@ def arrays_to_state_s_ikt(state, maps: IndexMaps, s_ikt_arr: np.ndarray):
     # try storing back
     try:
         state.s_ikt = s_dict
-    except Exception:
+    except (TypeError, ValueError):
         pass
     return
 
@@ -380,7 +380,7 @@ def compute_inventory_numba_safe(state):
                 try:
                     shipments_arr = cached_shipments
                     use_cached_shipments = True
-                except Exception:
+                except (TypeError, ValueError):
                     use_cached_shipments = False
 
         if not use_cached_shipments:
@@ -413,7 +413,7 @@ def compute_inventory_numba_safe(state):
         arrays_to_state_s_ikt(state, maps, s_ikt_arr)
         try:
             state.s_initialized = True
-        except Exception:
+        except (TypeError, ValueError):
             pass
 
         # Best-effort: invalidate any derived caches that depend on s_ikt
@@ -437,7 +437,7 @@ def compute_inventory_numba_safe(state):
         # with no trace of why the fast path was abandoned.
         try:
             state._inventory_cache = None
-        except Exception:
+        except (TypeError, ValueError):
             pass
         logger.warning(
             "numba inventory fast path failed; falling back to the Python "

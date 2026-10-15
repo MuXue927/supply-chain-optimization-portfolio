@@ -481,7 +481,7 @@ class ParamAutoTuner:
                 else:
                     try:
                         center = float(base_val) if base_val is not None else (float(min_val) + float(max_val)) / 2.0
-                    except Exception:
+                    except (TypeError, ValueError):
                         center = (float(min_val) + float(max_val)) / 2.0
                     half_width = max(1e-12, (float(max_val) - float(min_val)) * sample_scale * 0.5)
                     low = max(float(min_val), center - half_width)
@@ -558,7 +558,7 @@ class ParamAutoTuner:
             try:
                 used_val_f = float(used_val)
                 value_f = float(value)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
 
             direction = used_val_f - value_f

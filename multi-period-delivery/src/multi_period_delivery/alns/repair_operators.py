@@ -810,7 +810,7 @@ def local_search_repair(
     else:
         try:
             max_iter = int(max_iter)
-        except Exception:
+        except (TypeError, ValueError):
             max_iter = min(50, max(5, num_demands // 20))
         max_iter = max(1, max_iter)
 
@@ -1376,7 +1376,7 @@ def regret_based_repair(
 
                         try:
                             benefit = est_qty * _data_param_pun
-                        except Exception:
+                        except (TypeError, ValueError):
                             benefit = est_qty * 1.0
                         cost = float(veh_type_cost.get(veh_type, 0.0))
                         heuristic_score = benefit - cost
@@ -1570,7 +1570,7 @@ def regret_based_repair(
                             # store exact-simulation result in global_memo for this state snapshot
                             try:
                                 global_memo[combined_key] = (improvement, bool(success))
-                            except Exception:
+                            except (TypeError, ValueError):
                                 # Ignore memo write failures, which should not occur.
                                 pass
                     else:
@@ -1652,37 +1652,13 @@ def regret_based_repair(
                             state.mark_objective_dirty()
                         except Exception:
                             # fallback to manual invalidation
-                            try:
-                                state.shipped_cache = None
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
-                            try:
-                                state.last_objective = None
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
-                            try:
-                                state.objective_dirty = True
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
+                                                            state.shipped_cache = None
+                                                            state.last_objective = None
+                                                            state.objective_dirty = True
                     else:
-                        try:
-                            state.shipped_cache = None
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
-                        try:
-                            state.last_objective = None
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
-                        try:
-                            state.objective_dirty = True
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
+                                                    state.shipped_cache = None
+                                                    state.last_objective = None
+                                                    state.objective_dirty = True
                 except Exception:
                     # Ignore failures to avoid disrupting the main loop.
                     pass
@@ -1700,37 +1676,13 @@ def regret_based_repair(
                             state.mark_objective_dirty()
                         except Exception:
                             # fallback to manual invalidation
-                            try:
-                                state.shipped_cache = None
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
-                            try:
-                                state.last_objective = None
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
-                            try:
-                                state.objective_dirty = True
-                            except Exception as exc:
-                                record_swallowed("repair_operators.regret_based_repair", exc)
-                                pass
+                                                            state.shipped_cache = None
+                                                            state.last_objective = None
+                                                            state.objective_dirty = True
                     else:
-                        try:
-                            state.shipped_cache = None
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
-                        try:
-                            state.last_objective = None
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
-                        try:
-                            state.objective_dirty = True
-                        except Exception as exc:
-                            record_swallowed("repair_operators.regret_based_repair", exc)
-                            pass
+                                                    state.shipped_cache = None
+                                                    state.last_objective = None
+                                                    state.objective_dirty = True
                 except Exception:
                     # Ignore failures to avoid disrupting the main loop.
                     pass

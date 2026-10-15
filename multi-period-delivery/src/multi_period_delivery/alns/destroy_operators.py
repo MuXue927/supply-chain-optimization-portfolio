@@ -1134,7 +1134,7 @@ def periodic_shaw_removal(
         qty = veh.cargo.get((sku_id, day), 0)
         try:
             reduce_qty = int(qty)
-        except Exception:
+        except (TypeError, ValueError):
             try:
                 reduce_qty = int(np.array(qty).flat[0])
             except Exception:
@@ -1635,10 +1635,10 @@ def path_removal(
                     except Exception:
                         try:
                             candidate = int(candidate)
-                        except Exception:
+                        except (TypeError, ValueError):
                             try:
                                 candidate = float(candidate)
-                            except Exception:
+                            except (TypeError, ValueError):
                                 candidate = str(candidate)
                 # list -> tuple.
                 if isinstance(candidate, list):

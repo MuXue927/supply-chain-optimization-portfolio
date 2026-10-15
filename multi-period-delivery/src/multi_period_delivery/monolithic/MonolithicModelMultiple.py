@@ -468,7 +468,7 @@ class MonolithicModelMultiple:
                 except Exception:
                     try:
                         return float(v)
-                    except Exception:
+                    except (TypeError, ValueError):
                         return 0.0
 
         # Export current/best solution to JSON for offline analysis / mapping.
