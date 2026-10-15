@@ -57,6 +57,7 @@ import copy
 import csv
 import os
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 # =========================
@@ -93,6 +94,7 @@ class ALNSTracker:
         self,
         output_file: str | None = None,
         log_printer: LogPrinter | None = None,
+        elapsed_seconds: Callable[[], float] | None = None,
     ):
         # Iteration and objective state
         self.iteration: int = 0
@@ -107,6 +109,12 @@ class ALNSTracker:
 
         # Time and historical series
         self.start_time: float = time.time()
+        # Monotonic origin for the runtime budget. Separate from ``start_time``,
+        # which is a wall-clock stamp used for log display.
+        self.budget_start_time: float = time.perf_counter()
+        # Optional shared clock: the optimizer hands the run's stopwatch in so
+        # the stopping rule and the progress policies cannot disagree.
+        self._elapsed_provider: Callable[[], float] | None = elapsed_seconds
         self.log_printer: LogPrinter = log_printer or LogPrinter(self.start_time)
         self.objectives: list[float] = []
         self.gaps: list[float] = []
@@ -148,6 +156,18 @@ class ALNSTracker:
 
     def get_iteration(self) -> int:
         return int(self.iteration)
+
+    def elapsed_seconds(self) -> float:
+        """
+        Seconds consumed by the run's runtime budget.
+
+        Reuses the stop rule's own stopwatch when one was injected, so the
+        stopping decision and the progress-driven policies measure from the same
+        origin instead of keeping two clocks that can drift apart.
+        """
+        if self._elapsed_provider is not None:
+            return float(self._elapsed_provider())
+        return time.perf_counter() - self.budget_start_time
 
     def get_max_iterations(self) -> int:
         return int(self.max_iterations)

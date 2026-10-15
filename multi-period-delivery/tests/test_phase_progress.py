@@ -6,8 +6,8 @@ The phase thresholds (``LIGHT_INTENSIFY_MIN_PROGRESS`` 0.20,
 ``ML_TAKEOVER_MIN_PROGRESS`` 0.30) read as fractions of the run's budget: 0.70
 means "the last 30% of the run".
 
-Those policies must therefore activate at the same point of a run on any host.
-An iteration-based measure could not deliver that: converting "iterations" into
+Those policies must activate at the same point of a run on any host. An
+iteration-based measure could not deliver that: converting "iterations" into
 "fraction of the run" needs an assumed throughput, and throughput is both
 machine- and instance-specific. Measuring against elapsed time makes the
 fraction independent of how fast the host is.
@@ -30,17 +30,11 @@ from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 class _Tracker:
     """Tracker stand-in exposing only what ``_resolve_progress`` reads."""
 
-    def __init__(
-        self,
-        *,
-        iteration: int = 0,
-        max_iterations: int = 0,
-        start_time: float | None = None,
-    ) -> None:
+    def __init__(self, *, iteration: int = 0, max_iterations: int = 0, elapsed: float = 0.0) -> None:
         self.iteration = iteration
         self.max_iterations = max_iterations
-        if start_time is not None:
-            self.start_time = start_time
+        # Monotonic origin, exactly as ALNSTracker records it.
+        self.budget_start_time = time.perf_counter() - elapsed
 
 
 class _BaseAcceptor:
@@ -68,9 +62,8 @@ def _state(tracker: _Tracker) -> SimpleNamespace:
 def test_progress_tracks_the_share_of_the_runtime_budget() -> None:
     accept = _accept()
     runtime = float(ALNSConfig.MAX_RUNTIME)
-    tracker = _Tracker(start_time=time.time() - runtime / 2)
 
-    progress = accept._resolve_progress(_state(tracker))
+    progress = accept._resolve_progress(_state(_Tracker(elapsed=runtime / 2)))
 
     assert progress == pytest.approx(0.5, abs=0.05)
 
@@ -78,11 +71,8 @@ def test_progress_tracks_the_share_of_the_runtime_budget() -> None:
 def test_progress_is_clamped_to_the_unit_interval() -> None:
     accept = _accept()
 
-    assert accept._resolve_progress(_state(_Tracker(start_time=0.0))) == 0.0
-    fresh = _Tracker(start_time=time.time() + 10_000)
-    assert accept._resolve_progress(_state(fresh)) == 0.0
-    stale = _Tracker(start_time=time.time() - 10_000_000)
-    assert accept._resolve_progress(_state(stale)) == 1.0
+    assert accept._resolve_progress(_state(_Tracker(elapsed=0.0))) < 1e-6
+    assert accept._resolve_progress(_state(_Tracker(elapsed=10_000_000))) == 1.0
 
 
 def test_progress_reaches_phase_thresholds_within_one_budget() -> None:
@@ -97,7 +87,7 @@ def test_progress_reaches_phase_thresholds_within_one_budget() -> None:
     }
 
     for name, threshold in thresholds.items():
-        tracker = _Tracker(start_time=time.time() - threshold * runtime)
+        tracker = _Tracker(elapsed=threshold * runtime)
         progress = accept._resolve_progress(_state(tracker))
         assert progress >= threshold - 0.05, f"{name} gate not reached"
         assert progress < 1.0, f"{name} gate must be reached before the budget ends"
@@ -109,7 +99,7 @@ def test_progress_reaches_phase_thresholds_within_one_budget() -> None:
 
 
 def test_phase_schedule_does_not_depend_on_machine_speed() -> None:
-    """A 100x faster host must not shift when the gates fire.
+    """A far faster host must not shift when the gates fire.
 
     Both trackers sit at the same point of the *budget* (70% elapsed) but have
     executed wildly different iteration counts, which is exactly what different
@@ -119,16 +109,8 @@ def test_phase_schedule_does_not_depend_on_machine_speed() -> None:
     runtime = float(ALNSConfig.MAX_RUNTIME)
     elapsed = 0.70 * runtime
 
-    slow_host = _Tracker(
-        iteration=40,                        # e.g. 0.1 iterations/second
-        max_iterations=1_000,
-        start_time=time.time() - elapsed,
-    )
-    fast_host = _Tracker(
-        iteration=4_000_000,                 # e.g. 10_000 iterations/second
-        max_iterations=900_200,
-        start_time=time.time() - elapsed,
-    )
+    slow_host = _Tracker(iteration=40, max_iterations=1_000, elapsed=elapsed)
+    fast_host = _Tracker(iteration=4_000_000, max_iterations=900_200, elapsed=elapsed)
 
     slow_progress = accept._resolve_progress(_state(slow_host))
     fast_progress = accept._resolve_progress(_state(fast_host))
@@ -136,8 +118,7 @@ def test_phase_schedule_does_not_depend_on_machine_speed() -> None:
     assert slow_progress == pytest.approx(0.70, abs=0.02)
     assert fast_progress == pytest.approx(0.70, abs=0.02)
     # The iteration-based measure is what diverged: at the same instant the two
-    # hosts report completely different fractions, because the ratio depends on
-    # iterations executed rather than on how much of the budget is gone.
+    # hosts report completely different fractions.
     slow_iteration_fraction = slow_host.iteration / slow_host.max_iterations
     fast_iteration_fraction = fast_host.iteration / fast_host.max_iterations
     assert slow_iteration_fraction != pytest.approx(fast_iteration_fraction, abs=0.1)
@@ -149,56 +130,24 @@ def test_old_iteration_measure_failure_mode_is_covered() -> None:
     This documents the failure the elapsed-time measure removes: with the
     historical ``DYNAMIC_MAX_ITERATIONS_PER_SECOND = 1000.0`` the ceiling was
     900,200 iterations, so a run executing a few thousand iterations reported a
-    progress around 0.005 - below all five thresholds.
+    progress around 0.005 - below all five thresholds. Progress no longer reads
+    that ceiling at all, so the inflated value cannot suppress the gates.
     """
     accept = _accept()
-    inflated = _Tracker(iteration=4_700, max_iterations=900_200, start_time=0.0)
+    inflated = _Tracker(iteration=4_700, max_iterations=900_200, elapsed=0.0)
 
-    assert accept._resolve_progress(_state(inflated)) == pytest.approx(0.0052, abs=0.001)
+    # Same tracker, but the run is genuinely half done: the gates follow the
+    # clock, not the iteration ratio.
     assert accept._resolve_progress(_state(inflated)) < (
         ALNSConfig.LIGHT_INTENSIFY_MIN_PROGRESS
     )
+    halfway = _Tracker(iteration=4_700, max_iterations=900_200, elapsed=0.5 * float(ALNSConfig.MAX_RUNTIME))
+    assert accept._resolve_progress(_state(halfway)) == pytest.approx(0.5, abs=0.02)
 
 
 # ---------------------------------------------------------------------------
-# Fallbacks / opt-out
+# Missing tracker
 # ---------------------------------------------------------------------------
-
-
-def test_falls_back_to_iterations_when_no_start_time_is_recorded() -> None:
-    """Trackers without a start time keep the previous behaviour."""
-    accept = _accept()
-    tracker = _Tracker(iteration=80, max_iterations=100)
-
-    assert accept._resolve_progress(_state(tracker)) == pytest.approx(0.8)
-
-
-def test_iteration_mode_remains_selectable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        ALNSConfig, "DYNAMIC_PROGRESS_USE_ELAPSED_TIME", False, raising=False
-    )
-    accept = _accept()
-    tracker = _Tracker(
-        iteration=25,
-        max_iterations=100,
-        start_time=time.time() - float(ALNSConfig.MAX_RUNTIME),  # fully elapsed
-    )
-
-    assert accept._resolve_progress(_state(tracker)) == pytest.approx(0.25)
-
-
-def test_missing_runtime_budget_falls_back_to_iterations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 0, raising=False)
-    accept = _accept()
-    tracker = _Tracker(
-        iteration=50, max_iterations=100, start_time=time.time() - 10.0
-    )
-
-    assert accept._resolve_progress(_state(tracker)) == pytest.approx(0.5)
 
 
 def test_no_tracker_at_all_reports_zero_progress() -> None:

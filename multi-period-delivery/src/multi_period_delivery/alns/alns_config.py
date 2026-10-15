@@ -94,21 +94,6 @@ class ALNSConfig:
     DYNAMIC_MAX_ITERATION_BUFFER: int = 200
     # Multiplier applied to the estimated dynamic cap (1.5 = 50% headroom).
     DYNAMIC_MAX_ITERATION_SAFETY_FACTOR: float = 1.5
-    # Measure phase progress as elapsed-runtime / MAX_RUNTIME (True) instead of
-    # iteration / iteration-ceiling (False).
-    #
-    # The phase thresholds all read as fractions of the budget: 0.70 means "the
-    # last 30% of the run". Against elapsed time that statement is
-    # machine-independent - a machine twice as fast simply executes twice the
-    # iterations in the same fraction of the budget - so the gates activate at
-    # the same point of the run on any host. Against iterations it required
-    # assuming a throughput, and measured throughput spans two orders of
-    # magnitude across instance sizes, so no constant can be correct everywhere.
-    #
-    # Set False to use the iteration measure (kept for tests that pin an
-    # iteration budget); it is also the automatic fallback when MAX_RUNTIME or
-    # the tracker's start time is unavailable.
-    DYNAMIC_PROGRESS_USE_ELAPSED_TIME: bool = True
     # Report the final solution chosen by the actual (Gurobi-aligned) objective
     # instead of the best state seen by the search objective.
     PREFER_FINAL_BEST_ACTUAL_SOLUTION: bool = True

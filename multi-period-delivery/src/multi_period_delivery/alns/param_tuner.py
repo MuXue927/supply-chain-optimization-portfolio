@@ -49,6 +49,7 @@ Potential improvements (not implemented):
 # =========================
 import copy
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,7 +65,7 @@ from .alns_config import default_config as ALNSConfig
 # Internal project dependencies
 # =========================
 from .InputDataALNS import DataALNS
-from .progress import elapsed_progress, iteration_progress
+from .progress import progress_from_elapsed
 
 
 # ---------------------------------------------------------------------
@@ -186,10 +187,12 @@ class ParamAutoTuner:
         self.max_iterations = 1000
         self.phase = "exploration"
         self.no_improve_iters = 0
-        # Wall-clock origin for the progress measure. The tuner is fed iteration
-        # counts, not a tracker, so it keeps its own start time to derive
-        # elapsed-runtime progress from the shared MAX_RUNTIME budget.
-        self.start_time = time.time()
+        # Origin for the progress measure. The tuner is fed iteration counts
+        # rather than a tracker, so it keeps a monotonic origin of its own; the
+        # optimizer replaces the clock via ``set_elapsed_clock`` so every policy
+        # measures from the run's single origin.
+        self.start_time = time.perf_counter()
+        self._elapsed_clock: Callable[[], float] | None = None
 
         # Control parameters, overridable through central configuration
         self.exploration_rate = getattr(ALNSConfig, "TUNER_EXPLORATION_INITIAL", 0.3)
@@ -640,6 +643,21 @@ class ParamAutoTuner:
         candidates.sort(key=lambda x: x[1], reverse=True)
         return [name for name, _ in candidates[:top_k]]
 
+    def set_elapsed_clock(self, clock: Callable[[], float] | None) -> None:
+        """
+        Adopt the run's stopwatch for progress measurement.
+
+        The optimizer injects the same clock the stopping rule uses, so the
+        decay schedule reads one origin rather than keeping a private timer.
+        """
+        self._elapsed_clock = clock
+
+    def _elapsed_progress(self) -> float:
+        """Fraction of the runtime budget consumed, clamped to [0, 1]."""
+        if self._elapsed_clock is not None:
+            return progress_from_elapsed(float(self._elapsed_clock()))
+        return progress_from_elapsed(time.perf_counter() - self.start_time)
+
     # -----------------------------------------------------------------
     # Dynamic destroy-strength adjustment
     # -----------------------------------------------------------------
@@ -649,28 +667,27 @@ class ParamAutoTuner:
                         max_degree: float = 0.5,
                         decay_rate: float = 0.67) -> float:
         """
-        Dynamically shrink the destroy ratio as iterations progress.
+        Dynamically shrink the destroy ratio as the run progresses.
 
-        - progress is normalized over [0, 0.7] and then held constant.
+        - progress is normalized over the first 70% of the runtime budget and
+          then held constant.
         - adaptive_value = base_degree * (1 - decay_rate * progress).
         - The result is clipped to [min_degree, max_degree].
 
         This controls perturbation strength during the destroy phase and avoids
         large structural disruptions late in the search.
+
+        The schedule reads the shared progress measure (elapsed runtime against
+        ``MAX_RUNTIME``) rather than iterations against the iteration ceiling, so
+        it does not depend on the host's speed or on how the ceiling was sized.
+        The tuner keeps its own ``start_time`` because it is fed iteration counts
+        instead of a tracker; the measure itself is the same one.
         """
         if self.max_iterations <= 0 or self.iteration <= 0:
             return base_degree
 
-        # Prefer the elapsed-runtime measure so the decay schedule does not
-        # depend on the host's speed (and therefore on how the iteration ceiling
-        # was sized). Falls back to the iteration measure when no time budget is
-        # available. The [0, 0.7] normalization is preserved: in iteration mode
-        # progress reaches 1.0 at 70% of the iteration ceiling.
-        progress = elapsed_progress(self)
-        if progress is None:
-            progress = iteration_progress(self.iteration, 0.7 * self.max_iterations)
-        if progress is None:
-            return base_degree
+        # Normalize over the first 70% of the budget, as before, then hold.
+        progress = min(1.0, self._elapsed_progress() / 0.7)
         adaptive_value = base_degree * (1 - decay_rate * progress)
 
         stagnation_iters = max(0, int(getattr(self, "no_improve_iters", 0)))

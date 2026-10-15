@@ -211,10 +211,36 @@ twice as fast executes twice the iterations in the same fraction of the budget -
 and demote the iteration ceiling to a pure safety net that must not bind in
 normal operation.
 
-Three call sites shared the same faulty measure and now share one implementation:
+Four call sites shared the same faulty measure and now share one implementation:
 `accept.DemandConstraintAccept` (phase gates), `ml_operator_selector`
-(ML takeover **and** the epsilon-greedy exploration decay) and
-`param_tuner.ParamAutoTuner` (destroy-strength decay).
+(ML takeover **and** the epsilon-greedy exploration decay), `callbacks`
+(the light-intensify window) and `param_tuner.ParamAutoTuner` (destroy-strength
+decay).
+
+**Corollary: one measure means no fallback measure.** Keeping an
+iteration-based path "in case time is unavailable" looked safe and was not: two
+measures meant two behaviours, and the fallback could silently reinstate the
+machine-dependent schedule this lesson is about. The measure now has exactly one
+definition and one failure mode, and both are loud:
+
+- a tracker that exposes no clock raises `AttributeError` (a programming error);
+- a non-positive `MAX_RUNTIME` raises `ValueError` (a configuration error).
+
+Falling back was the wrong instinct: an unreachable branch still has to be read
+and maintained, and a reachable one hides a defect.
+
+**Corollary: one clock means one origin.** Two runtime measurements existed -
+the stopping rule's stopwatch and the tracker's - starting at different moments
+(optimization start versus first stop-rule evaluation, i.e. separated by data
+loading and model build). Both were "machine-independent" and still put the same
+gate at two different moments. The run now has a single stopwatch: the optimizer
+hands it to the tracker and to the parameter tuner, and passes the origin into
+the stopping rule.
+
+Note the deliberate clock split, which is *not* the same thing: wall-clock time
+(`time.time()`) is still used for log display, while the runtime budget uses the
+monotonic clock (`time.perf_counter`) so a wall-clock step cannot shift the
+phase schedule.
 
 **Evidence required:**
 
@@ -225,7 +251,9 @@ Three call sites shared the same faulty measure and now share one implementation
 - the iteration ceiling does **not** bind before `MAX_RUNTIME` at measured
   throughput (otherwise the run is truncated and later gates are skipped);
 - the ceiling still respects its formula and never undercuts `MAX_ITERATIONS`;
-- a tracker without a start time still yields a usable (iteration-based) value.
+- a tracker without a clock, and a non-positive `MAX_RUNTIME`, both raise;
+- the stopping rule, the tracker and the parameter tuner report the same
+  elapsed seconds in a real run (verified: agreement within 0.00 s).
 
 Regression tests: `multi-period-delivery/tests/test_progress_measure.py`,
 `test_phase_progress.py`, `test_p1_fixes.py`.

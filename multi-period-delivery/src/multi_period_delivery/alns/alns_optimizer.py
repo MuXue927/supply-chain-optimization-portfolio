@@ -813,6 +813,24 @@ class ALNSOptimizer:
 
         return _NamedCallable(func, name, kwargs)
 
+    @staticmethod
+    def _run_elapsed_seconds(stop: Any):
+        """
+        Return a callable reporting seconds consumed by the runtime budget.
+
+        Reads the stopping rule's own stopwatch, which is the single origin for
+        runtime-budgeted policies. Returns None when the rule cannot report
+        elapsed time, leaving the tracker on its own monotonic origin.
+        """
+        if stop is None or not hasattr(stop, "get_status"):
+            return None
+
+        def _elapsed() -> float:
+            status = stop.get_status() or {}
+            return float(status.get("elapsed_time", 0.0) or 0.0)
+
+        return _elapsed
+
     def run_optimization(self, dataset_name: str) -> bool:
         """
         Run the complete optimization workflow.
@@ -945,7 +963,13 @@ class ALNSOptimizer:
             # 7. Configure tracker and callbacks.
             t0 = time.time()
             self.log_printer.print("Step 7: Configuring tracker and callbacks...")
-            self.tracker = ALNSTracker(log_printer=self.log_printer)
+            # The tracker's runtime clock is the stop rule's own stopwatch, so
+            # every progress-driven policy shares one origin with the stopping
+            # decision instead of measuring elapsed time twice.
+            self.tracker = ALNSTracker(
+                log_printer=self.log_printer,
+                elapsed_seconds=self._run_elapsed_seconds(stop),
+            )
             try:
                 dynamic_cap = getattr(self, "_dynamic_iteration_cap", None)
                 if dynamic_cap is not None and hasattr(
@@ -974,6 +998,12 @@ class ALNSOptimizer:
                 pass
 
             register_callbacks(alns, self, stop=stop)
+            # Give the tuner the same stopwatch the stop rule and tracker use,
+            # so its decay schedule shares the run's single time origin.
+            if self.param_tuner is not None and hasattr(
+                self.param_tuner, "set_elapsed_clock"
+            ):
+                self.param_tuner.set_elapsed_clock(self._run_elapsed_seconds(stop))
             self.log_printer.print(f"Step 7 elapsed: {time.time() - t0:.2f}s")
 
             # 8. Run ALNS.

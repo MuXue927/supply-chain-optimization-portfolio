@@ -112,7 +112,7 @@ from sklearn.preprocessing import StandardScaler
 # =========================
 from .alns_config import default_config as ALNSConfig
 from .param_tuner import ParamAutoTuner
-from .progress import elapsed_progress, iteration_progress, resolve_progress
+from .progress import resolve_progress
 
 if TYPE_CHECKING:
     from .alnsopt import SolutionState
@@ -262,22 +262,7 @@ class MLOperatorSelector:
         budget, so they must not depend on how fast the host is; see
         ``progress.py``.
         """
-        tracker = getattr(state, "tracker", None) if state is not None else None
-        if tracker is not None:
-            fraction = elapsed_progress(tracker)
-            if fraction is not None:
-                return fraction
-            fraction = iteration_progress(
-                getattr(tracker, "iteration", 0),
-                getattr(tracker, "max_iterations", 0),
-            )
-            if fraction is not None:
-                return fraction
-        if self.param_tuner is not None:
-            fraction = resolve_progress(tracker=self.param_tuner)
-            if fraction:
-                return fraction
-        return 0.0
+        return resolve_progress((state,) if state is not None else ())
 
     def _sample_count(self, op_type: str) -> int:
         if op_type == "destroy":

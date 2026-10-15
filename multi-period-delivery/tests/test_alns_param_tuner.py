@@ -9,7 +9,6 @@ search run.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import numpy as np
@@ -41,12 +40,12 @@ def _make_tuner() -> ParamAutoTuner:
 def _advance_tuner_clock(tuner: ParamAutoTuner, fraction: float) -> None:
     """Place the tuner ``fraction`` of the way through the runtime budget.
 
-    The tuner derives its progress from elapsed time, so a test that calls
-    ``set_iteration`` immediately after construction sees ~0 elapsed time and no
-    decay. Setting the origin explicitly keeps these tests deterministic.
+    Uses the same clock injection the optimizer performs, so the test exercises
+    the real seam: the tuner reads elapsed seconds from the run's stopwatch
+    rather than keeping a private timer.
     """
     budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 600))
-    tuner.start_time = time.time() - fraction * budget
+    tuner.set_elapsed_clock(lambda: fraction * budget)
 
 
 # ---------------------------------------------------------------------------

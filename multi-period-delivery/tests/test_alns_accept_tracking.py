@@ -9,6 +9,7 @@ full ALNS run to exercise them.
 from __future__ import annotations
 
 import csv
+import time
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from multi_period_delivery.alns.accept import (
     _CandidateProxy,
     _safe_float,
 )
+from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnstrack import ALNSTracker, calculate_gap
 
 
@@ -32,9 +34,12 @@ class _FakeVehicle:
 
 
 class _FakeTracker:
-    def __init__(self, iteration: int, max_iterations: int):
+    def __init__(self, iteration: int, max_iterations: int, elapsed: float = 0.0):
         self.iteration = iteration
         self.max_iterations = max_iterations
+        # Phase progress is measured against the runtime budget, so the tracker
+        # carries a monotonic origin; ``elapsed`` places the run in its budget.
+        self.budget_start_time = time.perf_counter() - elapsed
 
 
 class _FakeData:
@@ -175,8 +180,11 @@ def test_demand_accept_adds_penalty_for_unmet_demand() -> None:
 def test_demand_accept_uses_actual_priority_late_in_search() -> None:
     base = _RecordingAcceptor()
     acceptor = DemandConstraintAccept(base, data=None)
-    # Progress = 80 / 100 = 0.8, past ACTUAL_PRIORITY_START_PROGRESS (0.70).
-    late_tracker = _FakeTracker(iteration=80, max_iterations=100)
+    # Progress is elapsed-runtime / MAX_RUNTIME; 0.8 of the budget is past
+    # ACTUAL_PRIORITY_START_PROGRESS (0.70).
+    late_tracker = _FakeTracker(
+        iteration=80, max_iterations=100, elapsed=0.8 * float(ALNSConfig.MAX_RUNTIME)
+    )
     current = _FakeState(objective=100.0, actual=100.0)
     current.tracker = late_tracker
     candidate = _FakeState(objective=95.0, actual=90.0)
@@ -192,7 +200,9 @@ def test_demand_accept_uses_actual_priority_late_in_search() -> None:
 def test_demand_accept_rejects_late_regression() -> None:
     base = _RecordingAcceptor()
     acceptor = DemandConstraintAccept(base, data=None)
-    late_tracker = _FakeTracker(iteration=90, max_iterations=100)
+    late_tracker = _FakeTracker(
+        iteration=90, max_iterations=100, elapsed=0.9 * float(ALNSConfig.MAX_RUNTIME)
+    )
     current = _FakeState(objective=100.0, actual=100.0)
     current.tracker = late_tracker
     candidate = _FakeState(objective=300.0, actual=300.0)

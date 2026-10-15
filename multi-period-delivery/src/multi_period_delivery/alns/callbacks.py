@@ -25,6 +25,7 @@ from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
 from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
+from .progress import resolve_progress
 
 logger = logging.getLogger(__name__)
 
@@ -963,43 +964,11 @@ def make_callback_on_iteration(
                     elif hasattr(tracker, "get_statistics"):
                         iteration = tracker.get_statistics().get("total_iterations")
 
-            # Compute and publish a progress fraction (0..1).
-            # Prefer runtime progress (elapsed/max_runtime), because max-iteration
-            # can be dynamically expanded by the runtime budget.
-            progress = 0.0
-            status_cache = (
-                stop.get_status() if (stop and hasattr(stop, "get_status")) else {}
-            )
-            try:
-                elapsed_rt = float(status_cache.get("elapsed_time", 0.0) or 0.0)
-                max_rt = status_cache.get("max_runtime", None)
-                max_rt = float(max_rt) if max_rt is not None else 0.0
-                if max_rt > 1e-9:
-                    progress = max(0.0, min(1.0, elapsed_rt / max_rt))
-                else:
-                    max_iter = (
-                        optimizer.get_max_iterations()
-                        if hasattr(optimizer, "get_max_iterations")
-                        else None
-                    )
-                    if max_iter is None:
-                        if (
-                            hasattr(optimizer, "tracker")
-                            and optimizer.tracker is not None
-                        ):
-                            max_iter = optimizer.tracker.get_max_iterations()
-                    if max_iter is None:
-                        max_iter = ALNSConfig.MAX_ITERATIONS
-                    if iteration is not None and max_iter is not None and max_iter > 0:
-                        progress = max(
-                            0.0, min(1.0, float(iteration) / float(max_iter))
-                        )
-            except Exception:
-                progress = 0.0
-
-            # Publish progress on the optimizer object only so acceptors
-            # can read optimizer.progress reliably.
-            setattr(optimizer, "progress", progress)
+            # Compute the progress fraction (0..1) for the phase-gated policies
+            # below. This uses the shared measure so every policy reads the same
+            # number from the same time origin (tracker.start_time) instead of
+            # each deriving its own.
+            progress = resolve_progress((optimizer,))
 
             # Stagnation-gated light fleet consolidation from the best feasible snapshot.
             try:

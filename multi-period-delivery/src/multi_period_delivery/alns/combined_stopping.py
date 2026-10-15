@@ -97,7 +97,12 @@ class CombinedStoppingCriterion:
           ('OR', ('AND', A, B), C).
     """
 
-    def __init__(self, *criteria: Any, expr: Any = None):
+    def __init__(
+        self,
+        *criteria: Any,
+        expr: Any = None,
+        start_time: float | None = None,
+    ):
         """
         Parameters
         ----------
@@ -114,6 +119,10 @@ class CombinedStoppingCriterion:
               - list form ['AND', a, b] is also accepted
               - leaves are callable criterion objects
             If None, *criteria are evaluated with OR semantics.
+        start_time :
+            Timestamp the runtime budget is measured from. The optimizer passes
+            the search tracker's start time so every policy shares one time
+            origin; when omitted, timing starts on the first evaluation.
         """
         if not criteria and expr is None:
             raise ValueError(
@@ -123,7 +132,7 @@ class CombinedStoppingCriterion:
 
         self.criteria: list[Any] = list(criteria)
         self.expr: Any = expr
-        self._start_time: float | None = None  # Start timing on first call.
+        self._start_time: float | None = start_time
         self._triggered: str | None = None  # Name of the triggering criterion.
 
     # ------------------------------------------------------------------
@@ -295,6 +304,7 @@ def create_standard_combined_criterion(
     max_iterations: int = 300,
     max_runtime: float = 900,
     max_no_improvement: int | None = None,
+    start_time: float | None = None,
 ) -> CombinedStoppingCriterion:
     """
     Create a common combined stopping criterion
@@ -309,6 +319,10 @@ def create_standard_combined_criterion(
     max_no_improvement : int | None
         If provided, add a NoImprovement criterion whose parameter is the
         no-improvement iteration limit.
+    start_time : float | None
+        Timestamp the runtime budget is measured from. The optimizer passes the
+        search tracker's start time so the stopping rule and the phase policies
+        share one time origin.
 
     Returns
     -------
@@ -321,7 +335,7 @@ def create_standard_combined_criterion(
     ]
     if max_no_improvement is not None:
         criteria.append(NoImprovement(max_iterations=max_no_improvement))
-    return CombinedStoppingCriterion(*criteria)
+    return CombinedStoppingCriterion(*criteria, start_time=start_time)
 
 
 # ----------------------------------------------------------------------
