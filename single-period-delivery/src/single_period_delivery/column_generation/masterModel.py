@@ -346,8 +346,27 @@ class MasterModel:
             self.print_sol_summary()
             return True
 
+    def compute_objective_value(self):
+        """
+        Return the value of the master objective for the current solution.
+
+        The objective is a sum of priced terms, so the coefficients must be
+        applied: ``sum(var.X)`` counts columns instead of costing them. Both the
+        artificial penalty terms (``d_alpha``/``d_beta``/``d_gamma``) and the
+        dynamically inserted pattern columns carry their cost in ``obj``.
+        """
+        total = 0.0
+        for var in self.model.getVars():
+            value = float(var.X)
+            coefficient = float(var.Obj)
+            # Variables that the current solution does not use contribute
+            # nothing; skipping them keeps the sum exact but cheap.
+            if value != 0.0:
+                total += value * coefficient
+        return total
+
     def print_sol_summary(self):
-        real_obj = sum(var.X for var in self.d_xs.values())
+        real_obj = self.compute_objective_value()
         log_printer.print(
             f"\tRealObj={real_obj:.1f}"
             f"\tNo. Alpha={self.get_alpha_size()}"
