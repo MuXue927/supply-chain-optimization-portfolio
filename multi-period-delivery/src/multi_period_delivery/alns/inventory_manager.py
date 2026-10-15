@@ -8,8 +8,11 @@ basic resource-pool snapshot generation.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class UnifiedInventoryManager:
@@ -86,6 +89,17 @@ class UnifiedInventoryManager:
                         pool[(plant, sku, day)] = max(
                             0, prev_inv + production - used
                         )
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            # Returning an empty pool here meant "no inventory anywhere", which
+            # the allocation operators read as a legitimate state and then
+            # silently skipped every insertion - degrading the search to pure
+            # deletion with no signal that anything went wrong. An empty pool is
+            # also indistinguishable from a genuinely empty one, so record the
+            # failure instead of hiding it. (No in-repo caller uses this method;
+            # the repair operators use repair_utils.build_resource_pool, which
+            # does not swallow errors at all.)
+            logger.warning(
+                "build_resource_pool failed; returning an empty pool: %s", exc
+            )
             return {}
         return pool

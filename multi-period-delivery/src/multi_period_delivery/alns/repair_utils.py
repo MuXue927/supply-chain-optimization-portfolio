@@ -7,6 +7,7 @@ They are used by operators in repair_operators.py and preserve the original
 implementation behavior.
 """
 
+import logging
 import time
 
 import numpy as np
@@ -16,6 +17,8 @@ from .alnsopt import SolutionState
 from .InputDataALNS import DataALNS
 from .param_tuner import ParamAutoTuner
 from .vehicle import Vehicle
+
+logger = logging.getLogger(__name__)
 
 
 # MinimalVehicle: lightweight vehicle surrogate for fast simulation in regret operator
@@ -754,8 +757,15 @@ def post_repair(
             try:
                 with state.suppress_inventory_ctx():
                     feasible_tmp, violations_tmp = state.validate()
-            except Exception:
-                feasible_tmp, violations_tmp = True, {}
+            except Exception as exc:
+                # Both the lightweight check and the validator failed, so the
+                # state cannot be shown to be feasible. Reporting it as feasible
+                # (the previous behaviour) let an unverified - possibly
+                # overloaded - state through. Fail closed and record why, so the
+                # later rollback decision treats it as a violation.
+                logger.debug(f"repair feasibility check inconclusive: {exc}")
+                feasible_tmp = False
+                violations_tmp = {"validation_error": ["inconclusive"]}
         # If either check detected potential overload or negative inventory, perform full compute to get an
         # accurate baseline before continuing (same conservative behavior as before).
         if (
@@ -811,17 +821,25 @@ def post_repair(
     # this operation when vehicle overload is detected. If the lightweight
     # inserted-only check already produced feasible_tmp, reuse it to avoid
     # repeated validation calls.
+    validator_crashed = False
     try:
         # Always run the full validator before rollback decisions. The
         # lightweight inserted-only check above covers vehicle overload but not
         # negative inventory or plant-capacity violations. Demand strictness is
         # handled inside validate(), not by skipping the physical checks.
         feasible, violations = state.validate()
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as exc:
+        # validate() only raises on a programming error (probed: an inconsistent
+        # state/data reference yields AttributeError). Treating that as "no
+        # violations" skipped the rollback and kept an unverified solution, so
+        # fail closed instead: record it as a hard violation so the rollback
+        # below runs and discards the insertion.
+        logger.debug(f"validate() failed during repair rollback check: {exc}")
         feasible, violations = False, {}
+        validator_crashed = True
 
     rolled_back = False
-    hard_violation_exists = bool(
+    hard_violation_exists = validator_crashed or bool(
         violations
         and (
             violations.get("veh_over_load")

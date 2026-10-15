@@ -53,7 +53,7 @@ class CargoDict(dict):
     def _sku_size(self, sku):
         try:
             return float(self._veh.data.sku_sizes.get(sku, 0))
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             return 0.0
 
     def __setitem__(self, key, value):
@@ -65,7 +65,7 @@ class CargoDict(dict):
             self._veh._loaded_volume = getattr(self._veh, "_loaded_volume", 0.0) + delta
             # Keep capacity consistent and non-negative.
             self._veh.capacity = max(0, self._veh.max_capacity - getattr(self._veh, "_loaded_volume", 0.0))
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             # Best effort: leave vehicle state unchanged on error.
             pass
 
@@ -77,7 +77,7 @@ class CargoDict(dict):
             delta = - prev * self._sku_size(sku)
             self._veh._loaded_volume = max(0, getattr(self._veh, "_loaded_volume", 0.0) + delta)
             self._veh.capacity = max(0, self._veh.max_capacity - getattr(self._veh, "_loaded_volume", 0.0))
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             pass
 
     def clear(self):
@@ -85,7 +85,7 @@ class CargoDict(dict):
         try:
             self._veh._loaded_volume = 0
             self._veh.capacity = self._veh.max_capacity
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             pass
 
     def update(self, *args, **kwargs):
@@ -100,7 +100,7 @@ class CargoDict(dict):
             sku, d = key
             self._veh._loaded_volume = max(0, getattr(self._veh, "_loaded_volume", 0.0) - prev * self._sku_size(sku))
             self._veh.capacity = max(0, self._veh.max_capacity - getattr(self._veh, "_loaded_volume", 0.0))
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             pass
         return res
 
@@ -110,7 +110,7 @@ class CargoDict(dict):
             sku, d = k
             self._veh._loaded_volume = max(0, getattr(self._veh, "_loaded_volume", 0.0) - v * self._sku_size(sku))
             self._veh.capacity = max(0, self._veh.max_capacity - getattr(self._veh, "_loaded_volume", 0.0))
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             pass
         return k, v
 
@@ -143,9 +143,20 @@ class Vehicle:
     id: int = field(init=False, default=-1)
     max_capacity: int = field(init=False, default=0)
     capacity: int = field(init=False, default=0)
-    # cargo uses init=False and is managed by a property so assignments are
-    # automatically wrapped as CargoDict.
-    cargo: dict[tuple[str, int], int] = field(init=False, repr=False, default_factory=dict)
+    # ``cargo`` is intentionally NOT a dataclass field: it is a property (see
+    # below) so that every assignment is wrapped in ``CargoDict`` and keeps
+    # ``_loaded_volume``/``capacity`` in sync.
+    #
+    # Declaring it as ``field(init=False, ...)`` did not work: the ``@property``
+    # below shadows the class attribute, so ``@dataclass`` never saw
+    # ``init=False`` and instead read the property object as the field default.
+    # That produced ``__init__(..., cargo=<property object>)`` - a parameter a
+    # caller could pass, whose value was then silently discarded (the generated
+    # ``__init__`` skips fields whose default is a descriptor). Passing
+    # ``cargo={...}`` therefore lost the payload without any error, and
+    # constructing a ``Vehicle`` raised ``TypeError: 'property' object is not
+    # iterable`` twice for every instance - the only exception path that actually
+    # fired during a full search run.
 
     _id_counter = 0  # Class-level counter.
 
@@ -160,48 +171,34 @@ class Vehicle:
             self.max_capacity = 0
         self.capacity = self.max_capacity
         # Initialize cargo as CargoDict so in-place changes update the cache.
-        try:
-            self._cargo = CargoDict(self, {})
-        except Exception:
-            # Compatibility fallback.
-            self._cargo = {}
+        self._cargo = CargoDict(self, {})
         # Cache total loaded volume to avoid repeatedly scanning cargo.
         self._loaded_volume = 0
 
     # Cargo property: access as veh.cargo; assignments are wrapped and
     # synchronize _loaded_volume/capacity.
     @property
-    def cargo(self):  # noqa: F811 - the dataclass field is intentionally a property.
+    def cargo(self):
         return self._cargo
 
     @cargo.setter
     def cargo(self, mapping):
         # mapping may be a plain dict or another mapping; wrap it in CargoDict
-        # and synchronize the loaded volume.
-        try:
-            if isinstance(mapping, CargoDict):
-                new_map = CargoDict(self, dict(mapping))
-            else:
-                new_map = CargoDict(self, dict(mapping) if mapping is not None else {})
-            # Compute loaded volume.
-            loaded = 0
-            for (sku_k, d_k), q_k in new_map.items():
-                try:
-                    loaded += q_k * float(self.data.sku_sizes.get(sku_k, 0))
-                except Exception:
-                    continue
-            self._cargo = new_map
-            self._loaded_volume = loaded
-            self.capacity = max(0, self.max_capacity - loaded)
-        except Exception:
-            # Compatibility fallback: assign a plain dict and preserve the old
-            # cache where possible.
+        # and synchronize the loaded volume. ``dict(None)`` would raise, so the
+        # empty case is spelled out.
+        new_map = CargoDict(self, {} if mapping is None else dict(mapping))
+        # Compute loaded volume. A non-numeric quantity is a data error worth
+        # skipping rather than aborting the assignment; anything else is a bug
+        # and propagates.
+        loaded = 0
+        for (sku_k, d_k), q_k in new_map.items():
             try:
-                self._cargo = dict(mapping) if mapping is not None else {}
-            except Exception:
-                self._cargo = {}
-            self._loaded_volume = getattr(self, "_loaded_volume", 0)
-            self.capacity = getattr(self, "capacity", self.max_capacity)
+                loaded += q_k * float(self.data.sku_sizes.get(sku_k, 0))
+            except (TypeError, ValueError):
+                continue
+        self._cargo = new_map
+        self._loaded_volume = loaded
+        self.capacity = max(0, self.max_capacity - loaded)
 
     def __eq__(self, other):
         # Use id-only equality for speed: id is unique per Vehicle instance.
