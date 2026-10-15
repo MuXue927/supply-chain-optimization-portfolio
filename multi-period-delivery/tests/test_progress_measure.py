@@ -52,8 +52,15 @@ def test_elapsed_progress_follows_the_runtime_fraction(fraction: float) -> None:
 def test_elapsed_progress_is_clamped() -> None:
     budget = float(ALNSConfig.MAX_RUNTIME)
 
-    assert elapsed_progress(_tracker(elapsed=0.0)) == 0.0
+    # Lower bound: time keeps moving between building the tracker and reading it,
+    # so "just started" is a few nanoseconds of progress rather than exactly 0.
+    # What matters is that a fresh run reports ~0 and never goes negative.
+    started = elapsed_progress(_tracker(elapsed=0.0))
+    assert 0.0 <= started < 1e-6
+
+    # Upper bound: an overrun run reports exactly 1.0 and never beyond.
     assert elapsed_progress(_tracker(elapsed=10 * budget)) == 1.0
+    assert elapsed_progress(_tracker(elapsed=budget)) <= 1.0
 
 
 def test_elapsed_progress_is_none_without_a_start_time() -> None:
