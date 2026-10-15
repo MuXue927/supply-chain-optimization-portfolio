@@ -45,6 +45,13 @@ The loading variable is then indexed by `(route, slot, SKU)` rather than
 
 ### 1.2 Vehicle-type mix must be a decision, not a random parameter
 
+> **Status (2026-10-16).** The first evidence item below is now satisfied: the
+> loader seeds its own draw (`random.seed(self.seed)`, default `20260408`), so
+> two runs of the same benchmark solve the same model. The route-local
+> monolithic models already choose the type per slot through `z_ijfn`; the
+> loader's fleet fields remain only as legacy compatibility data (see
+> `model_implementation_audit.md` §7.2).
+
 **Symptom:** Two runs of the same benchmark can solve different models.
 Reported objectives, bounds, and run times are not comparable.
 
@@ -107,6 +114,39 @@ time, and time limit separately.
   so;
 - tiny equivalence tests use proven optimal solves rather than time-limit
   incumbents.
+
+#### 1.4.1 Corollary: do not gate *result extraction* on optimality
+
+A time-limited run still has a usable incumbent, so treating `OPTIMAL` as the
+only status that may write the solution throws away the very result the run
+produced - and does so precisely on the medium and large instances that reach
+the time limit.
+
+**Symptom (observed 2026-10-16):** the run was recorded as successful, but
+`result.csv` contained only its header. Downstream, `result_state()` then read
+that file and raised `KeyError: 'Index'`.
+
+**Root cause:** two gates disagreed. `run_experiments.py` accepted
+`time_limit` as a successful status, while
+`optLogicMultiple.create_dataframe()` read variable values only when
+`model.model.Status == GRB.OPTIMAL`. Gurobi's own search path had already been
+exporting the incumbent for `TIME_LIMIT`/`INTERRUPTED`, so only the CSV was
+lost.
+
+**Remediation:** gate extraction on the presence of an incumbent, not on
+proven optimality - `SolCount > 0`, mirroring what the solution-export path
+already does - and skip individual values that are undefined for the current
+status rather than raising. Statuses with no solution (infeasible, unbounded,
+inf-or-unbounded) still produce no rows.
+
+**Evidence required:**
+
+- a test proves rows are extracted for a time-limit status with `SolCount > 0`;
+- a test proves no rows are written when `SolCount == 0` or `SolCount` is absent;
+- unreadable values (`NaN`, `inf`, `None`) are skipped instead of raising.
+
+Regression tests:
+`multi-period-delivery/tests/test_monolithic_result_output.py`.
 
 ### 1.5 A bound variable is not automatically a valid plan
 

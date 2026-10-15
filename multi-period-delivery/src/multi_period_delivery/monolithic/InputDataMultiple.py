@@ -18,6 +18,12 @@ class InputDataMultiple:
     # specify which dataset to load
     dataset_name: str
 
+    # Seed for the fleet-composition draw in ``load()``. Defaults to the
+    # convention already published by the CPLEX runners so that model
+    # construction is reproducible without the caller having to seed the global
+    # ``random`` module first.
+    seed: int = 20260408
+
     # Default planning horizon for multi-period instances.
     # The actual value is the maximum produce_date in warehouse_production.csv.
     horizons = 1
@@ -259,6 +265,11 @@ class InputDataMultiple:
         # Assign a unified ID to every vehicle.
         self.all_vehicles = {v_id for v_id in range(1, self.max_veh_num + 1)}
         # Assign a vehicle type to each vehicle {v_id: v_type}.
+        # Seed immediately before the draws so the fleet composition is
+        # reproducible for every caller instead of depending on whatever the
+        # caller last did with the global ``random`` module. The default seed is
+        # the convention already published by the CPLEX runners.
+        random.seed(self.seed)
         self.veh_type = {}
         for v_id in self.all_vehicles:
             # Randomly select a vehicle type.

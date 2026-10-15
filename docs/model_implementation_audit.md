@@ -26,6 +26,17 @@
 
 Everything else that was checked lines up; see §8.
 
+> **Status update (2026-10-16).** Finding 1 is **fixed**. `InputDataSingle.load()`
+> and `InputDataMultiple.load()` now call `random.seed(self.seed)` immediately
+> before the vehicle-type draw, with `seed` defaulting to `20260408` - the same
+> value the CPLEX runners publish. Model construction is therefore reproducible
+> for every caller, including callers that never touch the global `random`
+> module. Regression tests: `multi-period-delivery/tests/test_cplex_api.py` and
+> `single-period-delivery/tests/test_cplex_api.py` (`test_fleet_composition_*`).
+> Note that Finding 2 stands: the type mix is still part of the instance data
+> rather than a model decision, so this change makes the *existing* behaviour
+> deterministic without adopting the "better" option in §7.2.
+
 > **Status update (2026-10-13).** The route-local reformulation in §7.1 has
 > been implemented in both Gurobi and CPLEX monolithic models for the
 > single-period and multi-period projects. The single-period column-generation
@@ -40,6 +51,11 @@ Everything else that was checked lines up; see §8.
 ---
 
 ## 2. Finding 1 (High): the model is not reproducible
+
+> **RESOLVED (2026-10-16).** The loader now seeds the draw itself
+> (`random.seed(self.seed)`, `seed` default `20260408`), so the fleet
+> composition no longer depends on the caller. The text below is the historical
+> audit; it is kept so the reason for the change stays visible.
 
 ### What the code does
 
@@ -332,6 +348,15 @@ formulations share the same optimum — the old one simply never got there.
 
 ### 7.2 Make the legacy fleet deterministic
 
+> **Implemented (2026-10-16), minimal option.** `load()` itself now calls
+> `random.seed(self.seed)` immediately before the draw, with the same default
+> seed (`20260408`) the CPLEX runners publish. Seeding inside the loader - rather
+> than at each call site - is what makes the guarantee hold for *every* caller,
+> including `optLogicMultiple.run_model_from_paths` and any future entry point
+> that forgets to seed. Regression tests are in both packages'
+> `tests/test_cplex_api.py`. The "better" option below was **not** taken: the
+> type mix is still instance data rather than a model decision (see Finding 2).
+
 Whatever formulation is chosen, the vehicle-type draw must stop being an
 unseeded global side effect:
 
@@ -346,6 +371,12 @@ The route-local monolithic models no longer use the loader's global fleet
 fields. They are retained for compatibility with historical code paths; the
 legacy fleet draw should still be made deterministic or removed when those
 paths are retired.
+
+> **Scope note.** Because the route-local models no longer read these fields,
+> this fix makes the *legacy* data path deterministic. It does not by itself
+> change the route-local models' solution, which derive slots from route demand
+> and minimum vehicle capacity. The value of the fix is that the loader no
+> longer mutates global RNG state unpredictably for whatever runs after it.
 
 ### 7.3 Correct the legacy bound
 

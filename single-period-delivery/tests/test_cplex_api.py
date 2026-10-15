@@ -66,3 +66,53 @@ def test_cplex_api_column_generation_reads_alpha_from_dataset() -> None:
     # An explicit override still wins, for callers that want another value.
     overridden = CplexApiColumnGeneration(data, alpha=3.5)
     assert overridden.alpha == pytest.approx(3.5)
+
+
+def _small_single_period_dir() -> Path:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "datasets"
+        / "single-period"
+        / "small"
+    )
+
+
+def test_fleet_composition_is_reproducible_across_loads(tmp_path: Path) -> None:
+    """Repeated loads must assign the same vehicle types.
+
+    The per-vehicle type draw is seeded inside ``load()``: before that, the
+    composition depended on whatever the caller had last done with the global
+    ``random`` module, so model construction changed between runs.
+    """
+    compositions = []
+    for _ in range(3):
+        data = InputDataSingle(
+            str(_small_single_period_dir()), str(tmp_path), "dataset_1"
+        )
+        data.load()
+        compositions.append(dict(data.veh_type))
+        assert data.max_veh_num > 0
+        assert len(data.veh_type) == data.max_veh_num
+
+    assert compositions[0] == compositions[1] == compositions[2]
+
+
+def test_fleet_composition_is_deterministic_after_an_unseeded_caller(
+    tmp_path: Path,
+) -> None:
+    """A caller that dirties the global RNG must not change the model."""
+    import random
+
+    random.seed(12345)
+    first = InputDataSingle(
+        str(_small_single_period_dir()), str(tmp_path), "dataset_1"
+    )
+    first.load()
+
+    random.seed(999)
+    second = InputDataSingle(
+        str(_small_single_period_dir()), str(tmp_path), "dataset_1"
+    )
+    second.load()
+
+    assert first.veh_type == second.veh_type
