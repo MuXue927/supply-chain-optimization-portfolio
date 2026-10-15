@@ -336,12 +336,20 @@ def run_single(args_tuple):
                     # Merge monolithic metadata into the unified record.
                     if isinstance(mono_meta, dict):
                         status = mono_meta.get("status", "unknown")
-                        ok = status in (
-                            "optimal",
-                            "success",
-                            "time_limit",
-                            "suboptimal",
-                        )
+                        # ``solved`` is authoritative when the producer reports
+                        # it, so a solver-level failure is not recorded as a
+                        # success merely because the status string is novel.
+                        # Producers that predate the field fall back to the
+                        # status allow-list.
+                        if "solved" in mono_meta:
+                            ok = bool(mono_meta["solved"])
+                        else:
+                            ok = status in (
+                                "optimal",
+                                "success",
+                                "time_limit",
+                                "suboptimal",
+                            )
                     else:
                         mono_meta = {}
                         ok = False

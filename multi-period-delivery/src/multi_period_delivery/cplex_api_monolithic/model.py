@@ -25,6 +25,12 @@ IndexRouteTypeSlotPeriod = tuple[str, str, str, int, int]
 IndexRouteSkuSlotPeriod = tuple[str, str, str, int, int]
 IndexPlantSkuPeriod = tuple[str, str, int]
 
+#: Statuses that carry a usable primal solution. Solver-level failures surface
+#: as other status names, so callers can tell a real result from a failed run.
+SOLVED_STATUSES: frozenset[str] = frozenset(
+    {"optimal", "time_limit_feasible", "feasible"}
+)
+
 
 def _load_cplex() -> Any:
     """Import the official CPLEX Python package with an actionable error."""
@@ -499,7 +505,7 @@ class MultiPeriodCplexApiMonolithic:
                 f"CPLEX status code: {status_code}\nCPLEX status: {status_text}\n"
             )
 
-        return CplexApiSolution(
+        solution = CplexApiSolution(
             status=status_name,
             objective=objective,
             variables=variables,
@@ -509,6 +515,16 @@ class MultiPeriodCplexApiMonolithic:
             solver_status_code=status_code,
             stdout=solver_log,
         )
+        # Release the native CPLEX model. Without this every solve leaks a
+        # solver handle, which accumulates across the batch experiments (and can
+        # exhaust CPLEX's concurrent-licence pool). Everything the caller needs
+        # has already been captured above; `write_outputs` reads only this
+        # solution object.
+        try:
+            self.model.end()
+        except Exception:
+            pass
+        return solution
 
     def write_outputs(
         self,
@@ -627,6 +643,9 @@ class MultiPeriodCplexApiMonolithic:
 
         return {
             "status": solution.status,
+            # A solver-level failure must not be recorded as a successful run
+            # that merely happens to have no objective.
+            "solved": solution.status in SOLVED_STATUSES,
             "objective": solution.objective,
             "deliveries": int(len(result)),
             "vehicles": int(

@@ -21,6 +21,13 @@ from typing import Any, Literal
 Number = int | float
 ConstraintSense = Literal["<=", ">=", "="]
 
+#: Statuses that carry a usable primal solution. A solver-level failure is
+#: reported as ``solver_error: ...`` (see ``CplexApiModel.solve``); callers must
+#: not treat that as a successful run merely because the process did not crash.
+SOLVED_STATUSES: frozenset[str] = frozenset(
+    {"optimal", "time_limit_feasible", "feasible"}
+)
+
 
 def _load_cplex() -> Any:
     """Import the official CPLEX Python package with an actionable error."""
@@ -60,7 +67,6 @@ class CplexApiSolution:
 
 class CplexApiModel:
     """Small deterministic model builder backed by the CPLEX Python API."""
-
     def __init__(
         self,
         name: str = "model",
@@ -249,6 +255,12 @@ class CplexApiModel:
         try:
             problem.solve()
         except Exception as exc:
+            # Release the native model before reporting, otherwise a failing
+            # solve leaks its CPLEX handle.
+            try:
+                problem.end()
+            except Exception:
+                pass
             return CplexApiSolution(
                 status=f"solver_error: {exc}",
                 objective=None,
@@ -260,64 +272,74 @@ class CplexApiModel:
                 solver_status_code=None,
                 stdout=log_stream.getvalue(),
             )
-        status_text = problem.solution.get_status_string()
-        status_lower = status_text.lower()
-        if "integer optimal" in status_lower or status_lower == "optimal":
-            status = "optimal"
-        elif "time limit" in status_lower and "feasible" in status_lower:
-            status = "time_limit_feasible"
-        elif "integer infeasible" in status_lower:
-            status = "integer_infeasible"
-        elif "infeasible" in status_lower:
-            status = "infeasible"
-        elif "unbounded" in status_lower:
-            status = "unbounded"
-        else:
-            status = status_lower
+        try:
+            status_text = problem.solution.get_status_string()
+            status_lower = status_text.lower()
+            if "integer optimal" in status_lower or status_lower == "optimal":
+                status = "optimal"
+            elif "time limit" in status_lower and "feasible" in status_lower:
+                status = "time_limit_feasible"
+            elif "integer infeasible" in status_lower:
+                status = "integer_infeasible"
+            elif "infeasible" in status_lower:
+                status = "infeasible"
+            elif "unbounded" in status_lower:
+                status = "unbounded"
+            else:
+                status = status_lower
 
-        try:
-            objective = float(problem.solution.get_objective_value())
-        except Exception:
-            objective = None
-        try:
-            values = problem.solution.get_values()
-        except Exception:
-            values = []
-        try:
-            dual_values = problem.solution.dual.get_values()
-        except Exception:
-            dual_values = []
-        try:
-            best_bound = float(problem.solution.MIP.get_best_objective())
-        except Exception:
-            best_bound = None
-        try:
-            mip_gap = float(problem.solution.MIP.get_mip_relative_gap())
-        except Exception:
-            mip_gap = None
-        try:
-            solver_status_code = int(problem.solution.get_status())
-        except Exception:
-            solver_status_code = None
+            try:
+                objective = float(problem.solution.get_objective_value())
+            except Exception:
+                objective = None
+            try:
+                values = problem.solution.get_values()
+            except Exception:
+                values = []
+            try:
+                dual_values = problem.solution.dual.get_values()
+            except Exception:
+                dual_values = []
+            try:
+                best_bound = float(problem.solution.MIP.get_best_objective())
+            except Exception:
+                best_bound = None
+            try:
+                mip_gap = float(problem.solution.MIP.get_mip_relative_gap())
+            except Exception:
+                mip_gap = None
+            try:
+                solver_status_code = int(problem.solution.get_status())
+            except Exception:
+                solver_status_code = None
 
-        variable_values = {
-            name: float(values[index])
-            for index, name in enumerate(safe_names)
-            if index < len(values)
-        }
-        dual_map = {
-            name: float(dual_values[index])
-            for index, name in enumerate(constraint_names)
-            if index < len(dual_values)
-        }
-        return CplexApiSolution(
-            status=status,
-            objective=objective,
-            variables=variable_values,
-            duals=dual_map,
-            best_bound=best_bound,
-            mip_gap=mip_gap,
-            solver_status=status_text,
-            solver_status_code=solver_status_code,
-            stdout=log_stream.getvalue(),
-        )
+            variable_values = {
+                name: float(values[index])
+                for index, name in enumerate(safe_names)
+                if index < len(values)
+            }
+            dual_map = {
+                name: float(dual_values[index])
+                for index, name in enumerate(constraint_names)
+                if index < len(dual_values)
+            }
+            return CplexApiSolution(
+                status=status,
+                objective=objective,
+                variables=variable_values,
+                duals=dual_map,
+                best_bound=best_bound,
+                mip_gap=mip_gap,
+                solver_status=status_text,
+                solver_status_code=solver_status_code,
+                stdout=log_stream.getvalue(),
+            )
+        finally:
+            # Release the native CPLEX model. Without this every solve leaks a
+            # solver handle, which accumulates across the batch experiments (and
+            # can exhaust CPLEX's concurrent-licence pool). Cleanup must not mask
+            # the extracted solution, so failures here are ignored.
+            try:
+                problem.end()
+            except Exception:
+                pass

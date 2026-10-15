@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..cplex_api_support import CplexApiModel, CplexApiSolution
+from ..cplex_api_support import SOLVED_STATUSES, CplexApiModel, CplexApiSolution
 from ..monolithic.InputDataSingle import InputDataSingle
 
 
@@ -304,6 +304,10 @@ class SinglePeriodCplexApiMonolithic:
 
         return {
             "status": solution.status,
+            # A solver-level failure is reported as a status string with no
+            # primal solution. Expose that explicitly so callers do not record
+            # "ran successfully, objective=None" as a success.
+            "solved": solution.status in SOLVED_STATUSES,
             "objective": solution.objective,
             "deliveries": int(len(result)),
             "vehicles": int(summary["vehicle_id"].nunique())

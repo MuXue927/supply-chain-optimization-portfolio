@@ -2,11 +2,11 @@
 # and save the solution results to CSV files.
 import csv
 import datetime
+import math
 import os
 import time
 
 import pandas as pd
-from gurobipy import GRB
 
 from .InputDataSingle import InputDataSingle
 from .MonolithicModelSingle import MonolithicModelSingle, log_printer
@@ -67,22 +67,45 @@ def output_result(model: MonolithicModelSingle):
     # header=False prevents DataFrame column names from being written to the file.
     df_result.to_csv(output_file, mode='a', header=False)
 
+def _has_feasible_solution(model: MonolithicModelSingle) -> bool:
+    """
+    Return True when the solver holds an incumbent solution that can be read.
+
+    ``Status == GRB.OPTIMAL`` is too strict a gate for result extraction: a run
+    that stops on ``GRB.TIME_LIMIT`` still has an incumbent. Gating the CSV on
+    ``OPTIMAL`` produced an empty ``result.csv`` - and, via ``result_state``, a
+    ``KeyError`` - for the instances that reach the time limit. Statuses without
+    any solution (infeasible / unbounded / inf-or-unbounded) still yield no rows.
+    """
+    try:
+        return int(getattr(model.model, "SolCount", 0)) > 0
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def create_dataframe(model: MonolithicModelSingle):
     rows = []
-    if model.model.Status == GRB.OPTIMAL:  # Access the Xn attribute only when an optimal solution is available.
-        for (plant, dealer, sku_id, slot), var in model.x_ijkn.items():
-            # Save a record only when the route-local slot is used and the
-            # loaded quantity of SKU k is positive.
-            if var.Xn > 0:
-                rows.append({
-                    'day': model.day,
-                    'plant_code': plant,
-                    'client_code': dealer,
-                    'product_code': sku_id,
-                    'vehicle_id': int(slot),
-                    'vehicle_type': model.slot_type(plant, dealer, slot),
-                    'qty': round(var.Xn)
-                })
+    if not _has_feasible_solution(model):
+        return pd.DataFrame(rows)
+    for (plant, dealer, sku_id, slot), var in model.x_ijkn.items():
+        # Save a record only when the route-local slot is used and the
+        # loaded quantity of SKU k is positive. Values that are undefined for
+        # the current status are skipped instead of raising.
+        try:
+            quantity = float(var.Xn)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not math.isfinite(quantity) or quantity <= 0:
+            continue
+        rows.append({
+            'day': model.day,
+            'plant_code': plant,
+            'client_code': dealer,
+            'product_code': sku_id,
+            'vehicle_id': int(slot),
+            'vehicle_type': model.slot_type(plant, dealer, slot),
+            'qty': round(quantity)
+        })
     return pd.DataFrame(rows)
 
 def result_state(r_data: InputDataSingle):
