@@ -116,7 +116,6 @@ time, and time limit separately.
   incumbents.
 
 #### 1.4.1 Corollary: do not gate *result extraction* on optimality
-
 A time-limited run still has a usable incumbent, so treating `OPTIMAL` as the
 only status that may write the solution throws away the very result the run
 produced - and does so precisely on the medium and large instances that reach
@@ -147,6 +146,73 @@ inf-or-unbounded) still produce no rows.
 
 Regression tests:
 `multi-period-delivery/tests/test_monolithic_result_output.py`.
+
+#### 1.4.2 Do not mistake a swallowed solver error for a successful run
+
+**Symptom (observed 2026-10-16):** a result file records
+`status: "solver_error: CPLEX Error 1016: Community Edition."` together with
+`objective: null`, yet the run is counted as successful - "it ran, the
+objective is just missing".
+
+**Root cause:** two individually defensible decisions combine badly. The solve
+wrapper deliberately catches solver-level failures so one bad instance cannot
+abort a batch, and the experiment harness accepted an allow-list of status
+strings. A failure the harness had never seen before fell outside the list only
+by accident; a failure whose status string looked benign would have been
+accepted.
+
+**Remediation:** have the producer state the outcome explicitly rather than let
+consumers infer it from a status string. The CPLEX monolithic paths now return a
+`solved` boolean derived from a shared `SOLVED_STATUSES` set, and the harness
+prefers that field when present (falling back to the status allow-list only for
+producers that predate it).
+
+**Evidence required:**
+
+- a solver-level failure produces `solved: false` and a non-null status;
+- the harness records a failure for such a run;
+- the failure status is distinguishable from every solved status.
+
+Also release native solver objects: the CPLEX model was never ended, so every
+solve leaked a handle - which matters in exactly the batch runs the catch was
+written to protect, because CPLEX concurrency is licence-bound.
+
+Regression tests: `multi-period-delivery/tests/test_p1_fixes.py`.
+
+#### 1.4.3 A time budget needs a calibrated iteration ceiling
+
+**Symptom (observed 2026-10-16):** phase-dependent search policies never
+activated: actual-priority acceptance, late fleet priority, light
+intensification, elite relinking and ML takeover were all dead code.
+
+**Root cause:** those policies gate on `progress`, and `progress` is
+`iteration / max_iterations`, where `max_iterations` is a runtime-derived
+ceiling `MAX_RUNTIME x iterations_per_second x safety_factor + buffer`. The
+configured `iterations_per_second` was `1000.0`, an assumption three orders of
+magnitude above measured throughput (0.1-40 iterations/second on the bundled
+instances). The ceiling became 900,200 iterations, so `progress` stayed around
+0.001 and no threshold in the 0.20-0.70 range could be reached.
+
+**Remediation:** calibrate the constant to measured throughput and keep the
+derivation in one testable function (`compute_dynamic_iteration_cap`). With
+`5.0` and the same safety factor the ceiling is 4,700, which is within reach of
+a `MAX_RUNTIME` of 600 s.
+
+**Trade-off, stated explicitly:** the ceiling can now stop a very fast run
+before the wall-clock budget expires (measured: 4,700 iterations in 152 s on
+`small/dataset_1`). That is the intended meaning of a ceiling derived from
+throughput - the runtime budget remains the primary control - but it is a
+behaviour change, not a pure bug fix.
+
+**Evidence required:**
+
+- the ceiling respects the documented formula and never undercuts
+  `MAX_ITERATIONS`;
+- the throughput estimate does not exceed the fastest measured throughput;
+- at least the earliest phase gate is reachable within one runtime budget;
+- zeroing the dynamic knobs still pins the budget.
+
+Regression tests: `multi-period-delivery/tests/test_p1_fixes.py`.
 
 ### 1.5 A bound variable is not automatically a valid plan
 
@@ -182,6 +248,29 @@ and validation reports.
 - the symbol table and model equations use `>=` consistently;
 - over-delivery is reported separately from shortages;
 - the validator distinguishes a shortage from legal over-delivery.
+
+### 1.7 An objective value must apply its objective coefficients
+
+**Symptom (observed 2026-10-16):** the column-generation master model printed a
+`RealObj` that looked plausible but was a column count. Two pattern columns of
+value 1 were reported as `2.0` regardless of what they cost.
+
+**Root cause:** the value was computed as `sum(var.X for var in ...)`, which
+sums solution values with an implicit coefficient of one. In a priced
+formulation the coefficients carry all the economics, so the sum is only the
+objective when every coefficient happens to be 1.
+
+**Remediation:** compute the value from the variables and their coefficients
+(`var.X * var.Obj`), which also picks up the artificial penalty terms. Keep the
+derivation in a named method so it can be unit-tested without a solver licence.
+
+**Evidence required:**
+
+- two equal-valued columns with different coefficients produce the priced sum;
+- unused columns contribute nothing;
+- the printed summary changes when a coefficient changes.
+
+Regression tests: `single-period-delivery/tests/test_master_objective.py`.
 
 ---
 

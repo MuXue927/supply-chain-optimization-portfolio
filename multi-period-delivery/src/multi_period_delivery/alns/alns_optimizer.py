@@ -139,6 +139,44 @@ DATASET_IDX = ALNSConfig.DATASET_IDX
 logger = logging.getLogger(__name__)
 
 
+def compute_dynamic_iteration_cap(config: Any = None) -> int:
+    """
+    Size the runtime-derived iteration ceiling for a budgeted search.
+
+    The stop rule already honours ``MAX_RUNTIME``; this ceiling exists so that
+    ``MaxIterations`` does not truncate that budget too early. The result is also
+    copied onto the optimizer and the tracker, where it becomes the denominator
+    of ``progress`` in ``accept._resolve_progress`` - and ``progress`` gates the
+    phase-dependent policies (actual-priority acceptance, late fleet priority,
+    light intensification, elite relinking, ML takeover).
+
+    That coupling is why ``DYNAMIC_MAX_ITERATIONS_PER_SECOND`` must be calibrated
+    to real throughput: an unrealistically large value inflates the ceiling, so
+    ``progress`` stays near zero and those policies never activate. If the
+    ceiling is far above what the runtime budget can execute, the guarantees the
+    thresholds encode (for example "the last 30% of the budget") no longer hold.
+
+    ``max(..., 1.0)`` keeps zeroed configuration pins behaving as "no dynamic
+    widening", which is how the tests pin the budget.
+    """
+    config = ALNSConfig if config is None else config
+    runtime_budget = float(getattr(config, "MAX_RUNTIME", 900))
+    base_iter_cap = int(getattr(config, "MAX_ITERATIONS", 300))
+    iter_per_second = float(
+        getattr(config, "DYNAMIC_MAX_ITERATIONS_PER_SECOND", 5.0)
+    )
+    safety_factor = float(
+        getattr(config, "DYNAMIC_MAX_ITERATION_SAFETY_FACTOR", 1.5)
+    )
+    buffer_iters = int(getattr(config, "DYNAMIC_MAX_ITERATION_BUFFER", 200))
+    return int(
+        max(
+            base_iter_cap,
+            runtime_budget * max(iter_per_second, 1.0) * max(safety_factor, 1.0),
+        )
+    ) + max(0, buffer_iters)
+
+
 # Utility: check if file is in use (moved here to avoid circular imports)
 def is_file_in_use(file_path):
     """
@@ -878,25 +916,7 @@ class ALNSOptimizer:
             # Initialize a conservative iteration ceiling so MaxIterations does
             # not truncate a runtime-budgeted search too early.
             try:
-                runtime_budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 900))
-                base_iter_cap = int(getattr(ALNSConfig, "MAX_ITERATIONS", 300))
-                iter_per_second = float(
-                    getattr(ALNSConfig, "DYNAMIC_MAX_ITERATIONS_PER_SECOND", 1000.0)
-                )
-                safety_factor = float(
-                    getattr(ALNSConfig, "DYNAMIC_MAX_ITERATION_SAFETY_FACTOR", 1.5)
-                )
-                buffer_iters = int(
-                    getattr(ALNSConfig, "DYNAMIC_MAX_ITERATION_BUFFER", 200)
-                )
-                dynamic_floor = int(
-                    max(
-                        base_iter_cap,
-                        runtime_budget
-                        * max(iter_per_second, 1.0)
-                        * max(safety_factor, 1.0),
-                    )
-                ) + max(0, buffer_iters)
+                dynamic_floor = compute_dynamic_iteration_cap(ALNSConfig)
                 if hasattr(stop, "set_max_iterations"):
                     stop.set_max_iterations(dynamic_floor)
                 self._dynamic_iteration_cap = int(dynamic_floor)

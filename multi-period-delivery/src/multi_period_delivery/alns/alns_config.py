@@ -70,7 +70,20 @@ class ALNSConfig:
     MAX_ITERATIONS: int = 1000
     # Observed iterations per second, used to size the dynamic iteration cap so
     # that it roughly matches MAX_RUNTIME on the current machine.
-    DYNAMIC_MAX_ITERATIONS_PER_SECOND: float = 1000.0
+    #
+    # Calibrated (2026-10-16) against measured end-to-end ALNS throughput on the
+    # bundled instances, because the dynamic cap feeds ``progress`` in
+    # ``accept._resolve_progress`` and ``progress`` drives the phase gates
+    # (ACTUAL_PRIORITY_START_PROGRESS 0.70, LATE_FLEET_HARD_PRIORITY_START 0.60,
+    # the light-intensify and elite-relink windows, ML takeover at 0.30).
+    #
+    # The previous value (1000.0) assumed a throughput 100-10000x faster than
+    # reality and produced a cap of 900,200 iterations, so ``progress`` stayed
+    # near zero and none of those gates could ever fire. Measured throughput:
+    # small 3663 iterations / 90 s, medium 15 / 90 s (0.1-40 iter/s). A value of
+    # 5.0 with the 1.5 safety factor puts the cap near what MAX_RUNTIME=600 can
+    # actually execute, which is what the gate thresholds assume.
+    DYNAMIC_MAX_ITERATIONS_PER_SECOND: float = 5.0
     # Flat number of extra iterations added on top of the estimated dynamic cap.
     DYNAMIC_MAX_ITERATION_BUFFER: int = 200
     # Multiplier applied to the estimated dynamic cap (1.5 = 50% headroom).
