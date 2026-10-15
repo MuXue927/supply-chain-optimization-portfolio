@@ -258,6 +258,39 @@ phase schedule.
 Regression tests: `multi-period-delivery/tests/test_progress_measure.py`,
 `test_phase_progress.py`, `test_p1_fixes.py`.
 
+#### 1.4.4 A time-based measure must not be asserted with float equality
+
+**Symptom (CI failure, 2026-10-16):** a new test asserted that a
+just-started run reports progress `== 0.0` and failed on CI with
+
+```
+assert 7.54992167154948e-09 == 0.0
+```
+
+**Root cause:** time elapses between building the tracker and reading the
+clock, so "just started" is a few nanoseconds of progress, not exactly zero.
+The production clamp was correct; the assertion was not.
+
+**Why local runs passed:** the suite was run 15 times locally without a failure.
+The CI runner was faster (that step took 29 s versus 71 s locally), which
+widened the gap between construction and measurement enough to expose it. A
+green local run is not evidence that a timing-sensitive assertion is sound.
+
+**Remediation:** assert the property, not a bit pattern - a lower bound plus a
+tolerance (`0.0 <= progress < 1e-6`) or `pytest.approx` - and reserve exact
+equality for values the code computes rather than measures. Where a test needs a
+specific elapsed time, inject the clock (`set_elapsed_clock`) instead of relying
+on wall-clock timing.
+
+**Evidence required:**
+
+- no assertion compares a measured duration to an exact float;
+- tests that need a phase position set it explicitly;
+- the timing-sensitive test passes when repeated in a loop.
+
+Regression tests: `multi-period-delivery/tests/test_progress_measure.py`
+(`test_progress_is_clamped`).
+
 ### 1.5 A bound variable is not automatically a valid plan
 
 **Symptom:** A model reports a best bound lower than the incumbent but no
