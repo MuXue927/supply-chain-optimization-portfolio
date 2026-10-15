@@ -1,11 +1,11 @@
 # Execution logic for the multi-period monolithic optimization model.
 # Solver results are written to CSV files.
 import csv
+import math
 import os
 import time
 
 import pandas as pd
-from gurobipy import GRB
 
 from .InputDataMultiple import InputDataMultiple
 from .MonolithicModelMultiple import MonolithicModelMultiple, log_printer
@@ -260,21 +260,47 @@ def output_result(model: MonolithicModelMultiple):
     # header=False omits the DataFrame column names.
     df_result.to_csv(output_file, mode='a', header=False)
 
+def _has_feasible_solution(model: MonolithicModelMultiple) -> bool:
+    """
+    Return True when the solver holds an incumbent solution that can be read.
+
+    ``Status == GRB.OPTIMAL`` is too strict a gate for result extraction: a run
+    that stops on ``GRB.TIME_LIMIT`` still has an incumbent, and the search path
+    already exports it as JSON (``MonolithicModelMultiple._export_solution_json``
+    is called for ``TIME_LIMIT`` and ``INTERRUPTED``). Gating the CSV on
+    ``OPTIMAL`` therefore produced an empty ``result.csv`` - and, via
+    ``result_state``, a ``KeyError`` - for exactly the medium and large
+    instances that reach the time limit. Statuses without any solution
+    (infeasible / unbounded / inf-or-unbounded) still yield no rows.
+    """
+    try:
+        return int(getattr(model.model, "SolCount", 0)) > 0
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def create_dataframe(model: MonolithicModelMultiple):
     rows = []
-    if model.model.Status == GRB.OPTIMAL:  # Read variable values only for an optimal status.
-        for (plant, dealer, sku_id, slot, t), var in model.x_ijkn_t.items():
-            # Save only positive loaded quantities.
-            if var.Xn > 0:
-                rows.append({
-                    'day': t,
-                    'plant_code': plant,
-                    'client_code': dealer,
-                    'product_code': sku_id,
-                    'vehicle_id': int(slot),
-                    'vehicle_type': model.slot_type(plant, dealer, slot, t),
-                    'qty': round(var.Xn)
-                })
+    if not _has_feasible_solution(model):
+        return pd.DataFrame(rows)
+    for (plant, dealer, sku_id, slot, t), var in model.x_ijkn_t.items():
+        # Save only positive loaded quantities. Values that are undefined for
+        # this status are skipped instead of raising.
+        try:
+            quantity = float(var.Xn)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not math.isfinite(quantity) or quantity <= 0:
+            continue
+        rows.append({
+            'day': t,
+            'plant_code': plant,
+            'client_code': dealer,
+            'product_code': sku_id,
+            'vehicle_id': int(slot),
+            'vehicle_type': model.slot_type(plant, dealer, slot, t),
+            'qty': round(quantity)
+        })
     return pd.DataFrame(rows)
 
 def result_state(r_data: InputDataMultiple):
