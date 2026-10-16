@@ -803,11 +803,13 @@ def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
                 pass
 
         # Route negative inventory, overload, and plant-capacity violations
-        # through inventory and infeasibility repair.
+        # through inventory and infeasibility repair. An incomplete check counts
+        # as hard too: the state could not be verified.
         hard_bad = bool(
             violations.get("negative_inventory")
             or violations.get("veh_over_load")
             or violations.get("plant_inv_exceed")
+            or violations.get("check_error")
         )
         if hard_bad:
             try:

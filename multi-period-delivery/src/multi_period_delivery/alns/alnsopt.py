@@ -56,7 +56,6 @@ Maintenance notes:
 # =========================
 # Standard library
 # =========================
-import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -79,6 +78,7 @@ from .inventory_manager import UnifiedInventoryManager
 from .ml_operator_selector import MLOperatorSelector
 from .optutility import POSITIVEEPS
 from .param_tuner import ParamAutoTuner
+from .swallowed import record_swallowed
 from .vehicle import Vehicle
 
 
@@ -298,6 +298,11 @@ class SolutionState:
             "plant_inv_exceed": [],
             "unmet_demand": [],
             "cargo_day_mismatch": [],
+            # A check that could not be *completed* (as opposed to one that found
+            # a problem). Kept separate so "we could not measure this" is never
+            # reported as "this is overloaded"; it still makes the state
+            # infeasible, because an unverified state is not a feasible one.
+            "check_error": [],
         }
 
         # Use NumPy/Numba arrays when available; otherwise fall back to dict iteration.
@@ -350,14 +355,23 @@ class SolutionState:
                     }
                     violations["veh_over_load"].append(info)
                     # Overload is a solution-feasibility issue, not a code-error signal.
-            except Exception:
-                # Defensive: record exception during load calculation
-                try:
-                    err = traceback.format_exc()
-                    violations["veh_over_load"].append({"veh": veh, "error": err})
-                    # Keep silent by default; callers can inspect violations if needed.
-                except Exception:
-                    pass
+            except Exception as exc:
+                # A failure while *measuring* the load is not an overload: the
+                # vehicle's load is unknown. Recording it under ``veh_over_load``
+                # (as before) meant a code defect triggered the rollback path with
+                # the reason "vehicle overloaded", which sends anyone reading the
+                # violations - or the audit report - after the wrong cause.
+                #
+                # It stays a hard violation, so the state remains infeasible: an
+                # unmeasured load cannot be certified as feasible.
+                record_swallowed("alnsopt.validate.vehicle_load", exc)
+                violations["check_error"].append(
+                    {
+                        "veh_id": getattr(veh, "id", None),
+                        "check": "vehicle_load",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
 
         # Check whether plant inventory exceeds its limit in any period.
         # Aggregate with arrays when possible and fall back to dict aggregation.
@@ -426,6 +440,7 @@ class SolutionState:
             or violations["plant_inv_exceed"]
             or violations["unmet_demand"]
             or violations["cargo_day_mismatch"]
+            or violations["check_error"]
         )
 
         return is_feasible, violations
@@ -451,6 +466,9 @@ class SolutionState:
             or violations.get("veh_over_load")
             or violations.get("plant_inv_exceed")
             or violations.get("cargo_day_mismatch")
+            # An incomplete check leaves the state unverified, so treat it as
+            # physical uncertainty rather than as guidance.
+            or violations.get("check_error")
         )
         # A destroyed state may be temporarily short of demand. It is still a
         # useful search candidate because the demand penalty below is finite.
