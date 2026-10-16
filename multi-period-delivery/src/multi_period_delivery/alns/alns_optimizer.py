@@ -1496,97 +1496,92 @@ class ALNSOptimizer:
 
     def _generate_statistics(self):
         """Generate summary statistics."""
-        try:
-            dataset = self.data.dataset_name
-            output_location = Path(self.data.output_file_loc)
-            input_location = self.input_file_loc / dataset
+        dataset = self.data.dataset_name
+        output_location = Path(self.data.output_file_loc)
+        input_location = self.input_file_loc / dataset
 
-            # Read result files.
-            df_result = pd.read_csv(output_location / "opt_result.csv")
-            df_sku_size = pd.read_csv(input_location / "product_size.csv")
-            df_all_veh = pd.read_csv(input_location / "vehicle.csv")
+        # Read result files.
+        df_result = pd.read_csv(output_location / "opt_result.csv")
+        df_sku_size = pd.read_csv(input_location / "product_size.csv")
+        df_all_veh = pd.read_csv(input_location / "vehicle.csv")
 
-            # Normalize join-key types before merging.
-            if "product_code" in df_result.columns:
-                df_result["product_code"] = df_result["product_code"].astype(str)
-            if "product_code" in df_sku_size.columns:
-                df_sku_size["product_code"] = df_sku_size["product_code"].astype(str)
-            if "vehicle_type" in df_result.columns:
-                df_result["vehicle_type"] = df_result["vehicle_type"].astype(str)
-            if "vehicle_type" in df_all_veh.columns:
-                df_all_veh["vehicle_type"] = df_all_veh["vehicle_type"].astype(str)
-            df_result = pd.merge(df_result, df_sku_size, on=["product_code"])
-            df_result = pd.merge(df_result, df_all_veh, on=["vehicle_type"])
+        # Normalize join-key types before merging.
+        if "product_code" in df_result.columns:
+            df_result["product_code"] = df_result["product_code"].astype(str)
+        if "product_code" in df_sku_size.columns:
+            df_sku_size["product_code"] = df_sku_size["product_code"].astype(str)
+        if "vehicle_type" in df_result.columns:
+            df_result["vehicle_type"] = df_result["vehicle_type"].astype(str)
+        if "vehicle_type" in df_all_veh.columns:
+            df_all_veh["vehicle_type"] = df_all_veh["vehicle_type"].astype(str)
+        df_result = pd.merge(df_result, df_sku_size, on=["product_code"])
+        df_result = pd.merge(df_result, df_all_veh, on=["vehicle_type"])
 
-            # Remove unneeded columns.
-            if "cost_to_use" in df_result.columns:
-                del df_result["cost_to_use"]
+        # Remove unneeded columns.
+        if "cost_to_use" in df_result.columns:
+            del df_result["cost_to_use"]
 
-            # Compute occupied volume.
-            df_result["occupied_size"] = df_result["qty"] * df_result["standard_size"]
+        # Compute occupied volume.
+        df_result["occupied_size"] = df_result["qty"] * df_result["standard_size"]
 
-            # Save detailed results.
-            details_file = output_location / "opt_details.csv"
-            if is_file_in_use(details_file):
-                self.log_printer.print(
-                    f"File {details_file} is in use; close it and retry.",
-                    color="bold red",
-                )
-                return
-            df_result.to_csv(details_file, index=False)
-
-            # Generate summary statistics.
-            df_stat1 = df_result.copy()
-            if "product_code" in df_stat1.columns:
-                df_stat1 = df_stat1.drop(["product_code", "standard_size"], axis=1)
-
-            df_summary = df_stat1.groupby(
-                ["day", "plant_code", "client_code", "vehicle_id"]
-            ).agg(
-                {
-                    "vehicle_type": "first",
-                    "qty": "sum",
-                    "carry_standard_size": "first",
-                    "min_standard_size": "first",
-                    "occupied_size": "sum",
-                }
+        # Save detailed results.
+        details_file = output_location / "opt_details.csv"
+        if is_file_in_use(details_file):
+            self.log_printer.print(
+                f"File {details_file} is in use; close it and retry.",
+                color="bold red",
             )
+            return
+        df_result.to_csv(details_file, index=False)
 
-            # Reset the index.
-            df_summary = df_summary.reset_index()
+        # Generate summary statistics.
+        df_stat1 = df_result.copy()
+        if "product_code" in df_stat1.columns:
+            df_stat1 = df_stat1.drop(["product_code", "standard_size"], axis=1)
 
-            # Add the same cost decomposition used by the actual objective.
-            df_summary["below_min_load"] = (
-                df_summary["occupied_size"] + 1e-9
-                < df_summary["min_standard_size"]
+        df_summary = df_stat1.groupby(
+            ["day", "plant_code", "client_code", "vehicle_id"]
+        ).agg(
+            {
+                "vehicle_type": "first",
+                "qty": "sum",
+                "carry_standard_size": "first",
+                "min_standard_size": "first",
+                "occupied_size": "sum",
+            }
+        )
+
+        # Reset the index.
+        df_summary = df_summary.reset_index()
+
+        # Add the same cost decomposition used by the actual objective.
+        df_summary["below_min_load"] = (
+            df_summary["occupied_size"] + 1e-9
+            < df_summary["min_standard_size"]
+        )
+        df_summary["fixed_cost"] = df_summary["vehicle_type"].map(
+            self.data.veh_type_cost
+        )
+        df_summary["minimum_load_penalty"] = np.where(
+            df_summary["below_min_load"],
+            float(self.data.param_alpha) * df_summary["fixed_cost"],
+            0.0,
+        )
+        df_summary["total_cost"] = (
+            df_summary["fixed_cost"] + df_summary["minimum_load_penalty"]
+        )
+
+        summary_file = output_location / "opt_summary.csv"
+        if is_file_in_use(summary_file):
+            self.log_printer.print(
+                f"File {summary_file} is in use; close it and retry.",
+                color="bold red",
             )
-            df_summary["fixed_cost"] = df_summary["vehicle_type"].map(
-                self.data.veh_type_cost
-            )
-            df_summary["minimum_load_penalty"] = np.where(
-                df_summary["below_min_load"],
-                float(self.data.param_alpha) * df_summary["fixed_cost"],
-                0.0,
-            )
-            df_summary["total_cost"] = (
-                df_summary["fixed_cost"] + df_summary["minimum_load_penalty"]
-            )
+            return
+        df_summary.to_csv(summary_file, index=False)
 
-            summary_file = output_location / "opt_summary.csv"
-            if is_file_in_use(summary_file):
-                self.log_printer.print(
-                    f"File {summary_file} is in use; close it and retry.",
-                    color="bold red",
-                )
-                return
-            df_summary.to_csv(summary_file, index=False)
-
-            # Validate capacity constraints.
-            self._validate_capacity_constraints(df_summary)
-
-        except Exception as e:
-            logger.error(f"Failed to generate statistics: {e}")
-            raise
+        # Validate capacity constraints.
+        self._validate_capacity_constraints(df_summary)
 
     def _validate_capacity_constraints(self, df_summary: pd.DataFrame):
         """Validate vehicle capacity constraints."""
