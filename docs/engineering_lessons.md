@@ -585,6 +585,29 @@ Regression tests: `multi-period-delivery/tests/test_inventory_freshness.py`,
 
 ---
 
+### 4.4 A timestamp must be read from the clock, never inferred
+
+**Symptom:** a batch of status notes and a handover document written after midnight
+were all labelled with the previous day's date. The error was noticed by the reader,
+not by any check.
+
+**Root cause:** the date was inferred from the *existing* filenames
+(`修复记录-P1-2026-10-16.md` and friends) instead of being read from the system
+clock. Work had continued past midnight, so every new stamp was one day stale.
+Inferring a date from surrounding artefacts is not reading a date.
+
+**Remedy:** call the clock (`Get-Date`, `datetime.now()`) whenever a document or
+record carries a date, then convert to the project's documented time zone. When a
+campaign plausibly spans midnight, re-read the clock rather than carrying the date
+forward from earlier in the session. A stamp that only exists in prose has no test
+that can catch it, so it needs the discipline instead.
+
+**Note on scope:** the audit reports keep their original dates - they *were*
+written on 2026-10-16. Only the post-midnight additions were wrong. Correcting a
+date means fixing the entries that were mis-stamped, not re-dating the archive.
+
+---
+
 ## 4. Git and repository hygiene lessons
 
 ### 4.1 Generated model dumps and logs belong in ignored output directories
