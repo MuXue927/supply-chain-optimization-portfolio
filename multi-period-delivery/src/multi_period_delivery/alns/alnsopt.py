@@ -760,15 +760,23 @@ class SolutionState:
           - Aggregate with a local defaultdict to reduce dict.get calls in hot paths.
           - Avoid unnecessary dict.copy() calls and convert to a regular dict only
             when storing the cache.
+
+        Validity is decided by the O(1) mutation stamp, not by ``objective_dirty``.
+        Shipped depends only on the vehicles' cargo, so it is exactly as current as
+        the vehicles are - and ``objective_dirty`` is a *different* question. Using
+        it here made this function recompute almost every call: candidate
+        evaluation calls ``mark_objective_dirty`` (which sets the flag) far more
+        often than it actually changes a load. Profiling showed 12,281 calls
+        costing ~9.6 s in a 120 s run.
+
+        ``mark_objective_dirty(clear_shipped=True)`` still clears ``shipped_cache``
+        for callers that relied on that; the stamp then guarantees a rebuild.
         """
-        if (
-            getattr(self, "shipped_cache", None) is not None
-            and not self.objective_dirty
+        cached = getattr(self, "shipped_cache", None)
+        if cached is not None and getattr(self, "_shipped_stamp", None) == inventory_stamp(
+            getattr(self, "vehicles", ())
         ):
-            shipped_cache = self.shipped_cache
-            if shipped_cache is None:
-                return {}
-            return shipped_cache
+            return cached
 
         # Use local variables and defaultdict to speed up aggregation.
         shipped_agg = defaultdict(int)
@@ -780,8 +788,14 @@ class SolutionState:
                 shipped_agg[(dealer, sku_id)] += qty
 
         # Convert to a regular dict and cache the result.
-        self.shipped_cache = dict(shipped_agg)
-        return self.shipped_cache if self.shipped_cache is not None else {}
+        result = dict(shipped_agg)
+        try:
+            self.shipped_cache = result
+            self._shipped_stamp = inventory_stamp(vehicles)
+        except (AttributeError, TypeError):
+            # Best effort: without the cache the next call recomputes.
+            pass
+        return result
 
     def construct_indices(self):
         """
