@@ -1954,29 +1954,29 @@ def sequential_repair(
                 if best_choice is None:
                     break
 
+                # The decision was scored inside the guarded loop above, so the
+                # bookkeeping below must not be swallowed: a failed counter update would
+                # silently desynchronise the demand estimate from what was loaded.
+                plant = best_choice["plant"]
+                day = int(best_choice["day"])
+                load_qty = int(best_choice["load_qty"])
+                best_veh = best_choice["veh"]
+                if best_veh is None:
+                    best_veh = Vehicle(
+                        plant,
+                        dealer,
+                        best_choice["veh_type"],
+                        day,
+                        data,
+                    )
+                
+                before_route_qty = sum(
+                    int(v.cargo.get((sku_id, day), 0))
+                    for v in state.vehicles
+                    if v.fact_id == plant and v.dealer_id == dealer and v.day == day
+                )
+                
                 try:
-                    plant = best_choice["plant"]
-                    day = int(best_choice["day"])
-                    load_qty = int(best_choice["load_qty"])
-                    best_veh = best_choice["veh"]
-                    if best_veh is None:
-                        best_veh = Vehicle(
-                            plant,
-                            dealer,
-                            best_choice["veh_type"],
-                            day,
-                            data,
-                        )
-
-                    before_route_qty = 0
-                    for v in state.vehicles:
-                        if (
-                            v.fact_id == plant
-                            and v.dealer_id == dealer
-                            and v.day == day
-                        ):
-                            before_route_qty += int(v.cargo.get((sku_id, day), 0))
-
                     veh_loading(
                         state,
                         best_veh,
@@ -1984,27 +1984,25 @@ def sequential_repair(
                         commit=True,
                         skip_compute_inventory=True,
                     )
-
-                    after_route_qty = 0
-                    for v in state.vehicles:
-                        if (
-                            v.fact_id == plant
-                            and v.dealer_id == dealer
-                            and v.day == day
-                        ):
-                            after_route_qty += int(v.cargo.get((sku_id, day), 0))
-
-                    actual_loaded = max(0, after_route_qty - before_route_qty)
-                    if actual_loaded <= 0:
-                        break
-
-                    shipped_cache[(dealer, sku_id)] = (
-                        shipped_cache.get((dealer, sku_id), 0) + actual_loaded
-                    )
-                    unmet_qty -= actual_loaded
-                except Exception as e:
-                    logger.debug(f"[OPLOG] sequential_repair: loading exception {e}")
+                except Exception as exc:
+                    # This candidate cannot be applied; move on to the next one, but leave
+                    # a trace so a systematic failure is visible.
+                    record_swallowed("repair_operators.sequential.repair.load", exc)
                     break
+                
+                after_route_qty = sum(
+                    int(v.cargo.get((sku_id, day), 0))
+                    for v in state.vehicles
+                    if v.fact_id == plant and v.dealer_id == dealer and v.day == day
+                )
+                actual_loaded = max(0, after_route_qty - before_route_qty)
+                if actual_loaded <= 0:
+                    break
+                
+                shipped_cache[(dealer, sku_id)] = (
+                    shipped_cache.get((dealer, sku_id), 0) + actual_loaded
+                )
+                unmet_qty -= actual_loaded
 
     # Final post-processing.
     try:
@@ -2228,26 +2226,30 @@ def lookahead_repair(
                 if best_choice is None:
                     break
 
+                # The decision was scored inside the guarded loop above, so the
+                # bookkeeping below must not be swallowed: a failed counter update would
+                # silently desynchronise the demand estimate from what was loaded.
+                plant = best_choice["plant"]
+                day = int(best_choice["day"])
+                load_qty = int(best_choice["load_qty"])
+                best_veh = best_choice["veh"]
+                if best_veh is None:
+                    best_veh = Vehicle(
+                        plant,
+                        dealer,
+                        best_choice["veh_type"],
+                        day,
+                        data,
+                    )
+                
+                before_route_qty = sum(
+                    int(v.cargo.get((sku_id, day), 0))
+                    for v in state.vehicles
+                    if v.fact_id == plant and v.dealer_id == dealer and v.day == day
+                )
+                before_len = len(state.vehicles)
+                
                 try:
-                    plant = best_choice["plant"]
-                    day = int(best_choice["day"])
-                    load_qty = int(best_choice["load_qty"])
-                    best_veh = best_choice["veh"]
-                    if best_veh is None:
-                        best_veh = Vehicle(
-                            plant, dealer, best_choice["veh_type"], day, data
-                        )
-
-                    before_len = len(state.vehicles)
-                    before_route_qty = 0
-                    for v in state.vehicles:
-                        if (
-                            v.fact_id == plant
-                            and v.dealer_id == dealer
-                            and v.day == day
-                        ):
-                            before_route_qty += int(v.cargo.get((sku_id, day), 0))
-
                     veh_loading(
                         state,
                         best_veh,
@@ -2255,31 +2257,28 @@ def lookahead_repair(
                         commit=True,
                         skip_compute_inventory=True,
                     )
-
-                    new_vs = state.vehicles[before_len:]
-
-                    after_route_qty = 0
-                    for v in state.vehicles:
-                        if (
-                            v.fact_id == plant
-                            and v.dealer_id == dealer
-                            and v.day == day
-                        ):
-                            after_route_qty += int(v.cargo.get((sku_id, day), 0))
-
-                    actual_loaded = max(0, after_route_qty - before_route_qty)
-                    if actual_loaded <= 0:
-                        break
-
-                    shipped_cache[(dealer, sku_id)] = (
-                        shipped_cache.get((dealer, sku_id), 0) + actual_loaded
-                    )
-                    unmet_qty -= actual_loaded
-                    if new_vs:
-                        inserted_vehicles.extend(new_vs)
-                except Exception as e:
-                    logger.debug(f"[OPLOG] lookahead_repair: loading exception {e}")
+                except Exception as exc:
+                    # This candidate cannot be applied; move on to the next one, but leave
+                    # a trace so a systematic failure is visible.
+                    record_swallowed("repair_operators.lookahead.repair.load", exc)
                     break
+                
+                after_route_qty = sum(
+                    int(v.cargo.get((sku_id, day), 0))
+                    for v in state.vehicles
+                    if v.fact_id == plant and v.dealer_id == dealer and v.day == day
+                )
+                actual_loaded = max(0, after_route_qty - before_route_qty)
+                if actual_loaded <= 0:
+                    break
+                
+                shipped_cache[(dealer, sku_id)] = (
+                    shipped_cache.get((dealer, sku_id), 0) + actual_loaded
+                )
+                unmet_qty -= actual_loaded
+                new_vs = state.vehicles[before_len:]
+                if new_vs:
+                    inserted_vehicles.extend(new_vs)
 
     try:
         state.compute_inventory()
