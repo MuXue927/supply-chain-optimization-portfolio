@@ -113,6 +113,7 @@ from sklearn.preprocessing import StandardScaler
 from .alns_config import default_config as ALNSConfig
 from .param_tuner import ParamAutoTuner
 from .progress import resolve_progress
+from .swallowed import record_swallowed
 
 if TYPE_CHECKING:
     from .alnsopt import SolutionState
@@ -830,7 +831,14 @@ class MLOperatorSelector:
 
         try:
             state_features = self.extract_state_features(state)
-        except Exception:
+        except Exception as exc:
+            # Falling back to a random operator is the right behaviour, but doing
+            # it silently means the run reports that ML operators were enabled
+            # while this call site actually chose at random. Record it so a
+            # systematically failing feature extractor is visible.
+            record_swallowed(
+                "ml_operator_selector.extract_state_features", exc
+            )
             return self._random_valid_operator(op_type, valid_candidates)
 
         model = self.destroy_model if op_type == "destroy" else self.repair_model
@@ -848,10 +856,15 @@ class MLOperatorSelector:
                 features_scaled = scaler.transform(features)
                 raw_prediction = float(model.predict(features_scaled)[0])
                 pred = raw_prediction if math.isfinite(raw_prediction) else None
-            except Exception:
+            except Exception as exc:
                 # A failed prediction is marked explicitly; it must not be
                 # allowed to become the selected operator merely because NaN
-                # happens to sort in an unexpected position.
+                # happens to sort in an unexpected position. Recorded because a
+                # model that fails for every candidate would silently turn the
+                # selector back into a random choice.
+                record_swallowed(
+                    "ml_operator_selector.predict_candidate", exc
+                )
                 pred = None
             params = self._safe_operator_params(op_name)
             predictions.append((op_name, pred, params))
