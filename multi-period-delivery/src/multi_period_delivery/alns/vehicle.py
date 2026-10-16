@@ -203,6 +203,85 @@ class CargoDict(dict):
         # Return a plain dict to match the expectations of other code paths.
         return dict(self)
 
+
+class SiktDict(dict):
+    """
+    ``(plant, sku, day) -> inventory`` mapping that counts changes made to itself.
+
+    ``SolutionState.s_ikt`` is written from several places (inventory write-back,
+    the destroy operators, the repair operators, and ``load``), and the inventory
+    fast path has to know whether the array it derived from ``s_ikt`` is still
+    valid. Rebuilding that array from the dict costs ~378 us on the medium
+    instance (~48% of ``state_to_inventory_arrays``), so it is worth caching - but
+    only if staleness can be detected cheaply.
+
+    Counting mutations here makes that check O(1) and complete for in-place
+    writes, which is how every observed call site modifies it
+    (``s_ikt[key] = value``). A wholesale replacement is caught separately by the
+    cached array's object identity check.
+
+    Only a *real* change counts. Writing back the value that is already stored is
+    extremely common - the inventory write-back assigns every entry of the
+    recomputed array on every call - and counting those would invalidate the cache
+    constantly for no reason: measured over a medium run, unconditional counting
+    gave a 14% hit rate.
+
+    Like ``CargoDict``, this tracks its own writes; a change made by bypassing the
+    mapping (writing to an underlying view) would not be counted, and that pattern
+    does not occur in the codebase.
+    """
+
+    __slots__ = ("revision",)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.revision = 0
+
+    def _note(self, key, value) -> None:
+        """Bump the revision only when ``key`` did not already hold ``value``."""
+        if not dict.__contains__(self, key) or dict.__getitem__(self, key) != value:
+            self.revision += 1
+
+    def __setitem__(self, key, value):
+        self._note(key, value)
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self.revision += 1
+
+    def clear(self):
+        if len(self):
+            self.revision += 1
+        super().clear()
+
+    def pop(self, key, default=None):
+        existed = key in self
+        result = super().pop(key, default)
+        if existed:
+            self.revision += 1
+        return result
+
+    def popitem(self):
+        result = super().popitem()
+        self.revision += 1
+        return result
+
+    def update(self, *args, **kwargs):
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def copy(self):
+        # Preserve the type: callers that clone a state need a tracked mapping,
+        # or later in-place writes would silently stop being counted.
+        return SiktDict(self)
+
+
 # =========================
 # Data class: Vehicle
 # =========================

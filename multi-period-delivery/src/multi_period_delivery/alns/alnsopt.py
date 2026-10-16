@@ -79,7 +79,7 @@ from .ml_operator_selector import MLOperatorSelector
 from .optutility import POSITIVEEPS
 from .param_tuner import ParamAutoTuner
 from .swallowed import record_swallowed
-from .vehicle import Vehicle, inventory_stamp, note_solution_mutation
+from .vehicle import SiktDict, Vehicle, inventory_stamp, note_solution_mutation
 
 
 @dataclass
@@ -111,7 +111,9 @@ class SolutionState:
 
     def __post_init__(self):
         self.vehicles = []
-        self.s_ikt = {}
+        # Tracked mapping: its revision lets the inventory fast path prove that a
+        # cached array derived from s_ikt is still current (see SiktDict).
+        self.s_ikt = SiktDict()
         self.s_indices = self.construct_indices()
         self._iteration_count = 0  # Iteration counter used by ALNSTracker.
         if self.inventory_manager is None:
@@ -909,8 +911,11 @@ class SolutionState:
         else:
             # create a new list object but reuse vehicle instances (caller must avoid mutating them)
             new_state.vehicles = list(self.vehicles)
-        # copy inventory map (caller may mutate s_ikt during simulation)
-        new_state.s_ikt = dict(self.s_ikt)
+        # copy inventory map (caller may mutate s_ikt during simulation). Built as
+        # a tracked mapping so those later writes keep being counted; a plain
+        # ``dict`` copy would silently stop the revision from moving and the
+        # cached array could go stale.
+        new_state.s_ikt = SiktDict(self.s_ikt)
         # preserve the exact s_indices structure (triples) to avoid unpacking errors
         new_state.s_indices = set(self.s_indices)
         # preserve external references

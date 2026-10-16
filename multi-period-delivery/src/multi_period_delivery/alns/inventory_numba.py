@@ -87,6 +87,54 @@ def build_index_maps(data) -> IndexMaps:
     )
 
 
+def _sikt_array(state, maps: IndexMaps, P: int, S: int, H: int):
+    """
+    Return ``state.s_ikt`` as a ``(P, S, H+1)`` float64 array.
+
+    Filling this array from the dict costs ~378 us on the medium instance (~48% of
+    ``state_to_inventory_arrays``, which is called ~18,000 times per 120 s run), so
+    the result is cached on the state.
+
+    Staleness is decided by three things, all O(1):
+
+    * ``id(s_ikt)`` - an array derived from a different mapping object cannot be
+      reused. This also covers a mapping replaced by a plain ``dict``, whose
+      revision attribute cannot be trusted;
+    * the mapping's ``revision``, which :class:`SiktDict` bumps on every in-place
+      write, so ``state.s_ikt[key] = value`` invalidates the cache;
+    * ``id(maps)`` and the shape, so a different model cannot be served it.
+
+    The returned array is **shared** and must be treated as read-only. Callers
+    either discard it or hand it to ``arrays_to_state_s_ikt``, which only reads it.
+    """
+    s_ikt = getattr(state, "s_ikt", None)
+    revision = getattr(s_ikt, "revision", None)
+    cache_key = (id(s_ikt), revision, id(maps), (P, S, H + 1))
+
+    cached = getattr(state, "_sikt_arr_cache", None)
+    if cached is not None and cached[0] == cache_key:
+        return cached[1]
+
+    s_ikt_arr = np.zeros((P, S, H + 1), dtype=np.float64)
+    if s_ikt:
+        plant_to_idx = maps.plant_to_idx
+        sku_to_idx = maps.sku_to_idx
+        for (plant, sku, day), val in s_ikt.items():
+            pi = plant_to_idx.get(plant)
+            si = sku_to_idx.get(sku)
+            if pi is None or si is None:
+                continue
+            if 0 <= day <= H:
+                s_ikt_arr[pi, si, int(day)] = float(val)
+
+    try:
+        state._sikt_arr_cache = (cache_key, s_ikt_arr)
+    except (AttributeError, TypeError):
+        # Best effort: without the cache the next call rebuilds.
+        pass
+    return s_ikt_arr
+
+
 def _production_array(state, maps: IndexMaps, P: int, S: int, H: int):
     """
     Return the production array as a ``(P, S, H+1)`` float64 array.
@@ -162,23 +210,13 @@ def state_to_inventory_arrays(state, maps: IndexMaps, build_shipments: bool = Fa
     S = maps.n_skus
     H = maps.horizons
     # use float64 for numeric safety
-    s_ikt_arr = np.zeros((P, S, H + 1), dtype=np.float64)
+    s_ikt_arr = _sikt_array(state, maps, P, S, H)
     shipments_arr = None
     # Production is solution-independent, so it is cached (see the helper).
     prod_arr = _production_array(state, maps, P, S, H)
 
-    # fill s_ikt from state.s_ikt: keys are (plant, sku, day)
-    s_ikt = getattr(state, "s_ikt", {})
-    for (plant, sku, day), val in s_ikt.items():
-        pi = maps.plant_to_idx.get(plant)
-        si = maps.sku_to_idx.get(sku)
-        if pi is None or si is None:
-            continue
-        if 0 <= day <= H:
-            s_ikt_arr[pi, si, int(day)] = float(val)
-
     # Production comes from the cached helper above; it has no dependence on the
-    # solution, so it is not rebuilt here.
+    # solution, so it is not rebuilt here. s_ikt was filled by _sikt_array.
 
     # Accumulate same-day shipments exactly as state.compute_inventory() does.
     # Skipped unless asked for: no caller used the result (see the docstring).
