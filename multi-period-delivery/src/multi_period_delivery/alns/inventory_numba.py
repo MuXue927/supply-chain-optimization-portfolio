@@ -240,6 +240,119 @@ def _build_shipments_from_vehicles(state, maps: IndexMaps, P: int, S: int, H: in
     return shipments_arr
 
 
+def _vehicle_signature(veh):
+    """
+    Stable, deterministic signature of a vehicle's cargo, used to detect changes.
+
+    MD5 over sorted ``"sku|day|qty"`` items, deliberately not ``hash()``, which
+    varies between processes (PYTHONHASHSEED) and would make the cached shipments
+    array look stale on every run.
+
+    The signature covers the *number* of cargo entries and the total quantity as
+    well as the per-entry text, so a changed quantity that is not representable
+    as a float still invalidates the cache. The previous inline version dropped
+    those from the fallback signature and silently skipped unparseable
+    quantities, so the cache could be reused for a genuinely different load.
+    """
+    fact = getattr(veh, "fact_id", None)
+    vehicle_type = getattr(veh, "type", None)
+    day = getattr(veh, "day", None)
+    try:
+        cargo = getattr(veh, "cargo", {}) or {}
+        items_source = list(cargo.items())
+    except Exception:
+        # A vehicle whose cargo cannot be read still gets a signature; it just
+        # cannot describe the load. Treating it as "no entries" keeps the rest of
+        # the list cacheable instead of disabling the cache for every vehicle.
+        # Deliberately broad: reading a property is caller-supplied code, and the
+        # only consequence of getting this wrong is a needless cache rebuild,
+        # because the enclosing computation has its own pure-Python fallback.
+        cargo = {}
+        items_source = []
+
+    total_qty = 0.0
+    items = []
+    for (sku_k, cargo_day), qty in items_source:
+        try:
+            total_qty += float(qty)
+        except (TypeError, ValueError):
+            # Keep the entry itself in the signature (below); only the numeric
+            # total cannot account for it.
+            pass
+        items.append(f"{sku_k}|{cargo_day}|{qty!r}")
+    items.sort()
+
+    digest = hashlib.md5()
+    digest.update("|".join(items).encode("utf-8"))
+    return (fact, vehicle_type, day, len(cargo), total_qty, digest.hexdigest())
+
+
+def _vehicles_signature(vehicles):
+    """
+    Signature of a whole vehicle list, or None when it cannot be computed.
+
+    None means "cannot tell whether the cached shipments still apply", so the
+    caller rebuilds them instead of reusing a possibly stale array. Keeping this
+    fallback here rather than around the cache decision keeps the fallback
+    explicit: the failure degrades the incremental cache, never correctness.
+    """
+    try:
+        return tuple(_vehicle_signature(veh) for veh in vehicles)
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def _resolve_inventory_cache(state, maps, P, S, H):
+    """
+    Return ``(cache, prod_arr, baseline0, shipments_arr)`` for this state.
+
+    Reuses the cached arrays when they belong to ``maps`` and have the expected
+    shapes; otherwise rebuilds them from ``state``. The rebuilt cache is attached
+    to the state best-effort - failing to attach only costs the next call the
+    rebuild, so it must not fail the computation itself.
+
+    This is preparation, not the fast path: a failure here propagates to the
+    caller's handler, which falls back to the pure-Python implementation.
+    """
+    cache = getattr(state, "_inventory_cache", None)
+    prod_arr = baseline0 = shipments_arr = None
+    cache_valid = False
+
+    if cache:
+        try:
+            cache_valid = cache.get("maps", None) is maps
+        except (AttributeError, TypeError):
+            cache_valid = False
+
+    if cache_valid:
+        prod_arr = cache.get("prod_arr")
+        baseline0 = cache.get("baseline0")
+        shipments_arr = cache.get("shipments_arr")
+        # Shapes must match the current maps, or the arrays describe another model.
+        if (
+            prod_arr is None
+            or baseline0 is None
+            or prod_arr.shape != (P, S, H + 1)
+            or baseline0.shape != (P, S)
+            or (shipments_arr is not None and shipments_arr.shape != (P, S, H + 1))
+        ):
+            cache_valid = False
+
+    if not cache_valid:
+        # Build fresh arrays; only the day-0 baseline and production are retained.
+        s_full, _, prod_full = state_to_inventory_arrays(state, maps)
+        baseline0 = s_full[:, :, 0].copy()
+        prod_arr = prod_full
+        cache = {"maps": maps, "prod_arr": prod_arr, "baseline0": baseline0}
+        try:
+            setattr(state, "_inventory_cache", cache)
+        except (AttributeError, TypeError):
+            # Best effort: without the persistent cache the next call rebuilds.
+            pass
+
+    return cache, prod_arr, baseline0, shipments_arr
+
+
 def compute_inventory_numba_safe(state):
     """
     Enhanced safe wrapper with conservative caching of baseline arrays and shipments incremental cache.
@@ -271,101 +384,21 @@ def compute_inventory_numba_safe(state):
             except Exception:
                 pass
 
-        # attempt to reuse cached arrays if available and compatible
-        cache = getattr(state, "_inventory_cache", None)
-        cache_valid = False
-        if cache:
-            try:
-                cached_maps = cache.get("maps", None)
-                if cached_maps is maps:
-                    cache_valid = True
-            except Exception:
-                cache_valid = False
-
         P = maps.n_plants
         S = maps.n_skus
         H = maps.horizons
 
-        if cache_valid:
-            prod_arr = cache.get("prod_arr")
-            baseline0 = cache.get("baseline0")
-            shipments_arr = cache.get("shipments_arr")
-            # ensure shapes match; otherwise invalidate
-            if (
-                prod_arr is None
-                or baseline0 is None
-                or prod_arr.shape != (P, S, H + 1)
-                or baseline0.shape != (P, S)
-                or (
-                    shipments_arr is not None
-                    and shipments_arr.shape != (P, S, H + 1)
-                )
-            ):
-                cache_valid = False
+        # Resolve the reusable arrays (maps, production, day-0 baseline, and any
+        # cached shipments). Extracted so this try body stays small and the cache
+        # rules are testable on their own.
+        cache, prod_arr, baseline0, shipments_arr = _resolve_inventory_cache(
+            state, maps, P, S, H
+        )
 
-        if not cache_valid:
-            # build fresh full arrays (baseline and production)
-            # we only retain baseline day 0 and prod_arr for reuse
-            s_full, _, prod_full = state_to_inventory_arrays(state, maps)
-            baseline0 = s_full[:, :, 0].copy()
-            prod_arr = prod_full
-            cache = {"maps": maps, "prod_arr": prod_arr, "baseline0": baseline0}
-            try:
-                setattr(state, "_inventory_cache", cache)
-            except Exception:
-                # best-effort: if we cannot attach, continue without persistent cache
-                pass
-
-        # compute a lightweight vehicles signature (fact_id + cargo length) to detect changes
+        # compute a lightweight vehicles signature to detect changes (see the
+        # module-level helper; kept out of this try so the body stays small)
         vehicles = getattr(state, "vehicles", [])
-
-        def _vehicle_signature(veh):
-            """
-            Stable, deterministic signature for a Vehicle's cargo content used to detect changes.
-            Uses an MD5 checksum over sorted "sku|day|qty" items to avoid process-dependent hash().
-            """
-            try:
-                fact = getattr(veh, "fact_id", None)
-                vehicle_type = getattr(veh, "type", None)
-                day = getattr(veh, "day", None)
-                cargo = getattr(veh, "cargo", {})
-                total_qty = 0.0
-                items = []
-                for (sku_k, d), q in cargo.items():
-                    # Keep the exact quantity representation in the signature so
-                    # a fractional or otherwise unexpected quantity change also
-                    # invalidates the cached shipment array.
-                    try:
-                        total_qty += float(q)
-                    except Exception:
-                        pass
-                    items.append(f"{sku_k}|{d}|{q!r}")
-                items.sort()
-                m = hashlib.md5()
-                m.update("|".join(items).encode("utf-8"))
-                cargo_hash = m.hexdigest()
-                return (
-                    fact,
-                    vehicle_type,
-                    day,
-                    len(cargo),
-                    total_qty,
-                    cargo_hash,
-                )
-            except Exception:
-                # best-effort fallback to a looser signature
-                return (
-                    getattr(veh, "fact_id", None),
-                    getattr(veh, "type", None),
-                    getattr(veh, "day", None),
-                    len(getattr(veh, "cargo", {})),
-                )
-
-        try:
-            current_vehicles_sig = tuple(_vehicle_signature(veh) for veh in vehicles)
-        except Exception:
-            # on any failure, fall back to rebuilding shipments
-            current_vehicles_sig = None
+        current_vehicles_sig = _vehicles_signature(vehicles)
 
         use_cached_shipments = False
         if cache and current_vehicles_sig is not None:
@@ -376,12 +409,12 @@ def compute_inventory_numba_safe(state):
                 and cached_shipments is not None
                 and cached_sig == current_vehicles_sig
             ):
-                # reuse shipments array
-                try:
-                    shipments_arr = cached_shipments
-                    use_cached_shipments = True
-                except (TypeError, ValueError):
-                    use_cached_shipments = False
+                # The signature matches, so the cached array describes this load
+                # exactly; reuse it. The previous try/except around this
+                # assignment could not fire (assigning a value raises nothing) and
+                # only obscured that.
+                shipments_arr = cached_shipments
+                use_cached_shipments = True
 
         if not use_cached_shipments:
             # rebuild shipments array each call (vehicles change frequently)
