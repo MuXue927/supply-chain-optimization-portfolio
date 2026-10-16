@@ -1,19 +1,17 @@
-"""Tests for the extracted inventory-cache helpers.
+"""Tests for the extracted inventory-cache preparation helper.
 
 ``compute_inventory_numba_safe`` wraps its whole pipeline in one ``try`` that
 falls back to the pure-Python implementation, so its body was ~166 lines of
-preparation and computation mixed together. Two pieces of *preparation* are now
-separate functions with their own contracts:
+preparation and computation mixed together. The preparation is now a separate
+function with its own contract:
 
-* :func:`_vehicle_signature` / :func:`_vehicles_signature` - detect whether the
-  cached shipments array still describes the current load;
 * :func:`_resolve_inventory_cache` - reuse the cached arrays when they belong to
   the current index maps and have the right shapes.
 
-The signature used to be an inner function whose fallback path dropped the cargo
-count and total quantity, and whose per-entry loop silently skipped an
-unparseable quantity - either could make a genuinely different load look
-unchanged, so the stale shipments array would be reused.
+Cache *validity* ("has anything feeding shipments changed?") used to be decided
+here by per-vehicle signatures. It is now the O(1) mutation stamp in
+``vehicle.inventory_stamp``, covered by ``test_inventory_freshness.py``; the
+signature helpers were deleted once nothing called them.
 """
 
 from __future__ import annotations
@@ -23,11 +21,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from multi_period_delivery.alns.inventory_numba import (
-    _resolve_inventory_cache,
-    _vehicle_signature,
-    _vehicles_signature,
-)
+from multi_period_delivery.alns.inventory_numba import _resolve_inventory_cache
 
 
 def _vehicle(*, cargo=None, day=1, veh_type="T1", fact_id="P1"):
@@ -44,75 +38,6 @@ def _vehicle(*, cargo=None, day=1, veh_type="T1", fact_id="P1"):
 # ---------------------------------------------------------------------------
 
 
-def test_signature_is_deterministic() -> None:
-    vehicle = _vehicle(cargo={("S1", 1): 3, ("S2", 2): 5})
-
-    assert _vehicle_signature(vehicle) == _vehicle_signature(vehicle)
-
-
-def test_signature_covers_every_part_of_the_load() -> None:
-    base = _vehicle(cargo={("S1", 1): 3, ("S2", 2): 5})
-
-    different_qty = _vehicle(cargo={("S1", 1): 4, ("S2", 2): 5})
-    different_day = _vehicle(cargo={("S1", 1): 3, ("S2", 2): 5}, day=2)
-    different_type = _vehicle(cargo={("S1", 1): 3, ("S2", 2): 5}, veh_type="T2")
-    fewer_entries = _vehicle(cargo={("S1", 1): 3})
-
-    for other in (different_qty, different_day, different_type, fewer_entries):
-        assert _vehicle_signature(base) != _vehicle_signature(other)
-
-
-def test_signature_invalidates_on_an_unparseable_quantity() -> None:
-    """The old signature could miss this: it skipped the entry from the total."""
-    numeric = _vehicle(cargo={("S1", 1): 3})
-    opaque = _vehicle(cargo={("S1", 1): object()})
-
-    assert _vehicle_signature(numeric) != _vehicle_signature(opaque)
-
-
-def test_signature_survives_an_empty_load() -> None:
-    signature = _vehicle_signature(_vehicle())
-
-    assert len(signature) == 6
-    assert signature[3] == 0  # cargo entry count
-    assert signature[4] == 0.0  # total quantity
-
-
-# ---------------------------------------------------------------------------
-# _vehicles_signature
-# ---------------------------------------------------------------------------
-
-
-def test_vehicles_signature_covers_the_list() -> None:
-    vehicles = [_vehicle(cargo={("S1", 1): 1}), _vehicle(cargo={("S2", 1): 2})]
-    other = [_vehicle(cargo={("S1", 1): 1})]
-
-    assert _vehicles_signature(vehicles) == _vehicles_signature(vehicles)
-    assert _vehicles_signature(vehicles) != _vehicles_signature(other)
-
-
-def test_a_vehicle_with_unreadable_cargo_still_gets_a_signature() -> None:
-    """One bad vehicle must not disable the cache for the whole list."""
-
-    class _Exploding:
-        fact_id = "P1"
-        type = "T1"
-        day = 1
-
-        @property
-        def cargo(self):
-            raise RuntimeError("cargo is not readable")
-
-    signature = _vehicle_signature(_Exploding())
-
-    assert len(signature) == 6
-    assert signature[0] == "P1"
-    assert signature[3] == 0  # counted as "no entries"
-
-
-def test_vehicles_signature_returns_none_for_a_non_iterable_list() -> None:
-    """None means "cannot tell" so the caller rebuilds instead of reusing."""
-    assert _vehicles_signature(None) is None
 
 
 # ---------------------------------------------------------------------------

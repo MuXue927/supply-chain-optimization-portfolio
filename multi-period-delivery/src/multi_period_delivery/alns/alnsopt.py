@@ -79,7 +79,7 @@ from .ml_operator_selector import MLOperatorSelector
 from .optutility import POSITIVEEPS
 from .param_tuner import ParamAutoTuner
 from .swallowed import record_swallowed
-from .vehicle import Vehicle
+from .vehicle import Vehicle, inventory_stamp, note_solution_mutation
 
 
 @dataclass
@@ -172,32 +172,30 @@ class SolutionState:
         """
         Whether ``s_ikt`` provably reflects the current vehicle set.
 
-        The fast inventory path already records the vehicle signature it last
-        built shipments from (``_inventory_cache["vehicles_sig"]``), and rebuilds
-        whenever that signature changes. When the recorded signature still equals
-        the current one, recomputing inventory cannot change ``s_ikt``.
+        The fast inventory path records the mutation stamp it built its cached
+        shipments from (``_inventory_cache["stamp"]``) and rebuilds whenever that
+        stamp moves. Comparing stamps is O(1); the previous version re-derived a
+        per-vehicle digest here, which profiling on the medium instance showed
+        costing ~1.6 ms - as much as the inventory rebuild it was guarding, so the
+        guard nearly cancelled the benefit it existed for.
 
-        This exists so ``validate()`` can avoid a forced full recompute on every
-        call. On the medium instance that recompute cost ~10-25 ms and ran
-        thousands of times per iteration, which is what held the run to 23
-        iterations in 204 s. The signature covers every vehicle field that feeds
-        shipments, so honouring it is not a weakening of strict mode: it removes a
-        redundant second guard that was defeating the first.
+        The stamp is bumped by every declared solution mutation
+        (``SolutionState.mark_objective_dirty``, which all accepted mutations call
+        including the structural ones) and by every in-place cargo change
+        (``CargoDict``). It can only move *more* often than the truth, which costs
+        a rebuild - never a stale reuse.
 
-        Deliberately conservative - it returns False (forces the recompute) on
-        anything unexpected: no cache, no recorded signature, a signature it
-        cannot reproduce, or a mismatch.
+        Deliberately conservative: it returns False (forcing the recompute) on
+        anything unexpected - no cache, no recorded stamp, or a mismatch.
         """
         cache = getattr(self, "_inventory_cache", None)
         if not cache:
             return False
         try:
-            cached_sig = cache.get("vehicles_sig")
-            if cached_sig is None or cache.get("shipments_arr") is None:
+            recorded = cache.get("stamp")
+            if recorded is None or cache.get("shipments_arr") is None:
                 return False
-            from .inventory_numba import _vehicles_signature
-
-            return _vehicles_signature(getattr(self, "vehicles", [])) == cached_sig
+            return inventory_stamp(getattr(self, "vehicles", ())) == recorded
         except Exception:
             # Any doubt at all means "not provably fresh", so recompute.
             return False
@@ -241,6 +239,14 @@ class SolutionState:
             preserving ``shipped_cache`` for incremental maintenance.
         """
         self.objective_dirty = True
+        # Bump the declared-mutation revision. Every accepted solution mutation
+        # passes through here - repair and destroy operators call it, and the few
+        # direct ``state.vehicles[i] = ...`` sites call it immediately afterwards.
+        # Cargo changes are counted separately by ``CargoDict``. Together they let
+        # ``_inventory_is_fresh`` answer in O(1) instead of re-deriving a
+        # per-vehicle signature, which profiling showed cost as much as the
+        # inventory rebuild it was guarding.
+        note_solution_mutation()
         # Clear the last objective; shipped_cache is controlled by clear_shipped.
         self.last_objective = None
         if clear_shipped:

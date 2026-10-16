@@ -25,6 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .vehicle import inventory_stamp
+
 logger = logging.getLogger(__name__)
 
 # Try to import numba; if not available we fall back to a numpy-only implementation.
@@ -239,82 +241,6 @@ def _build_shipments_from_vehicles(state, maps: IndexMaps, P: int, S: int, H: in
     return shipments_arr
 
 
-def _vehicle_signature(veh):
-    """
-    Cheap, deterministic signature of a vehicle's cargo, used to detect changes.
-
-    The cargo is canonicalised into one delimited string and digested with the
-    built-in ``hash()``. This is deliberately *not* a cryptographic digest, and
-    deliberately not the raw ``hash()`` of each key (which would drag in
-    arbitrary ``__hash__`` implementations): the string is built here, so the
-    only hashing performed is CPython's own string hash, which runs in C.
-
-    History: this replaced an MD5-over-sorted-strings digest. Profiling the
-    medium instance showed the old version called 1.7 million times in 60 s and
-    costing ~14 s - more than the cache it protects - because it built a string
-    per cargo entry and ran a cryptographic hash per vehicle. A first rewrite
-    using a Python-level per-character rolling mix was *worse*: it moved the work
-    from C into a Python loop (25.5 million calls to a helper). Building one
-    string and letting ``hash()`` digest it keeps the work in C.
-
-    ``hash()`` is salted per process by PYTHONHASHSEED, which is fine here: the
-    signature only has to be comparable within one run, and a fresh process
-    starts with no cache to reuse. A process change therefore causes a harmless
-    rebuild rather than a stale hit.
-
-    Quantities are folded as scaled integers so equal loads give equal signatures
-    regardless of how the value arrived (``3`` vs ``3.0``); anything not
-    representable as a finite number folds ``repr`` instead, so an odd value
-    still invalidates the cache.
-    """
-    fact = getattr(veh, "fact_id", None)
-    vehicle_type = getattr(veh, "type", None)
-    day = getattr(veh, "day", None)
-    try:
-        cargo = getattr(veh, "cargo", {}) or {}
-        items_source = list(cargo.items())
-    except Exception:
-        # A vehicle whose cargo cannot be read still gets a signature; it just
-        # cannot describe the load. Treating it as "no entries" keeps the rest of
-        # the list cacheable instead of disabling the cache for every vehicle.
-        # Deliberately broad: reading a property is caller-supplied code, and the
-        # only consequence of getting this wrong is a needless cache rebuild,
-        # because the enclosing computation has its own pure-Python fallback.
-        cargo = {}
-        items_source = []
-
-    parts = []
-    total_qty = 0.0
-    for (sku_k, cargo_day), qty in items_source:
-        try:
-            numeric = float(qty)
-            total_qty += numeric
-            parts.append(f"{sku_k}\x1f{cargo_day}\x1f{int(numeric * 1e6)}")
-        except (TypeError, ValueError, OverflowError):
-            # Not a finite number: fold the representation instead, so a change is
-            # still detected even though it cannot join the numeric total.
-            parts.append(f"{sku_k}\x1f{cargo_day}\x1f{qty!r}")
-
-    # Sorted so cargo insertion order cannot masquerade as a change.
-    parts.sort()
-    digest = hash("\x1e".join(parts))
-    return (fact, vehicle_type, day, len(cargo), total_qty, digest)
-
-
-def _vehicles_signature(vehicles):
-    """
-    Signature of a whole vehicle list, or None when it cannot be computed.
-
-    None means "cannot tell whether the cached shipments still apply", so the
-    caller rebuilds them instead of reusing a possibly stale array. Keeping this
-    fallback here rather than around the cache decision keeps the fallback
-    explicit: the failure degrades the incremental cache, never correctness.
-    """
-    try:
-        return tuple(_vehicle_signature(veh) for veh in vehicles)
-    except (AttributeError, TypeError, ValueError, KeyError):
-        return None
-
 
 def _resolve_inventory_cache(state, maps, P, S, H):
     """
@@ -409,21 +335,24 @@ def compute_inventory_numba_safe(state):
             state, maps, P, S, H
         )
 
-        # compute a lightweight vehicles signature to detect changes (see the
-        # module-level helper; kept out of this try so the body stays small)
-        vehicles = getattr(state, "vehicles", [])
-        current_vehicles_sig = _vehicles_signature(vehicles)
+        # Cheap O(1) mutation stamp instead of a per-vehicle digest. Profiling the
+        # medium instance showed the old signature costing ~1.6 ms per check - as
+        # much as the rebuild it guarded - because it walked all ~1,100 vehicles.
+        # The stamp is bumped by every declared solution mutation and every cargo
+        # change, so it can only move more often than the truth: an extra rebuild,
+        # never a stale reuse.
+        current_stamp = inventory_stamp(getattr(state, "vehicles", ()))
 
         use_cached_shipments = False
-        if cache and current_vehicles_sig is not None:
-            cached_sig = cache.get("vehicles_sig")
+        if cache and current_stamp is not None:
+            cached_stamp = cache.get("stamp")
             cached_shipments = cache.get("shipments_arr")
             if (
-                cached_sig is not None
+                cached_stamp is not None
                 and cached_shipments is not None
-                and cached_sig == current_vehicles_sig
+                and cached_stamp == current_stamp
             ):
-                # The signature matches, so the cached array describes this load
+                # The stamp matches, so the cached array describes this load
                 # exactly; reuse it. The previous try/except around this
                 # assignment could not fire (assigning a value raises nothing) and
                 # only obscured that.
@@ -437,7 +366,7 @@ def compute_inventory_numba_safe(state):
             if cache is None:
                 cache = {"maps": maps, "prod_arr": prod_arr, "baseline0": baseline0}
             cache["shipments_arr"] = shipments_arr
-            cache["vehicles_sig"] = current_vehicles_sig
+            cache["stamp"] = current_stamp
             try:
                 setattr(state, "_inventory_cache", cache)
             except Exception:
@@ -469,6 +398,16 @@ def compute_inventory_numba_safe(state):
                 state.mark_objective_dirty()
         except Exception:
             pass
+
+        # Record the stamp *now*, after every write above. ``mark_objective_dirty``
+        # bumps the mutation counter, so a stamp captured before this point would
+        # be stale the moment it was written, and the cache would never validate.
+        if cache is not None:
+            cache["stamp"] = inventory_stamp(getattr(state, "vehicles", ()))
+            try:
+                setattr(state, "_inventory_cache", cache)
+            except Exception:
+                pass
 
         return True
     except Exception as exc:

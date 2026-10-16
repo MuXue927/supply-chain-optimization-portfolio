@@ -31,10 +31,85 @@ from dataclasses import dataclass, field
 # =========================
 from .InputDataALNS import DataALNS
 
-
 # -------------------------
 # CargoDict: a dict wrapper that maintains loaded_volume and capacity.
 # -------------------------
+_CARGO_MUTATIONS = 0
+_SOLUTION_MUTATIONS = 0
+
+
+def cargo_mutation_count() -> int:
+    """
+    Monotonic count of in-place cargo changes, process-wide.
+
+    ``CargoDict`` is the only writer of cargo contents (every ``cargo[...] = ...``
+    site in the codebase goes through ``__setitem__``), so this changes exactly
+    when a load changes.
+
+    Process-wide (not per-state) on purpose: vehicles are shared between a state
+    and its snapshots, so a per-state counter would miss changes made through the
+    copy. A global counter can only err by counting *more* changes than a given
+    state saw, which costs a needless rebuild, never a stale reuse.
+    """
+    return _CARGO_MUTATIONS
+
+
+def solution_mutation_count() -> int:
+    """
+    Monotonic count of declared solution mutations, process-wide.
+
+    Bumped by ``SolutionState.mark_objective_dirty``, which every accepted
+    mutation calls - including the structural ones a cargo counter cannot see,
+    such as ``state.vehicles[i] = ...`` or replacing the vehicle list.
+
+    Kept separate from :func:`cargo_mutation_count` so that marking a state dirty
+    when nothing actually changed does not needlessly invalidate the inventory
+    cache for every other state in the process.
+    """
+    return _SOLUTION_MUTATIONS
+
+
+def note_solution_mutation() -> None:
+    """Record a declared solution mutation (see :func:`solution_mutation_count`)."""
+    global _SOLUTION_MUTATIONS
+    _SOLUTION_MUTATIONS += 1
+
+
+def _note_cargo_mutation() -> None:
+    global _CARGO_MUTATIONS
+    _CARGO_MUTATIONS += 1
+
+
+def inventory_stamp(vehicles=()) -> tuple:
+    """
+    Value that changes whenever anything feeding the shipments array changes.
+
+    Compared as a whole for cache validity, so it must be cheap and total. The
+    previous approach re-derived a per-vehicle digest on every check, which
+    profiling on the medium instance showed costing ~1.6 ms - as much as the
+    inventory rebuild it was meant to avoid. This is O(1).
+
+    Three sources, because no single one is complete:
+
+    * cargo changes, counted by ``CargoDict``;
+    * declared mutations, counted by ``SolutionState.mark_objective_dirty``;
+    * the vehicle list's shape - its length and last id - which catches the
+      ``state.vehicles = [...]`` and ``state.vehicles.append(...)`` forms that
+      neither counter sees.
+
+    A *middle* element being replaced without marking anything dirty would still
+    be missed. That pattern does not occur in the codebase: the only
+    ``state.vehicles[i] = ...`` sites (repair_operators) call
+    ``mark_objective_dirty`` immediately afterwards.
+    """
+    try:
+        count = len(vehicles)
+    except TypeError:
+        return (_CARGO_MUTATIONS, _SOLUTION_MUTATIONS, None, None)
+    last_id = getattr(vehicles[-1], "id", None) if count else None
+    return (_CARGO_MUTATIONS, _SOLUTION_MUTATIONS, count, last_id)
+
+
 class CargoDict(dict):
     """
     A dict-like container that updates its parent Vehicle's _loaded_volume and capacity
@@ -58,7 +133,12 @@ class CargoDict(dict):
 
     def __setitem__(self, key, value):
         prev = self.get(key, 0)
+        existed = key in self
         super().__setitem__(key, value)
+        if not existed or value != prev:
+            # Only a real change counts: assigning the value that is already there
+            # must not invalidate the inventory cache.
+            _note_cargo_mutation()
         try:
             sku, d = key
             delta = (value - prev) * self._sku_size(sku)
@@ -72,6 +152,7 @@ class CargoDict(dict):
     def __delitem__(self, key):
         prev = self.get(key, 0)
         super().__delitem__(key)
+        _note_cargo_mutation()
         try:
             sku, d = key
             delta = - prev * self._sku_size(sku)
@@ -81,6 +162,8 @@ class CargoDict(dict):
             pass
 
     def clear(self):
+        if len(self):
+            _note_cargo_mutation()
         super().clear()
         try:
             self._veh._loaded_volume = 0
@@ -96,6 +179,7 @@ class CargoDict(dict):
     def pop(self, key, default=None):
         prev = self.get(key, default)
         res = super().pop(key, default)
+        _note_cargo_mutation()
         try:
             sku, d = key
             self._veh._loaded_volume = max(0, getattr(self._veh, "_loaded_volume", 0.0) - prev * self._sku_size(sku))
@@ -106,6 +190,7 @@ class CargoDict(dict):
 
     def popitem(self):
         k, v = super().popitem()
+        _note_cargo_mutation()
         try:
             sku, d = k
             self._veh._loaded_volume = max(0, getattr(self._veh, "_loaded_volume", 0.0) - v * self._sku_size(sku))

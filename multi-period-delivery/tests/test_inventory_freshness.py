@@ -24,6 +24,7 @@ from pathlib import Path
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
 from multi_period_delivery.alns.alnsopt import SolutionState
+from multi_period_delivery.alns.vehicle import inventory_stamp
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -42,21 +43,19 @@ def _state():
 # ---------------------------------------------------------------------------
 
 
-def test_no_inventory_cache_means_not_fresh() -> None:
+def test_state_without_any_cache_is_not_fresh() -> None:
     """Without a cache there is nothing to prove freshness from."""
     state = _state()
-    state.compute_inventory()
-    # A cache that does not record what it was built from cannot be trusted.
-    state._inventory_cache.pop("vehicles_sig", None)
+    state.__dict__.pop("_inventory_cache", None)
 
     assert state._inventory_is_fresh() is False
 
 
-def test_cache_without_a_recorded_signature_is_not_fresh() -> None:
+def test_cache_without_a_recorded_stamp_is_not_fresh() -> None:
+    """A cache that does not record what it was built from cannot be trusted."""
     state = _state()
     state.compute_inventory()
-    # A cache that does not record what it was built from cannot be trusted.
-    state._inventory_cache.pop("vehicles_sig", None)
+    state._inventory_cache.pop("stamp", None)
 
     assert state._inventory_is_fresh() is False
 
@@ -194,3 +193,64 @@ def test_defaults_are_the_strict_ones() -> None:
     """These tests are only meaningful while the strict defaults are in force."""
     assert ALNSConfig.VALIDATE_FORCE_RECOMPUTE_INVENTORY is True
     assert ALNSConfig.STRICT_FEASIBILITY_MODE is True
+
+
+# ---------------------------------------------------------------------------
+# The O(1) stamp itself
+# ---------------------------------------------------------------------------
+
+
+def test_stamp_is_stable_when_nothing_changes() -> None:
+    state = _state()
+
+    first = inventory_stamp(state.vehicles)
+    second = inventory_stamp(state.vehicles)
+
+    assert first == second
+
+
+def test_stamp_moves_when_cargo_changes() -> None:
+    state = _state()
+    before = inventory_stamp(state.vehicles)
+
+    vehicle = next(v for v in state.vehicles if v.cargo)
+    key = next(iter(vehicle.cargo))
+    vehicle.cargo[key] = vehicle.cargo[key] + 1
+
+    assert inventory_stamp(state.vehicles) != before
+
+
+def test_assigning_the_same_cargo_value_does_not_move_the_stamp() -> None:
+    """Re-writing an unchanged value must not invalidate the cache needlessly."""
+    state = _state()
+    vehicle = next(v for v in state.vehicles if v.cargo)
+    key = next(iter(vehicle.cargo))
+    before = inventory_stamp(state.vehicles)
+
+    vehicle.cargo[key] = vehicle.cargo[key]
+
+    assert inventory_stamp(state.vehicles) == before
+
+
+def test_stamp_moves_when_a_declared_mutation_happens() -> None:
+    state = _state()
+    before = inventory_stamp(state.vehicles)
+
+    state.mark_objective_dirty()
+
+    assert inventory_stamp(state.vehicles) != before
+
+
+def test_stamp_moves_when_the_vehicle_list_changes() -> None:
+    """Structural list changes are invisible to the cargo counter."""
+    state = _state()
+    before = inventory_stamp(state.vehicles)
+
+    state.vehicles.append(state.vehicles[0])
+
+    assert inventory_stamp(state.vehicles) != before
+
+
+def test_stamp_handles_a_non_sized_vehicle_container() -> None:
+    """A container that cannot be measured must not raise; it must differ."""
+    assert inventory_stamp(None) != inventory_stamp([])
