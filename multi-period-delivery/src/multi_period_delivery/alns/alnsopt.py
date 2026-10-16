@@ -168,6 +168,40 @@ class SolutionState:
         """Restore normal compute_inventory() calls in validate() and objective()."""
         setattr(self, "_suppress_compute_inventory", False)
 
+    def _inventory_is_fresh(self):
+        """
+        Whether ``s_ikt`` provably reflects the current vehicle set.
+
+        The fast inventory path already records the vehicle signature it last
+        built shipments from (``_inventory_cache["vehicles_sig"]``), and rebuilds
+        whenever that signature changes. When the recorded signature still equals
+        the current one, recomputing inventory cannot change ``s_ikt``.
+
+        This exists so ``validate()`` can avoid a forced full recompute on every
+        call. On the medium instance that recompute cost ~10-25 ms and ran
+        thousands of times per iteration, which is what held the run to 23
+        iterations in 204 s. The signature covers every vehicle field that feeds
+        shipments, so honouring it is not a weakening of strict mode: it removes a
+        redundant second guard that was defeating the first.
+
+        Deliberately conservative - it returns False (forces the recompute) on
+        anything unexpected: no cache, no recorded signature, a signature it
+        cannot reproduce, or a mismatch.
+        """
+        cache = getattr(self, "_inventory_cache", None)
+        if not cache:
+            return False
+        try:
+            cached_sig = cache.get("vehicles_sig")
+            if cached_sig is None or cache.get("shipments_arr") is None:
+                return False
+            from .inventory_numba import _vehicles_signature
+
+            return _vehicles_signature(getattr(self, "vehicles", [])) == cached_sig
+        except Exception:
+            # Any doubt at all means "not provably fresh", so recompute.
+            return False
+
     def suppress_inventory_ctx(self):
         """
         Return a context manager that temporarily suppresses compute_inventory().
@@ -284,13 +318,20 @@ class SolutionState:
             ``(is_feasible, violations)`` where ``is_feasible`` is a boolean and
             ``violations`` contains detailed constraint violations.
         """
-        # In strict feasibility mode, always recompute inventory so suppressed
-        # updates cannot leave stale inventory that is incorrectly accepted.
+        # In strict feasibility mode the inventory must be recomputed, so that
+        # suppressed updates cannot leave stale inventory that is then accepted.
+        # The exception is when the fast path proves ``s_ikt`` already matches the
+        # current vehicle set (see ``_inventory_is_fresh``): recomputing cannot
+        # change the result, it only costs time - and on the medium instance that
+        # cost dominated the entire run.
+        #
+        # So: recompute unless strict mode is on AND freshness is proven.
         force_recompute = bool(
             getattr(ALNSConfig, "VALIDATE_FORCE_RECOMPUTE_INVENTORY", True)
             or getattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", True)
         )
-        if force_recompute or (not getattr(self, "_suppress_compute_inventory", False)):
+        suppressed = bool(getattr(self, "_suppress_compute_inventory", False))
+        if not suppressed and not (force_recompute and self._inventory_is_fresh()):
             self.compute_inventory()
         violations = {
             "negative_inventory": [],

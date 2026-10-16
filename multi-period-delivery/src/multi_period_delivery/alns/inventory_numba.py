@@ -20,7 +20,6 @@ Notes:
    shipped_cache.
 """
 
-import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -242,17 +241,31 @@ def _build_shipments_from_vehicles(state, maps: IndexMaps, P: int, S: int, H: in
 
 def _vehicle_signature(veh):
     """
-    Stable, deterministic signature of a vehicle's cargo, used to detect changes.
+    Cheap, deterministic signature of a vehicle's cargo, used to detect changes.
 
-    MD5 over sorted ``"sku|day|qty"`` items, deliberately not ``hash()``, which
-    varies between processes (PYTHONHASHSEED) and would make the cached shipments
-    array look stale on every run.
+    The cargo is canonicalised into one delimited string and digested with the
+    built-in ``hash()``. This is deliberately *not* a cryptographic digest, and
+    deliberately not the raw ``hash()`` of each key (which would drag in
+    arbitrary ``__hash__`` implementations): the string is built here, so the
+    only hashing performed is CPython's own string hash, which runs in C.
 
-    The signature covers the *number* of cargo entries and the total quantity as
-    well as the per-entry text, so a changed quantity that is not representable
-    as a float still invalidates the cache. The previous inline version dropped
-    those from the fallback signature and silently skipped unparseable
-    quantities, so the cache could be reused for a genuinely different load.
+    History: this replaced an MD5-over-sorted-strings digest. Profiling the
+    medium instance showed the old version called 1.7 million times in 60 s and
+    costing ~14 s - more than the cache it protects - because it built a string
+    per cargo entry and ran a cryptographic hash per vehicle. A first rewrite
+    using a Python-level per-character rolling mix was *worse*: it moved the work
+    from C into a Python loop (25.5 million calls to a helper). Building one
+    string and letting ``hash()`` digest it keeps the work in C.
+
+    ``hash()`` is salted per process by PYTHONHASHSEED, which is fine here: the
+    signature only has to be comparable within one run, and a fresh process
+    starts with no cache to reuse. A process change therefore causes a harmless
+    rebuild rather than a stale hit.
+
+    Quantities are folded as scaled integers so equal loads give equal signatures
+    regardless of how the value arrived (``3`` vs ``3.0``); anything not
+    representable as a finite number folds ``repr`` instead, so an odd value
+    still invalidates the cache.
     """
     fact = getattr(veh, "fact_id", None)
     vehicle_type = getattr(veh, "type", None)
@@ -270,21 +283,22 @@ def _vehicle_signature(veh):
         cargo = {}
         items_source = []
 
+    parts = []
     total_qty = 0.0
-    items = []
     for (sku_k, cargo_day), qty in items_source:
         try:
-            total_qty += float(qty)
-        except (TypeError, ValueError):
-            # Keep the entry itself in the signature (below); only the numeric
-            # total cannot account for it.
-            pass
-        items.append(f"{sku_k}|{cargo_day}|{qty!r}")
-    items.sort()
+            numeric = float(qty)
+            total_qty += numeric
+            parts.append(f"{sku_k}\x1f{cargo_day}\x1f{int(numeric * 1e6)}")
+        except (TypeError, ValueError, OverflowError):
+            # Not a finite number: fold the representation instead, so a change is
+            # still detected even though it cannot join the numeric total.
+            parts.append(f"{sku_k}\x1f{cargo_day}\x1f{qty!r}")
 
-    digest = hashlib.md5()
-    digest.update("|".join(items).encode("utf-8"))
-    return (fact, vehicle_type, day, len(cargo), total_qty, digest.hexdigest())
+    # Sorted so cargo insertion order cannot masquerade as a change.
+    parts.sort()
+    digest = hash("\x1e".join(parts))
+    return (fact, vehicle_type, day, len(cargo), total_qty, digest)
 
 
 def _vehicles_signature(vehicles):
