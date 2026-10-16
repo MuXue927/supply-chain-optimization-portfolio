@@ -92,7 +92,7 @@ from .repair_operators import (
     wrap_repair_no_args,
 )
 from .repair_utils import consolidate_route_vehicles
-from .swallowed import report_swallowed
+from .swallowed import record_swallowed, report_swallowed
 
 # For type checking only (avoid runtime import when modules are optional)
 if TYPE_CHECKING:
@@ -1167,7 +1167,11 @@ class ALNSOptimizer:
                     )
                 except Exception:
                     before_cross_period_cost = None
+                consolidation_failed = False
                 try:
+                    # The try covers only the consolidation itself, so a failure in
+                    # the reporting below cannot be mistaken for a consolidation
+                    # failure and silently swallowed.
                     consolidated = cross_period_consolidation_repair(
                         self.best_solution,
                         self.rng,
@@ -1186,25 +1190,13 @@ class ALNSOptimizer:
                             )
                         ),
                     )
-                    consolidated.validate()
                     self.best_solution = consolidated
-                    after_cross_period_cnt = len(self.best_solution.vehicles)
-                    after_cross_period_cost = float(
-                        self.best_solution.calculate_cost()
-                    )
-                    if before_cross_period_cost is not None:
-                        self.log_printer.print(
-                            "Final cross-period consolidation: "
-                            f"{before_cross_period_cnt} -> {after_cross_period_cnt} "
-                            f"vehicles, cost {before_cross_period_cost:.2f} -> "
-                            f"{after_cross_period_cost:.2f}."
-                        )
                 except Exception as exc:
-                    # The consolidation may have failed after replacing
-                    # self.best_solution, and the run still reports
-                    # "Optimization complete!". Never leave that silent: report it
-                    # and restore the pre-consolidation solution so the delivered
-                    # answer is the verified one.
+                    # Never silent: the run still reports "Optimization complete!"
+                    # and the caller receives whatever best_solution now holds, so
+                    # report it and restore the pre-consolidation solution so the
+                    # delivered answer is the verified one.
+                    consolidation_failed = True
                     self.log_printer.print(
                         "Warning: final cross-period consolidation failed "
                         f"({type(exc).__name__}: {exc}); "
@@ -1217,6 +1209,34 @@ class ALNSOptimizer:
                     )
                     if snapshot_before is not None:
                         self.best_solution = snapshot_before
+
+                # Report whichever solution is actually adopted. Computed after
+                # the handler so the numbers always describe the delivered
+                # solution. The cost is best-effort: the pre-consolidation
+                # solution may carry a defect that surfaced only inside the
+                # consolidation, and a run must not abort merely because its
+                # summary could not be computed.
+                after_cross_period_cnt = len(self.best_solution.vehicles)
+                try:
+                    after_cross_period_cost = float(
+                        self.best_solution.calculate_cost()
+                    )
+                except Exception as exc:
+                    record_swallowed(
+                        "alns_optimizer.final_consolidation_summary", exc
+                    )
+                    after_cross_period_cost = None
+                if (
+                    not consolidation_failed
+                    and before_cross_period_cost is not None
+                    and after_cross_period_cost is not None
+                ):
+                    self.log_printer.print(
+                        "Final cross-period consolidation: "
+                        f"{before_cross_period_cnt} -> {after_cross_period_cnt} "
+                        f"vehicles, cost {before_cross_period_cost:.2f} -> "
+                        f"{after_cross_period_cost:.2f}."
+                    )
 
             # Validate the final solution.
             final_feasibility, violations = self.best_solution.validate()
