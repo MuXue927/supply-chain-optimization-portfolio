@@ -9,6 +9,7 @@ implementation behavior.
 
 import logging
 import time
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -1358,28 +1359,36 @@ def compute_improvement(state: SolutionState, prev_obj: float | None = None):
         first computation for later reuse, with a safe fallback.
       - Preserve existing behavior: when prev_obj is None, still return
         (new_obj, 0.0, False).
+      - The search objective (via state.objective()) and the mixed reward (via
+        compute_mixed_operator_reward -> state.calculate_cost()) each validate
+        this same state. Open a validation-memo scope for the duration so the
+        second validation is served from the first, halving the full feasibility
+        traversal per simulated candidate. The scope is a no-op for states that
+        do not offer it.
     """
+    scope = getattr(state, "validation_memo_ctx", None)
     try:
-        # Prefer cached objective when available to avoid recomputation
-        last_obj = getattr(state, "last_objective", None)
-        dirty = getattr(state, "objective_dirty", True)
-        if last_obj is not None and not dirty:
-            new_obj = last_obj
-        else:
-            new_obj = state.objective()
-            # Best-effort cache the computed objective for subsequent calls.
-            try:
-                state.last_objective = new_obj
-                state.objective_dirty = False
-            except (TypeError, ValueError):
-                # Ignore caching failures, such as on read-only wrappers.
-                pass
+        with (scope() if scope is not None else nullcontext()):
+            # Prefer cached objective when available to avoid recomputation
+            last_obj = getattr(state, "last_objective", None)
+            dirty = getattr(state, "objective_dirty", True)
+            if last_obj is not None and not dirty:
+                new_obj = last_obj
+            else:
+                new_obj = state.objective()
+                # Best-effort cache the computed objective for subsequent calls.
+                try:
+                    state.last_objective = new_obj
+                    state.objective_dirty = False
+                except (TypeError, ValueError):
+                    # Ignore caching failures, such as on read-only wrappers.
+                    pass
 
-        _, improvement, success = compute_mixed_operator_reward(
-            state,
-            prev_obj,
-            new_obj=new_obj,
-        )
+            _, improvement, success = compute_mixed_operator_reward(
+                state,
+                prev_obj,
+                new_obj=new_obj,
+            )
     except Exception:
         new_obj = None
         improvement = 0.0

@@ -96,6 +96,15 @@ class SolutionState:
     ml_selector: Optional["MLOperatorSelector"] = None  # ML operator selector.
     inventory_manager: Any | None = field(default=None, repr=False, compare=False)
     _inventory_cache: Any | None = field(default=None, repr=False, compare=False)
+    #: Memoized ``validate()`` result, honoured only inside
+    #: ``validation_memo_ctx`` and keyed by an O(1) freshness stamp
+    #: (``_validation_key``). ``compute_improvement`` opens the scope because it
+    #: validates the same (unchanged) state twice per candidate - once through
+    #: ``objective()`` and once through ``calculate_cost()`` - so the second full
+    #: validation is served from the memo instead. Outside the scope ``validate()``
+    #: behaves exactly as before.
+    _validation_memo: Any | None = field(default=None, repr=False, compare=False)
+    _validation_memo_enabled: bool = field(default=False, repr=False, compare=False)
     _suppress_compute_inventory: bool = field(default=False, repr=False, compare=False)
     repair_audit: dict[str, dict[str, Any]] = field(
         default_factory=dict, repr=False, compare=False
@@ -316,8 +325,96 @@ class SolutionState:
         if viol.get("unmet_demand"):
             entry["fail_unmet_demand"] += 1
 
+    def _validation_key(self):
+        """O(1) key over every input ``_validate_uncached`` reads.
+
+        ``validate`` memoizes its result under this key and only reuses a memo
+        entry while the key is unchanged. The components:
+
+        * ``inventory_stamp(vehicles)`` - cargo mutations, declared solution
+          mutations, and the vehicle list's shape (the same stamp the shipped and
+          inventory caches trust);
+        * ``id(s_ikt)`` and ``s_ikt.revision`` - in-place inventory writes and a
+          wholesale replacement of the mapping;
+        * the suppression flag - it decides whether a stale inventory is
+          recomputed or used as-is, so it changes the result.
+
+        Every component is read defensively (``getattr`` defaults), and
+        ``inventory_stamp`` tolerates a non-sequence vehicle list itself, so this
+        cannot raise for a well-formed state.
+        """
+        vehicles = getattr(self, "vehicles", ())
+        s_ikt = getattr(self, "s_ikt", None)
+        return (
+            inventory_stamp(vehicles),
+            id(s_ikt),
+            getattr(s_ikt, "revision", None),
+            bool(getattr(self, "_suppress_compute_inventory", False)),
+        )
+
     def validate(self):
         """
+        Validate solution feasibility without mutating solution content.
+
+        Returns
+        -------
+        tuple
+            ``(is_feasible, violations)`` where ``is_feasible`` is a boolean and
+            ``violations`` contains detailed constraint violations.
+
+        Outside ``validation_memo_ctx`` this always performs the full check, so
+        its behaviour is unchanged. Inside the scope the result is memoized under
+        an O(1) freshness stamp (``_validation_key``) so that two validations of
+        the same, unchanged state cost one traversal instead of two. A hit returns
+        fresh containers so a caller cannot corrupt the memo.
+        """
+        if not getattr(self, "_validation_memo_enabled", False):
+            return self._validate_uncached()
+        key = self._validation_key()
+        memo = getattr(self, "_validation_memo", None)
+        if memo is not None and memo[0] == key:
+            feasible, violations = memo[1]
+            return feasible, {k: list(v) for k, v in violations.items()}
+        result = self._validate_uncached()
+        # Recompute the key: the body may have rebuilt the inventory, which moves
+        # s_ikt's revision. Storing the post-body key is what makes the very next
+        # call a hit.
+        self._validation_memo = (self._validation_key(), result)
+        # Return a copy even on the miss: the memo must keep its own containers so
+        # a caller that mutates the violations it was handed cannot corrupt it.
+        feasible, violations = result
+        return feasible, {k: list(v) for k, v in violations.items()}
+
+    def validation_memo_ctx(self):
+        """Memoize ``validate()`` results for the duration of a block.
+
+        The caller must not rely on a *changed* state inside the block unless the
+        change moves the freshness stamp the memo is keyed on - in which case the
+        memo simply misses. Used by ``compute_improvement``, which validates one
+        state twice back to back (search objective, then actual objective) and
+        would otherwise traverse the whole solution twice per simulated candidate.
+        """
+
+        class _Ctx:
+            def __init__(self, state):
+                self._state = state
+
+            def __enter__(self):
+                self._state._validation_memo_enabled = True
+                self._state._validation_memo = None
+                return self._state
+
+            def __exit__(self, exc_type, exc, tb):
+                self._state._validation_memo_enabled = False
+                self._state._validation_memo = None
+                return False
+
+        return _Ctx(self)
+
+    def _validate_uncached(self):
+        """
+        Un-memoized feasibility check that backs ``validate``.
+
         Validate solution feasibility without mutating solution content.
 
         Returns
