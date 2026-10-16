@@ -1285,10 +1285,18 @@ def compute_improvement_delta(
     if prev_obj is None:
         return None, 0.0, False
 
-    # Only use the delta path when the state's cached shipped info appears valid.
-    if getattr(state, "objective_dirty", True):
-        return None, 0.0, False
+    # Only use the delta path when the state's cached shipped info is current.
+    #
+    # This used to test ``objective_dirty``, which answers a different question:
+    # it is set by ``mark_objective_dirty`` but also cleared whenever the objective
+    # happens to be recomputed, so it does not describe the shipped data at all.
+    # ``compute_shipped`` now judges its own cache with the mutation stamp, so
+    # asking it to produce the cache is both correct and cheap - and a hit is
+    # ~1 us against ~900 us to rebuild. If the state is read-only and has no
+    # shipped_cache, the guard below still rejects it.
     shipped_cache = getattr(state, "shipped_cache", None)
+    if shipped_cache is None:
+        shipped_cache = state.compute_shipped()
     if shipped_cache is None:
         return None, 0.0, False
 
