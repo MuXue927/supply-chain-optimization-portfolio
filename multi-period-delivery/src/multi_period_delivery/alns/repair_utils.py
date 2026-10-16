@@ -16,6 +16,7 @@ from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
 from .InputDataALNS import DataALNS
 from .param_tuner import ParamAutoTuner
+from .swallowed import record_swallowed
 from .vehicle import Vehicle
 
 logger = logging.getLogger(__name__)
@@ -677,6 +678,62 @@ def consolidate_route_vehicles(
     return merged_total
 
 
+def _check_inserted_feasibility(state, inserted):
+    """
+    Cheap feasibility probe for the vehicles a repair operator just inserted.
+
+    Local overload arithmetic covers the common case without a full
+    ``validate()``/``compute_inventory()``. It is conservative in both
+    directions: a vehicle it cannot measure makes the whole probe inconclusive,
+    and an inconclusive probe falls back to the real validator.
+
+    Failure policy: if the probe cannot run *and* the validator raises, the state
+    cannot be shown to be feasible, so the result is ``(False, {"validation_error":
+    ...})``. Reporting "feasible" there let an unverified - possibly overloaded -
+    state through, and the caller's rollback treats a violation as "undo this".
+    """
+    if not inserted:
+        return True, {}
+
+    try:
+        data = state.data
+        veh_over_ids: list = []
+        for vehicle in inserted:
+            try:
+                # Volume carried on the vehicle's own day only.
+                loaded_vol = 0.0
+                for (sku_k, day_k), qty in getattr(vehicle, "cargo", {}).items():
+                    if day_k == getattr(vehicle, "day", None):
+                        sku_size = float(data.sku_sizes.get(sku_k, 0.0))
+                        loaded_vol += float(qty) * sku_size
+                cap = float(data.veh_type_cap.get(getattr(vehicle, "type", None), 0.0))
+                # Small epsilon to avoid floating-point jitter.
+                if loaded_vol > cap + 1e-9:
+                    veh_over_ids.append(getattr(vehicle, "id", None))
+            except (AttributeError, TypeError, ValueError, KeyError):
+                # Unmeasurable vehicle -> inconclusive, so use the validator
+                # instead of guessing. ``__error__`` is the marker for that; it is
+                # never reported as a violation.
+                veh_over_ids = ["__error__"]
+                break
+        if veh_over_ids == ["__error__"]:
+            logger.debug("lightweight feasibility probe inconclusive")
+        elif veh_over_ids:
+            return False, {"veh_over_load": veh_over_ids}
+        else:
+            return True, {}
+    except (AttributeError, TypeError, ValueError) as probe_error:
+        logger.debug(f"lightweight feasibility probe failed: {probe_error}")
+
+    # Fallback: the suppressed validator (original safe path).
+    try:
+        with state.suppress_inventory_ctx():
+            return state.validate()
+    except Exception as exc:
+        logger.debug(f"repair feasibility check inconclusive: {exc}")
+        return False, {"validation_error": ["inconclusive"]}
+
+
 def post_repair(
     state: SolutionState,
     inserted: list[Vehicle],
@@ -714,76 +771,28 @@ def post_repair(
     except Exception:
         merged_after_repair = 0
 
-    try:
-        # Lightweight inserted-only feasibility check to avoid a full validate/compute_inventory
-        # in the common (no-violation) case. Conservative semantics:
-        #  - Check inserted vehicles for obvious vehicle-overload violations locally.
-        #  - If the local check fails or raises, fall back to suppressed validate() as before.
-        feasible_tmp = True
-        violations_tmp = {}
+    # Lightweight inserted-only feasibility check (see the helper for the failure
+    # policy). This replaces a ~70-line try that also swallowed every error from
+    # the inventory work below, so a real defect there was invisible.
+    feasible_tmp, violations_tmp = _check_inserted_feasibility(state, inserted)
+
+    # If either check detected potential overload or negative inventory, perform full compute to get an
+    # accurate baseline before continuing (same conservative behavior as before).
+    if (
+        not feasible_tmp
+        and violations_tmp
+        and (
+            violations_tmp.get("veh_over_load")
+            or violations_tmp.get("negative_inventory")
+        )
+    ):
         try:
-            if inserted:
-                data = state.data
-                veh_over_ids = []
-                for v in inserted:
-                    try:
-                        # compute loaded volume for this vehicle (consider only cargo entries matching the vehicle's day)
-                        loaded_vol = 0.0
-                        for (sku_k, d), q in getattr(v, "cargo", {}).items():
-                            if d == getattr(v, "day", None):
-                                sku_size = float(data.sku_sizes.get(sku_k, 0.0))
-                                loaded_vol += float(q) * sku_size
-                        cap = float(
-                            data.veh_type_cap.get(getattr(v, "type", None), 0.0)
-                        )
-                        # small epsilon to avoid floating point jitter
-                        if loaded_vol > cap + 1e-9:
-                            veh_over_ids.append(getattr(v, "id", None))
-                    except Exception:
-                        # any unexpected error -> mark as inconclusive so we fallback to validate()
-                        veh_over_ids = ["__error__"]
-                        break
-                if veh_over_ids:
-                    feasible_tmp = False
-                    violations_tmp = {"veh_over_load": veh_over_ids}
-                else:
-                    feasible_tmp = True
-                    violations_tmp = {}
-            else:
-                feasible_tmp = True
-                violations_tmp = {}
-        except Exception:
-            # Fallback: try suppressed validate() (original safe path)
-            try:
-                with state.suppress_inventory_ctx():
-                    feasible_tmp, violations_tmp = state.validate()
-            except Exception as exc:
-                # Both the lightweight check and the validator failed, so the
-                # state cannot be shown to be feasible. Reporting it as feasible
-                # (the previous behaviour) let an unverified - possibly
-                # overloaded - state through. Fail closed and record why, so the
-                # later rollback decision treats it as a violation.
-                logger.debug(f"repair feasibility check inconclusive: {exc}")
-                feasible_tmp = False
-                violations_tmp = {"validation_error": ["inconclusive"]}
-        # If either check detected potential overload or negative inventory, perform full compute to get an
-        # accurate baseline before continuing (same conservative behavior as before).
-        if (
-            not feasible_tmp
-            and violations_tmp
-            and (
-                violations_tmp.get("veh_over_load")
-                or violations_tmp.get("negative_inventory")
-            )
-        ):
-            try:
-                state.compute_inventory()
-            except Exception:
-                # If compute_inventory fails, continue; later logic will handle consistency/rollback.
-                pass
-    except Exception:
-        # Defensive: do not let post_repair fail due to inventory checks
-        pass
+            state.compute_inventory()
+        except Exception as exc:
+            # Post-repair bookkeeping must not abort the search: the rollback
+            # logic below re-validates and can still discard the insertion. Record
+            # it so a systematically failing inventory rebuild stays visible.
+            record_swallowed("repair_utils.post_repair.compute_inventory", exc)
 
     # Build a diagnostic summary of inserted vehicles. Limit sampling to avoid
     # excessive string construction and I/O overhead.
