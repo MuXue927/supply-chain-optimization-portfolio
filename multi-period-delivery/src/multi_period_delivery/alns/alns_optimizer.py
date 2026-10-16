@@ -1071,257 +1071,251 @@ class ALNSOptimizer:
         if self.result is None:
             return
 
-        try:
-            # Retrieve the final solution.
-            self.best_solution = safe_state_snapshot(self.result.best_state)
+        self.best_solution = safe_state_snapshot(self.result.best_state)
 
-            # Optionally select the tracked best feasible state by actual objective.
-            tracker_stats = self.tracker.get_statistics()
-            if bool(getattr(ALNSConfig, "PREFER_FINAL_BEST_ACTUAL_SOLUTION", True)):
-                candidate_actual_best = tracker_stats.get("best_actual_solution")
-                if candidate_actual_best is not None:
-                    self.best_solution = safe_state_snapshot(candidate_actual_best)
+        # Optionally select the tracked best feasible state by actual objective.
+        tracker_stats = self.tracker.get_statistics()
+        if bool(getattr(ALNSConfig, "PREFER_FINAL_BEST_ACTUAL_SOLUTION", True)):
+            candidate_actual_best = tracker_stats.get("best_actual_solution")
+            if candidate_actual_best is not None:
+                self.best_solution = safe_state_snapshot(candidate_actual_best)
 
-            # The callback-maintained fully feasible state has highest priority.
-            callback_best_feasible = getattr(self, "best_feasible_state", None)
-            if callback_best_feasible is not None:
-                callback_snapshot = safe_state_snapshot(callback_best_feasible)
-                if self.best_solution is None:
-                    self.best_solution = callback_snapshot
-                else:
-                    try:
-                        current_cost = float(self.best_solution.calculate_cost())
-                        callback_cost = float(callback_snapshot.calculate_cost())
-                        if callback_cost < current_cost or (
-                            abs(callback_cost - current_cost) <= 1e-9
-                            and len(callback_snapshot.vehicles)
-                            < len(self.best_solution.vehicles)
-                        ):
-                            self.best_solution = callback_snapshot
-                    except Exception:
-                        # Keep the safer callback-maintained feasible state if
-                        # objective comparison is unavailable.
+        # The callback-maintained fully feasible state has highest priority.
+        callback_best_feasible = getattr(self, "best_feasible_state", None)
+        if callback_best_feasible is not None:
+            callback_snapshot = safe_state_snapshot(callback_best_feasible)
+            if self.best_solution is None:
+                self.best_solution = callback_snapshot
+            else:
+                try:
+                    current_cost = float(self.best_solution.calculate_cost())
+                    callback_cost = float(callback_snapshot.calculate_cost())
+                    if callback_cost < current_cost or (
+                        abs(callback_cost - current_cost) <= 1e-9
+                        and len(callback_snapshot.vehicles)
+                        < len(self.best_solution.vehicles)
+                    ):
                         self.best_solution = callback_snapshot
-
-            # Run one light consolidation before output and roll back if infeasible.
-            if self.best_solution is not None and getattr(
-                ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True
-            ):
-                before_cnt = len(self.best_solution.vehicles)
-                try:
-                    max_pairs = int(
-                        getattr(ALNSConfig, "FINAL_BEST_CONSOLIDATION_MAX_PAIRS", 800)
-                    )
                 except Exception:
-                    max_pairs = 800
+                    # Keep the safer callback-maintained feasible state if
+                    # objective comparison is unavailable.
+                    self.best_solution = callback_snapshot
 
-                snapshot_before = safe_state_snapshot(self.best_solution)
-                merged_cnt = 0
-                try:
-                    merged_cnt = consolidate_route_vehicles(
-                        self.best_solution, max_pairs_per_group=max(1, max_pairs)
-                    )
-                except Exception:
-                    merged_cnt = 0
-
-                if merged_cnt > 0:
-                    try:
-                        feasible_after, _ = self.best_solution.validate()
-                    except Exception:
-                        feasible_after = False
-                    cost_after = None
-                    cost_before = None
-                    try:
-                        cost_after = float(self.best_solution.calculate_cost())
-                        if snapshot_before is not None:
-                            cost_before = float(snapshot_before.calculate_cost())
-                    except Exception:
-                        pass
-                    if (
-                        not feasible_after
-                        or (
-                            cost_after is not None
-                            and cost_before is not None
-                            and cost_after > cost_before + 1e-9
-                        )
-                    ) and snapshot_before is not None:
-                        self.best_solution = snapshot_before
-                        self.log_printer.print(
-                            "Final consolidation did not improve the actual objective; rolled back.",
-                            color="yellow",
-                        )
-                    else:
-                        after_cnt = len(self.best_solution.vehicles)
-                        self.log_printer.print(
-                            f"Final consolidation merged {merged_cnt} vehicles ({before_cnt} -> {after_cnt})."
-                        )
-
-            # Run a final cross-period consolidation pass. It only keeps moves
-            # that remain feasible and reduce the actual objective.
-            if self.best_solution is not None:
-                before_cross_period_cnt = len(self.best_solution.vehicles)
-                before_cross_period_cost = None
-                try:
-                    before_cross_period_cost = float(
-                        self.best_solution.calculate_cost()
-                    )
-                except Exception:
-                    before_cross_period_cost = None
-                consolidation_failed = False
-                try:
-                    # The try covers only the consolidation itself, so a failure in
-                    # the reporting below cannot be mistaken for a consolidation
-                    # failure and silently swallowed.
-                    consolidated = cross_period_consolidation_repair(
-                        self.best_solution,
-                        self.rng,
-                        time_limit=float(
-                            getattr(
-                                ALNSConfig,
-                                "FINAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT",
-                                20.0,
-                            )
-                        ),
-                        max_moves=int(
-                            getattr(
-                                ALNSConfig,
-                                "FINAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES",
-                                60,
-                            )
-                        ),
-                    )
-                    self.best_solution = consolidated
-                except Exception as exc:
-                    # Never silent: the run still reports "Optimization complete!"
-                    # and the caller receives whatever best_solution now holds, so
-                    # report it and restore the pre-consolidation solution so the
-                    # delivered answer is the verified one.
-                    consolidation_failed = True
-                    self.log_printer.print(
-                        "Warning: final cross-period consolidation failed "
-                        f"({type(exc).__name__}: {exc}); "
-                        + (
-                            "restored the pre-consolidation solution."
-                            if snapshot_before is not None
-                            else "kept the previous solution."
-                        ),
-                        color="bold red",
-                    )
-                    if snapshot_before is not None:
-                        self.best_solution = snapshot_before
-
-                # Report whichever solution is actually adopted. Computed after
-                # the handler so the numbers always describe the delivered
-                # solution. The cost is best-effort: the pre-consolidation
-                # solution may carry a defect that surfaced only inside the
-                # consolidation, and a run must not abort merely because its
-                # summary could not be computed.
-                after_cross_period_cnt = len(self.best_solution.vehicles)
-                try:
-                    after_cross_period_cost = float(
-                        self.best_solution.calculate_cost()
-                    )
-                except Exception as exc:
-                    record_swallowed(
-                        "alns_optimizer.final_consolidation_summary", exc
-                    )
-                    after_cross_period_cost = None
-                if (
-                    not consolidation_failed
-                    and before_cross_period_cost is not None
-                    and after_cross_period_cost is not None
-                ):
-                    self.log_printer.print(
-                        "Final cross-period consolidation: "
-                        f"{before_cross_period_cnt} -> {after_cross_period_cnt} "
-                        f"vehicles, cost {before_cross_period_cost:.2f} -> "
-                        f"{after_cross_period_cost:.2f}."
-                    )
-
-            # Validate the final solution.
-            final_feasibility, violations = self.best_solution.validate()
-            if not final_feasibility:
-                self.log_printer.print(
-                    "Warning: The final best solution is infeasible!", color="bold red"
+        # Run one light consolidation before output and roll back if infeasible.
+        if self.best_solution is not None and getattr(
+            ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True
+        ):
+            before_cnt = len(self.best_solution.vehicles)
+            try:
+                max_pairs = int(
+                    getattr(ALNSConfig, "FINAL_BEST_CONSOLIDATION_MAX_PAIRS", 800)
                 )
-                fallback = getattr(self, "best_feasible_state", None)
-                if fallback is not None:
-                    fallback_snapshot = safe_state_snapshot(fallback)
-                    fallback_feasible, _ = fallback_snapshot.validate()
-                    if fallback_feasible:
-                        self.best_solution = fallback_snapshot
-                        self.log_printer.print(
-                            "Recovered the last verified feasible incumbent.",
-                            color="yellow",
+            except Exception:
+                max_pairs = 800
+
+            snapshot_before = safe_state_snapshot(self.best_solution)
+            merged_cnt = 0
+            try:
+                merged_cnt = consolidate_route_vehicles(
+                    self.best_solution, max_pairs_per_group=max(1, max_pairs)
+                )
+            except Exception:
+                merged_cnt = 0
+
+            if merged_cnt > 0:
+                try:
+                    feasible_after, _ = self.best_solution.validate()
+                except Exception:
+                    feasible_after = False
+                cost_after = None
+                cost_before = None
+                try:
+                    cost_after = float(self.best_solution.calculate_cost())
+                    if snapshot_before is not None:
+                        cost_before = float(snapshot_before.calculate_cost())
+                except Exception:
+                    pass
+                if (
+                    not feasible_after
+                    or (
+                        cost_after is not None
+                        and cost_before is not None
+                        and cost_after > cost_before + 1e-9
+                    )
+                ) and snapshot_before is not None:
+                    self.best_solution = snapshot_before
+                    self.log_printer.print(
+                        "Final consolidation did not improve the actual objective; rolled back.",
+                        color="yellow",
+                    )
+                else:
+                    after_cnt = len(self.best_solution.vehicles)
+                    self.log_printer.print(
+                        f"Final consolidation merged {merged_cnt} vehicles ({before_cnt} -> {after_cnt})."
+                    )
+
+        # Run a final cross-period consolidation pass. It only keeps moves
+        # that remain feasible and reduce the actual objective.
+        if self.best_solution is not None:
+            before_cross_period_cnt = len(self.best_solution.vehicles)
+            before_cross_period_cost = None
+            try:
+                before_cross_period_cost = float(
+                    self.best_solution.calculate_cost()
+                )
+            except Exception:
+                before_cross_period_cost = None
+            consolidation_failed = False
+            try:
+                # The try covers only the consolidation itself, so a failure in
+                # the reporting below cannot be mistaken for a consolidation
+                # failure and silently swallowed.
+                consolidated = cross_period_consolidation_repair(
+                    self.best_solution,
+                    self.rng,
+                    time_limit=float(
+                        getattr(
+                            ALNSConfig,
+                            "FINAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT",
+                            20.0,
                         )
-                    else:
-                        raise RuntimeError(
-                            "The final solution and the fallback incumbent are infeasible."
+                    ),
+                    max_moves=int(
+                        getattr(
+                            ALNSConfig,
+                            "FINAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES",
+                            60,
                         )
+                    ),
+                )
+                self.best_solution = consolidated
+            except Exception as exc:
+                # Never silent: the run still reports "Optimization complete!"
+                # and the caller receives whatever best_solution now holds, so
+                # report it and restore the pre-consolidation solution so the
+                # delivered answer is the verified one.
+                consolidation_failed = True
+                self.log_printer.print(
+                    "Warning: final cross-period consolidation failed "
+                    f"({type(exc).__name__}: {exc}); "
+                    + (
+                        "restored the pre-consolidation solution."
+                        if snapshot_before is not None
+                        else "kept the previous solution."
+                    ),
+                    color="bold red",
+                )
+                if snapshot_before is not None:
+                    self.best_solution = snapshot_before
+
+            # Report whichever solution is actually adopted. Computed after
+            # the handler so the numbers always describe the delivered
+            # solution. The cost is best-effort: the pre-consolidation
+            # solution may carry a defect that surfaced only inside the
+            # consolidation, and a run must not abort merely because its
+            # summary could not be computed.
+            after_cross_period_cnt = len(self.best_solution.vehicles)
+            try:
+                after_cross_period_cost = float(
+                    self.best_solution.calculate_cost()
+                )
+            except Exception as exc:
+                record_swallowed(
+                    "alns_optimizer.final_consolidation_summary", exc
+                )
+                after_cross_period_cost = None
+            if (
+                not consolidation_failed
+                and before_cross_period_cost is not None
+                and after_cross_period_cost is not None
+            ):
+                self.log_printer.print(
+                    "Final cross-period consolidation: "
+                    f"{before_cross_period_cnt} -> {after_cross_period_cnt} "
+                    f"vehicles, cost {before_cross_period_cost:.2f} -> "
+                    f"{after_cross_period_cost:.2f}."
+                )
+
+        # Validate the final solution.
+        final_feasibility, violations = self.best_solution.validate()
+        if not final_feasibility:
+            self.log_printer.print(
+                "Warning: The final best solution is infeasible!", color="bold red"
+            )
+            fallback = getattr(self, "best_feasible_state", None)
+            if fallback is not None:
+                fallback_snapshot = safe_state_snapshot(fallback)
+                fallback_feasible, _ = fallback_snapshot.validate()
+                if fallback_feasible:
+                    self.best_solution = fallback_snapshot
+                    self.log_printer.print(
+                        "Recovered the last verified feasible incumbent.",
+                        color="yellow",
+                    )
                 else:
                     raise RuntimeError(
-                        "The final solution is infeasible and no fallback exists."
+                        "The final solution and the fallback incumbent are infeasible."
                     )
-
-            # The final cross-period consolidation pass and any feasibility
-            # recovery run after the tracker snapshot was taken, so they can
-            # change the incumbent. Recompute the summary values from the
-            # solution that is actually emitted, rather than reporting a stale
-            # pre-consolidation objective next to the final solution cost.
-            best_search_obj = float(self.best_solution.objective())
-            best_actual_obj = float(self.best_solution.calculate_cost())
-            try:
-                final_gap = float(
-                    self.tracker._signed_gap_from_initial(
-                        best_search_obj, self.tracker.initial_search_obj
-                    )
+            else:
+                raise RuntimeError(
+                    "The final solution is infeasible and no fallback exists."
                 )
-            except Exception:
-                final_gap = float(tracker_stats["final_gap"])
-            try:
-                final_actual_gap = float(
-                    self.tracker._signed_gap_from_initial(
-                        best_actual_obj, self.tracker.initial_actual_obj
-                    )
+
+        # The final cross-period consolidation pass and any feasibility
+        # recovery run after the tracker snapshot was taken, so they can
+        # change the incumbent. Recompute the summary values from the
+        # solution that is actually emitted, rather than reporting a stale
+        # pre-consolidation objective next to the final solution cost.
+        best_search_obj = float(self.best_solution.objective())
+        best_actual_obj = float(self.best_solution.calculate_cost())
+        try:
+            final_gap = float(
+                self.tracker._signed_gap_from_initial(
+                    best_search_obj, self.tracker.initial_search_obj
                 )
-            except Exception:
-                final_actual_gap = float(tracker_stats["final_actual_gap"])
+            )
+        except Exception:
+            final_gap = float(tracker_stats["final_gap"])
+        try:
+            final_actual_gap = float(
+                self.tracker._signed_gap_from_initial(
+                    best_actual_obj, self.tracker.initial_actual_obj
+                )
+            )
+        except Exception:
+            final_actual_gap = float(tracker_stats["final_actual_gap"])
 
-            # Print statistics.
-            self.log_printer.print(
-                f"Total iterations tracked: {tracker_stats['total_iterations']}"
-            )
-            self.log_printer.print(f"Best objective found: {best_search_obj:.4f}")
-            self.log_printer.print(
-                f"Best actual objective found: {best_actual_obj:.4f}"
-            )
-            self.log_printer.print(
-                f"Final Search Gap vs Initial: {final_gap:+.2f}%"
-            )
-            self.log_printer.print(
-                f"Final Actual Gap vs Initial: {final_actual_gap:+.2f}%"
-            )
-            self.log_printer.print(
-                f"Best Search Objective (ALNS-guiding): {best_search_obj:.6f}"
-            )
-            self.log_printer.print(
-                f"Best Actual Objective (Gurobi-aligned): {best_actual_obj:.2f}"
-            )
-            self.log_printer.print(
-                f"Vehicles Used in Best Solution: {len(self.best_solution.vehicles)}"
-            )
-            self.log_printer.print(f"Best Solution Cost: {best_actual_obj:.2f}")
+        # Print statistics.
+        self.log_printer.print(
+            f"Total iterations tracked: {tracker_stats['total_iterations']}"
+        )
+        self.log_printer.print(f"Best objective found: {best_search_obj:.4f}")
+        self.log_printer.print(
+            f"Best actual objective found: {best_actual_obj:.4f}"
+        )
+        self.log_printer.print(
+            f"Final Search Gap vs Initial: {final_gap:+.2f}%"
+        )
+        self.log_printer.print(
+            f"Final Actual Gap vs Initial: {final_actual_gap:+.2f}%"
+        )
+        self.log_printer.print(
+            f"Best Search Objective (ALNS-guiding): {best_search_obj:.6f}"
+        )
+        self.log_printer.print(
+            f"Best Actual Objective (Gurobi-aligned): {best_actual_obj:.2f}"
+        )
+        self.log_printer.print(
+            f"Vehicles Used in Best Solution: {len(self.best_solution.vehicles)}"
+        )
+        self.log_printer.print(f"Best Solution Cost: {best_actual_obj:.2f}")
 
-            # Update data and write outputs.
-            self._update_demands()
-            self._update_inventory()
-            self._output_results()
-            self._generate_statistics()
-            self._write_repair_audit_report()
-
-        except Exception as e:
-            logger.error(f"Failed to process results: {e}")
-            raise
+        # Update data and write outputs.
+        self._update_demands()
+        self._update_inventory()
+        self._output_results()
+        self._generate_statistics()
+        self._write_repair_audit_report()
 
     def _write_repair_audit_report(self):
         """Write per-repair-operator feasibility audit summary to CSV."""
