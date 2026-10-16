@@ -21,7 +21,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from multi_period_delivery.alns.inventory_numba import _resolve_inventory_cache
+from multi_period_delivery.alns.inventory_numba import (
+    _resolve_inventory_cache,
+    state_to_inventory_arrays,
+)
 
 
 def _vehicle(*, cargo=None, day=1, veh_type="T1", fact_id="P1"):
@@ -183,3 +186,55 @@ def test_unattachable_cache_does_not_fail_the_computation(
 
     assert prod_arr is not None
     assert baseline0 is not None
+
+
+# ---------------------------------------------------------------------------
+# state_to_inventory_arrays no longer builds shipments by default
+# ---------------------------------------------------------------------------
+
+
+def test_state_to_arrays_skips_shipments_by_default(monkeypatch) -> None:
+    """Every caller discarded it, so building it was pure waste.
+
+    Profiling the medium instance showed this function spending ~70% of its time
+    on an array nobody used - 9,713 of 12,162 shipments builds in a 91 s run.
+    """
+    calls = {"n": 0}
+
+    def counting_build(*args, **kwargs):
+        calls["n"] += 1
+        return np.zeros((1, 1, 3))
+
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.inventory_numba._build_shipments_from_vehicles",
+        counting_build,
+    )
+    state = SimpleNamespace(s_ikt={}, data=None)
+
+    _s, shipments, _prod = state_to_inventory_arrays(state, _maps())
+
+    assert calls["n"] == 0, "shipments must not be built unless requested"
+    assert shipments is None
+
+
+def test_state_to_arrays_builds_shipments_when_asked(monkeypatch) -> None:
+    """The opt-in path must still work for any future caller that needs it."""
+    calls = {"n": 0}
+
+    def counting_build(*args, **kwargs):
+        calls["n"] += 1
+        return np.full((1, 1, 3), 5.0)
+
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.inventory_numba._build_shipments_from_vehicles",
+        counting_build,
+    )
+    state = SimpleNamespace(s_ikt={}, data=None)
+
+    _s, shipments, _prod = state_to_inventory_arrays(
+        state, _maps(), build_shipments=True
+    )
+
+    assert calls["n"] == 1
+    assert shipments is not None
+    assert np.all(shipments == 5.0)

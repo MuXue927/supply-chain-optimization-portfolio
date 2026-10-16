@@ -87,20 +87,27 @@ def build_index_maps(data) -> IndexMaps:
     )
 
 
-def state_to_inventory_arrays(state, maps: IndexMaps):
+def state_to_inventory_arrays(state, maps: IndexMaps, build_shipments: bool = False):
     """
     Convert state.s_ikt, state.vehicles (cargo) and data.sku_prod_each_day into numpy arrays:
       - s_ikt_arr: shape (P, S, H+1)  (H+1 to include day 0 baseline)
       - shipments_arr: same shape, shipments_arr[p,s,d] = total shipped (used) at day d by vehicles
       - prod_arr: same shape, production at day d
     Returns (s_ikt_arr, shipments_arr, prod_arr)
+
+    ``shipments_arr`` is **not** built by default. Profiling the medium instance
+    showed this function spending ~70% of its time constructing an array that
+    every caller discards - ``s_full, _, prod_full = ...`` at the one site that
+    wants production, and ``s_arr, _, _ = ...`` at the two that only want
+    ``s_ikt``. That was 9,713 of the 12,162 shipments builds in a 91 s run (~20 s).
+    Pass ``build_shipments=True`` if an actual array is needed.
     """
     P = maps.n_plants
     S = maps.n_skus
     H = maps.horizons
     # use float64 for numeric safety
     s_ikt_arr = np.zeros((P, S, H + 1), dtype=np.float64)
-    shipments_arr = np.zeros((P, S, H + 1), dtype=np.float64)
+    shipments_arr = None
     prod_arr = np.zeros((P, S, H + 1), dtype=np.float64)
 
     # fill s_ikt from state.s_ikt: keys are (plant, sku, day)
@@ -126,7 +133,9 @@ def state_to_inventory_arrays(state, maps: IndexMaps):
                 prod_arr[pi, si, int(day)] = float(val)
 
     # Accumulate same-day shipments exactly as state.compute_inventory() does.
-    shipments_arr = _build_shipments_from_vehicles(state, maps, P, S, H)
+    # Skipped unless asked for: no caller used the result (see the docstring).
+    if build_shipments:
+        shipments_arr = _build_shipments_from_vehicles(state, maps, P, S, H)
 
     return s_ikt_arr, shipments_arr, prod_arr
 
