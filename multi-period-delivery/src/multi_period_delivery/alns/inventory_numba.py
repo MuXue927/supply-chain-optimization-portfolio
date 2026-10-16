@@ -87,6 +87,62 @@ def build_index_maps(data) -> IndexMaps:
     )
 
 
+def _production_array(state, maps: IndexMaps, P: int, S: int, H: int):
+    """
+    Return the production array as a ``(P, S, H+1)`` float64 array.
+
+    Production comes only from ``data.sku_prod_each_day`` and the index maps - it
+    does not depend on the solution at all - so rebuilding it on every call was
+    pure recomputation. On the medium instance that fill was 318 us of a 795 us
+    ``state_to_inventory_arrays`` call (~40%), i.e. ~40% of a function called
+    ~18,000 times per 120 s run.
+
+    Cached on the data object and invalidated by identity of the maps, the shape,
+    and the production mapping itself, so a different model - or a replaced
+    production dict - cannot be served the wrong array.
+
+    The returned array is **shared**: callers must treat it as read-only. Every
+    current caller either discards it or passes it to the inventory core, which
+    only reads it.
+    """
+    sku_prod = getattr(state.data, "sku_prod_each_day", None)
+    cached = getattr(state.data, "_sku_prod_arr_cache", None)
+    if cached is not None:
+        # Compared component-wise: ``maps`` and the original mapping by identity,
+        # the shape by value. Tuple equality would compare element-wise and, with
+        # an ndarray in the key, raise "truth value is ambiguous".
+        cached_maps, cached_shape, cached_prod_id, cached_arr = cached
+        if (
+            cached_maps is maps
+            and cached_shape == (P, S, H + 1)
+            and cached_prod_id == id(sku_prod)
+        ):
+            return cached_arr
+
+    prod_arr = np.zeros((P, S, H + 1), dtype=np.float64)
+    plant_to_idx = maps.plant_to_idx
+    sku_to_idx = maps.sku_to_idx
+    for (plant, sku, day), val in (sku_prod or {}).items():
+        pi = plant_to_idx.get(plant)
+        si = sku_to_idx.get(sku)
+        if pi is None or si is None:
+            continue
+        if 0 <= day <= H:
+            prod_arr[pi, si, int(day)] = float(val)
+
+    try:
+        state.data._sku_prod_arr_cache = (
+            maps,
+            (P, S, H + 1),
+            id(sku_prod),
+            prod_arr,
+        )
+    except (AttributeError, TypeError):
+        # Best effort: without the cache the next call rebuilds.
+        pass
+    return prod_arr
+
+
 def state_to_inventory_arrays(state, maps: IndexMaps, build_shipments: bool = False):
     """
     Convert state.s_ikt, state.vehicles (cargo) and data.sku_prod_each_day into numpy arrays:
@@ -108,7 +164,8 @@ def state_to_inventory_arrays(state, maps: IndexMaps, build_shipments: bool = Fa
     # use float64 for numeric safety
     s_ikt_arr = np.zeros((P, S, H + 1), dtype=np.float64)
     shipments_arr = None
-    prod_arr = np.zeros((P, S, H + 1), dtype=np.float64)
+    # Production is solution-independent, so it is cached (see the helper).
+    prod_arr = _production_array(state, maps, P, S, H)
 
     # fill s_ikt from state.s_ikt: keys are (plant, sku, day)
     s_ikt = getattr(state, "s_ikt", {})
@@ -120,17 +177,8 @@ def state_to_inventory_arrays(state, maps: IndexMaps, build_shipments: bool = Fa
         if 0 <= day <= H:
             s_ikt_arr[pi, si, int(day)] = float(val)
 
-    # fill production array from state.data.sku_prod_each_day (or data)
-    data = getattr(state, "data", None)
-    if data is not None:
-        sku_prod = getattr(data, "sku_prod_each_day", {})
-        for (plant, sku, day), val in sku_prod.items():
-            pi = maps.plant_to_idx.get(plant)
-            si = maps.sku_to_idx.get(sku)
-            if pi is None or si is None:
-                continue
-            if 0 <= day <= H:
-                prod_arr[pi, si, int(day)] = float(val)
+    # Production comes from the cached helper above; it has no dependence on the
+    # solution, so it is not rebuilt here.
 
     # Accumulate same-day shipments exactly as state.compute_inventory() does.
     # Skipped unless asked for: no caller used the result (see the docstring).
