@@ -1625,48 +1625,25 @@ def regret_based_repair(
             new_vs = state.vehicles[before_len:]
             if new_vs:
                 inserted_vehicles.extend(new_vs)
-                # state has been changed by a committed load -> invalidate best-effort caches only
+                # state has been changed by a committed load -> invalidate caches.
                 try:
-                    # prefer a proper API if available
-                    if hasattr(state, "mark_objective_dirty"):
-                        try:
-                            state.mark_objective_dirty()
-                        except Exception:
-                            # fallback to manual invalidation
-                                                            state.shipped_cache = None
-                                                            state.last_objective = None
-                                                            state.objective_dirty = True
-                    else:
-                                                    state.shipped_cache = None
-                                                    state.last_objective = None
-                                                    state.objective_dirty = True
-                except Exception:
-                    # Ignore failures to avoid disrupting the main loop.
-                    pass
+                    state.mark_objective_dirty()
+                except Exception as exc:
+                    # Cache invalidation is best-effort, but a systematically
+                    # failing call would mean stale objectives feed every later
+                    # comparison, so record it instead of ignoring it silently.
+                    record_swallowed("repair_operators.greedy_repair.invalidate", exc)
             else:
                 # Compatibility fallback: retain the original vehicle record if
                 # veh_loading did not append it to state.vehicles.
                 actual_committed = vehicle.cargo.get((sku_sel, day_sel), 0)
                 if actual_committed > 0:
                     inserted_vehicles.append(vehicle)
-                # state has been changed by a committed load -> invalidate best-effort caches only
+                # state has been changed by a committed load -> invalidate caches.
                 try:
-                    # prefer a proper API if available
-                    if hasattr(state, "mark_objective_dirty"):
-                        try:
-                            state.mark_objective_dirty()
-                        except Exception:
-                            # fallback to manual invalidation
-                                                            state.shipped_cache = None
-                                                            state.last_objective = None
-                                                            state.objective_dirty = True
-                    else:
-                                                    state.shipped_cache = None
-                                                    state.last_objective = None
-                                                    state.objective_dirty = True
-                except Exception:
-                    # Ignore failures to avoid disrupting the main loop.
-                    pass
+                    state.mark_objective_dirty()
+                except Exception as exc:
+                    record_swallowed("repair_operators.greedy_repair.invalidate", exc)
         except Exception:
             # Commit failed; skip and continue. The next loop reevaluates unmet
             # demand entries.

@@ -260,10 +260,7 @@ def random_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in remove_indices
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     post_destroy(state, removed, "random_removal", prev_obj=prev_obj, t0=t0)
     print(
@@ -398,10 +395,7 @@ def worst_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in selected_indices
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     post_destroy(state, removed, "worst_removal", prev_obj=prev_obj, t0=t0)
     print(
@@ -526,10 +520,7 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
         veh for i, veh in enumerate(state.vehicles) if i not in remove_set
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     # Pass partial_updates to post_destroy through extra so post_destroy can
     # perform batch restoration and validation centrally. The operator does not
@@ -666,10 +657,7 @@ def surplus_inventory_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in selected_indices
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     post_destroy(state, removed, "surplus_inventory_removal", prev_obj=prev_obj, t0=t0)
     print(
@@ -802,10 +790,7 @@ def shaw_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in remove_indices
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     # Include operator context in the log for attribution and debugging:
     # seed_idx, params, and degree.
@@ -1007,10 +992,7 @@ def periodic_shaw_removal(
             state.vehicles = [
                 veh for i, veh in enumerate(state.vehicles) if i not in remove_indices
             ]
-            try:
-                state.mark_objective_dirty()
-            except AttributeError:
-                pass
+            state.mark_objective_dirty()
             post_destroy(
                 state, removed, "periodic_shaw_removal", prev_obj=prev_obj, t0=t0
             )
@@ -1144,10 +1126,7 @@ def periodic_shaw_removal(
     else:
         removed = []
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
     # Let post_destroy apply partial_updates in batch. The operator no longer
     # directly modifies state.s_ikt or veh.cargo outside this controlled path.
     try:
@@ -1332,10 +1311,7 @@ def cross_period_dealer_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in remove_index_set
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except Exception:
-        pass
+    state.mark_objective_dirty()
 
     post_destroy(
         state,
@@ -1476,10 +1452,7 @@ def period_range_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in remove_set
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except Exception:
-        pass
+    state.mark_objective_dirty()
 
     extra_payload = {
         "segment_start_day": int(start_day),
@@ -1705,10 +1678,7 @@ def path_removal(
         veh for i, veh in enumerate(state.vehicles) if i not in remove_indices
     ]
 
-    try:
-        state.mark_objective_dirty()
-    except AttributeError:
-        pass
+    state.mark_objective_dirty()
 
     post_destroy(state, removed, "path_removal", prev_obj=prev_obj, t0=t0)
     print(
