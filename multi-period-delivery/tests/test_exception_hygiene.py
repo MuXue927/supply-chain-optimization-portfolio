@@ -39,7 +39,7 @@ import pytest
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers). Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 394
+BLIND_EXCEPT_BASELINE = 393
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
