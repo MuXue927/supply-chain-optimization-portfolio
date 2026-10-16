@@ -1274,23 +1274,30 @@ def compute_improvement_delta(
       improvement = prev_obj - new_obj
 
     If any required information is missing or non-finite, returns (None, 0.0, False).
+
+    Note that ``(None, 0.0, False)`` is also the *caller's* signal to fall back to
+    a full simulation, which is the expensive path this function exists to avoid.
+    So a defect that made every call raise would silently disable the fast path
+    for the whole run and quietly make the search much slower. Unusable *data*
+    (non-finite numbers) therefore returns the tuple, while an unexpected error is
+    recorded and propagated as the same tuple - but never invisibly.
     """
+    if prev_obj is None:
+        return None, 0.0, False
+
+    # Only use the delta path when the state's cached shipped info appears valid.
+    if getattr(state, "objective_dirty", True):
+        return None, 0.0, False
+    shipped_cache = getattr(state, "shipped_cache", None)
+    if shipped_cache is None:
+        return None, 0.0, False
+
     try:
-        if prev_obj is None:
-            return None, 0.0, False
-
-        # Only use the delta path when the state's cached shipped info appears valid.
-        if getattr(state, "objective_dirty", True):
-            return None, 0.0, False
-        shipped_cache = getattr(state, "shipped_cache", None)
-        if shipped_cache is None:
-            return None, 0.0, False
-
         data = state.data
-        try:
-            scale_factor = float(getattr(ALNSConfig, "SCALE_FACTOR", 1e-3))
-        except Exception:
-            scale_factor = 1e-3
+        # Config reads are not guarded individually: getattr already supplies the
+        # default, so the only way float() can raise is a mis-typed configuration
+        # value, and silently substituting the default would hide exactly that.
+        scale_factor = float(getattr(ALNSConfig, "SCALE_FACTOR", 1e-3))
 
         # current shipped and demand
         current_shipped = int(shipped_cache.get((dealer, sku_id), 0))
@@ -1301,10 +1308,7 @@ def compute_improvement_delta(
         reduction = min(int(qty), unmet_now)
 
         # unscaled components
-        try:
-            demand_penalty_factor = float(getattr(data, "param_pun_factor1", 1.0))
-        except Exception:
-            demand_penalty_factor = 1.0
+        demand_penalty_factor = float(getattr(data, "param_pun_factor1", 1.0))
         demand_penalty_reduction = demand_penalty_factor * reduction
 
         vehicle_cost = float(data.veh_type_cost.get(veh_type, 0.0))
@@ -1313,21 +1317,24 @@ def compute_improvement_delta(
         min_load = float(data.veh_type_min_load.get(veh_type, 0.0))
         min_load_penalty = 0.0
         if loaded_vol < min_load:
-            try:
-                min_load_penalty = float(getattr(data, "param_pun_factor3", 0.0)) * (
-                    min_load - loaded_vol
-                )
-            except Exception:
-                min_load_penalty = 0.0
+            min_load_penalty = float(getattr(data, "param_pun_factor3", 0.0)) * (
+                min_load - loaded_vol
+            )
 
         delta_unscaled = vehicle_cost + min_load_penalty - demand_penalty_reduction
         delta_scaled = delta_unscaled * scale_factor
 
         new_obj = float(prev_obj + delta_scaled)
         improvement = float(np.clip(prev_obj - new_obj, -1e9, 1e9))
+        if not (improvement == improvement):  # NaN
+            return None, 0.0, False
         success = improvement > 0.0
         return new_obj, improvement, success
-    except Exception:
+    except Exception as exc:
+        # The estimate itself is unusable, so the caller falls back to a full
+        # simulation. Record it: without this, a systematically failing fast path
+        # would be indistinguishable from "the fast path never applies".
+        record_swallowed("repair_utils.compute_improvement_delta", exc)
         return None, 0.0, False
 
 
