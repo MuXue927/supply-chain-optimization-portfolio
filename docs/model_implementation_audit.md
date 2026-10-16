@@ -26,6 +26,23 @@
 
 Everything else that was checked lines up; see §8.
 
+> **Status table (2026-10-16, later the same day).** The body below is the original
+> audit text; this table records what has since been done, so a reader does not have
+> to reconstruct the state from the per-finding notes.
+>
+> | # | Finding | Status |
+> | ---: | --- | --- |
+> | 1 | Unseeded vehicle-type draw | **Fixed** - both loaders seed before the draw; regression tests exist (see the note below) |
+> | 2 | Availability caps + fixed type mix, not "unlimited availability" | **Open, by design** - the type mix remains instance data; this is a modelling decision for the author, not a bug to patch silently |
+> | 3 | `floor` where an upper bound needs `ceil` | **Open** - low priority; the route-local path is not affected |
+> | 4 | Fleet cap is per period, not in total | **Open** - holds for the monolithic formulation |
+> | 5 | Global per-vehicle indexing inflates the model | **Addressed on the route-local path** (measured 14.8x smaller); the legacy monolithic path is unchanged |
+> | 6 | Demand constraint is documented as an equality, coded as `>=` | **Open, documented** - intentional per §9 |
+>
+> **Scope note.** Findings 2-6 concern the **monolithic / column-generation models
+> that the commercial solvers run**. They do **not** block work on the multi-period
+> **ALNS** heuristic, which is a separate subsystem in this repository.
+
 > **Status update (2026-10-16).** Finding 1 is **fixed**. `InputDataSingle.load()`
 > and `InputDataMultiple.load()` now call `random.seed(self.seed)` immediately
 > before the vehicle-type draw, with `seed` defaulting to `20260408` - the same

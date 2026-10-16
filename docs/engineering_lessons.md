@@ -528,6 +528,61 @@ claim production-scale performance.
 - tiny tests are solved under the restricted mode when that is sufficient;
 - large benchmark claims are made only with the appropriate runtime.
 
+### 3.8 Performance work needs its own measurement discipline
+
+Six lessons from a campaign that made the multi-period ALNS about 8x faster per
+iteration, each one learned by getting it wrong first. They apply to any later
+optimisation round.
+
+**3.8.1 A profiler's saving is not an end-to-end saving.** A change that removed
+14.8 s of `tottime` from the profile made the end-to-end run **4% slower**. The
+profiler is for *locating* work; only a controlled measurement decides whether to
+keep a change. Do not report a profile delta as a speed-up.
+
+**3.8.2 Compare by toggling, not by comparing two runs.** Wall-clock iteration
+counts on this machine swing by 3x for identical code (the same build produced 74,
+90, 117, 135, 164 and 171 iterations across runs). A before/after of two separate
+runs proves nothing. Run both variants in ONE process, alternating, and compare
+averages.
+
+**3.8.3 Check the share before optimising the function.** Making one function 3x
+faster moved the end-to-end time by 1.2%, because that function was a small share
+of the total. Estimate `share x speed-up` before starting; the fix that matters is
+the one multiplying a large share.
+
+**3.8.4 Never trade solution quality for speed silently.** An optimisation that
+made a repair operator 5x faster also changed its results (objective +49 on a
+medium instance, reproducibly). It was reverted. Every performance change must be
+accepted on **both** time and solution quality; treat a changed objective as a
+correctness signal, not as noise.
+
+**3.8.5 Prefer deciding a guaranteed failure before the expensive step.** The
+largest single win (roughly half the run) came from proving, from the current state
+alone, that a candidate merge would drive inventory negative - so it could be
+skipped *before* cloning the state. Where a cheap test provably equals an expensive
+one, moving it earlier removes the expensive work without changing behaviour.
+Prove the equivalence by comparing against the expensive path on **every** reachable
+case (here: 5,570 of them, 0 disagreements) *before* relying on it.
+
+**3.8.6 Instrumented measurement must be verified before it is trusted.** A
+source-level probe injected counters at textual anchors; three separate mistakes
+(anchors not stripped, an anchor inside a multi-line call, an anchor on a
+compound-statement header) produced **zero** or invalid instrumentation while
+appearing to run. Compile the instrumented source and assert that injections
+actually landed before drawing any conclusion from the numbers.
+
+**Evidence required:**
+
+- speed claims come from a toggled A/B in one process, not two runs;
+- the solution objective is reported alongside the time;
+- any cache or early-exit optimisation is checked for staleness against the full
+  path (e.g. a probe that re-derives the value on every cache hit and compares);
+- a source-instrumentation probe compiles and counts its injections first.
+
+Regression tests: `multi-period-delivery/tests/test_inventory_freshness.py`,
+`test_incremental_inventory_check.py`, `test_shipped_cache.py`,
+`test_inventory_cache_helpers.py`, `test_sikt_dict.py`.
+
 ---
 
 ## 4. Git and repository hygiene lessons
