@@ -360,7 +360,7 @@ class SolutionState:
 
             maps = getattr(self, "_inventory_maps", None)
             if maps is None:
-                maps = inventory_numba.build_index_maps(self.data)
+                maps = inventory_numba.index_maps(self.data)
             # Build s_arr with shape (P, S, H + 1).
             s_arr, _, _ = inventory_numba.state_to_inventory_arrays(self, maps)
             # Locate negative inventory entries.
@@ -429,7 +429,7 @@ class SolutionState:
 
             maps = getattr(self, "_inventory_maps", None)
             if maps is None:
-                maps = inventory_numba.build_index_maps(self.data)
+                maps = inventory_numba.index_maps(self.data)
             s_arr, _, _ = inventory_numba.state_to_inventory_arrays(self, maps)
             # sum over sku axis -> shape (P, H+1)
             plant_day_tot = s_arr.sum(axis=1)
