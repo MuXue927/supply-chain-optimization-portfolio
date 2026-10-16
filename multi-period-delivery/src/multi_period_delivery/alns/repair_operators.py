@@ -1522,6 +1522,18 @@ def regret_based_repair(
                             # Fall through to the full simulation path on any error.
                             pass
 
+                        # A non-finite baseline objective (a hard physical
+                        # violation) makes the mixed reward "zero improvement,
+                        # failure" for *every* candidate: compute_mixed_operator_reward
+                        # returns exactly that as soon as prev_obj is non-finite,
+                        # before it looks at the state. The simulation below cannot
+                        # change that verdict, so record the same memo entry it
+                        # would have produced and skip it. (Measured: this is the
+                        # *only* reason a candidate ever reaches the simulation here.)
+                        if prev_obj is not None and not np.isfinite(prev_obj):
+                            global_memo[combined_key] = (0.0, False)
+                            continue
+
                         # Use tmp_base (single copy) and apply+rollback to avoid repeated copies.
                         if tmp_base is None:
                             try:
