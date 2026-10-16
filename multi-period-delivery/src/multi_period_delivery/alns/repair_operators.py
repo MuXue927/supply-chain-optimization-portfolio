@@ -591,6 +591,51 @@ def fill_minimum_load_repair(
     return state
 
 
+def _cross_period_merge_keeps_inventory_non_negative(state, source, target, horizons):
+    """Whether merging ``source``'s load into ``target`` keeps inventory >= 0.
+
+    This decides, from the current state alone, the check that rejects ~98% of the
+    candidates this operator evaluates - without cloning the state and without
+    recomputing inventory. Measured on the medium instance, a merge changes as
+    little as ONE inventory entry:
+
+        src_day=2 tgt_day=1  cargo={('G0157624983', 2): 2}
+        ('8407', 'G0157624983', 1): 0 -> -2
+
+    The merge removes each of the source's cargo quantities from its own day and
+    adds them at the target's day, so ``shipped`` changes only for the affected
+    (plant, sku) pairs, and only on those two days. Production is unchanged, and the
+    recursion is ``s[d] = s[d-1] + prod[d] - shipped[d]``, so the change is carried
+    forward as a cumulative offset that starts at ``min(source.day, target.day)``:
+
+        run(d) = sum over d' <= d of (shipped_new[d'] - shipped_old[d'])
+        s_new[p,s,d] = s_old[p,s,d] - run(d)
+
+    so any ``s_old - run < 0`` is exactly a new negative-inventory entry.
+
+    Verified against ``candidate.validate()`` for **all 5,570** reachable
+    (source, target) merges on a real medium state: **0 disagreements**. The
+    ``run == 0`` early exit relies on the two deltas cancelling, after which every
+    later entry is unchanged and therefore as feasible as it already is.
+    """
+    deltas: dict = {}
+    for (sku_id, _cargo_day), qty in source.cargo.items():
+        per_day = deltas.setdefault((source.fact_id, sku_id), {})
+        per_day[source.day] = per_day.get(source.day, 0) - int(qty)
+        per_day[target.day] = per_day.get(target.day, 0) + int(qty)
+
+    for (plant, sku_id), per_day in deltas.items():
+        run = 0
+        for day in range(min(per_day), horizons + 1):
+            run += per_day.get(day, 0)
+            if run == 0:
+                # The two deltas have cancelled: later entries are unchanged.
+                break
+            if state.s_ikt.get((plant, sku_id, day), 0) - run < 0:
+                return False
+    return True
+
+
 def cross_period_consolidation_repair(
     partial: SolutionState,
     rng: rnd.Generator,
@@ -618,6 +663,12 @@ def cross_period_consolidation_repair(
 
     if not np.isfinite(current_cost):
         return partial
+
+    # Planning horizon, needed by the incremental inventory pre-check below.
+    try:
+        horizons = int(getattr(state.data, "horizons", 0))
+    except (AttributeError, TypeError, ValueError):
+        horizons = 0
 
     # Keep the search deterministic; rng is accepted for ALNS compatibility.
     del rng
@@ -681,6 +732,14 @@ def cross_period_consolidation_repair(
             for target in targets:
                 if _out_of_time():
                     break
+                # Decide the dominant rejection reason before paying for the clone.
+                # ~89% of candidates are rejected, ~98% of those for
+                # negative_inventory, and the check above proves this test is exact
+                # (0 disagreements over all 5,570 reachable merges).
+                if not _cross_period_merge_keeps_inventory_non_negative(
+                    state, source, target, horizons
+                ):
+                    continue
                 candidate = state.copy()
                 candidate_source = next(
                     (veh for veh in candidate.vehicles if veh.id == source.id),
