@@ -547,8 +547,10 @@ def build_resource_pool(state: SolutionState, data: DataALNS):
         key = (veh.fact_id, veh.day)
         vehicles_by_plant_day.setdefault(key, []).append(veh)
 
-    for plant in data.plants:
-        for sku_id in data.skus_plant.get(plant, []):
+    # Sorted: ``plants`` and ``skus_plant[*]`` are sets, so iterating them in
+    # place makes the pool's construction order vary with PYTHONHASHSEED.
+    for plant in sorted(data.plants):
+        for sku_id in sorted(data.skus_plant.get(plant, [])):
             for day in range(1, data.horizons + 1):
                 prev_inv = state.s_ikt.get((plant, sku_id, day - 1), 0)
                 prod = data.sku_prod_each_day.get((plant, sku_id, day), 0)

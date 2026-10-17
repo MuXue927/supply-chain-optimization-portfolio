@@ -1732,8 +1732,10 @@ def inventory_level_removal(
     anomaly_score_map = {}  # (plant, sku) -> anomaly_score
 
     try:
-        for plant in state.data.plants:
-            for sku_id in state.data.skus_plant.get(plant, set()):
+        # Sorted: both sources are sets, so insertion order would otherwise
+        # depend on PYTHONHASHSEED and change which vehicles this removes.
+        for plant in sorted(state.data.plants):
+            for sku_id in sorted(state.data.skus_plant.get(plant, set())):
                 total_demand = sum(
                     qty
                     for (_dealer, demand_sku), qty in state.data.demands.items()

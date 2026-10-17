@@ -1131,7 +1131,17 @@ def veh_loading(state: SolutionState, veh: Vehicle, orders: dict[str, int]):
             prev_inv = s_ikt.get((fact_id, sku_id, day - 1), 0)
             production = prod_get((fact_id, sku_id, day), 0)
             used_qty = used_inv.get(sku_id, 0)
-            available = prev_inv + production - used_qty
+            # Shipping lowers every closing balance from ``day`` to the end of
+            # the horizon, so the binding limit is the smallest balance over
+            # that suffix - not just the balance of ``day``. Using only the
+            # day's balance let a load ship while a later day had no slack,
+            # which ended in negative inventory.
+            day_available = prev_inv + production - used_qty
+            suffix_available = min(
+                s_ikt.get((fact_id, sku_id, d), 0)
+                for d in range(day, horizons + 1)
+            )
+            available = min(day_available, suffix_available)
             if available <= 0:
                 break
 

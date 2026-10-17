@@ -7,17 +7,15 @@ search actually runs.
 Measured on the small instance (2026-10-17):
 
 * all 10 destroys leave a hard-feasible partial state;
-* all 110 pairs keep ``s_ikt`` consistent and never lose coverage;
-* **4 pairs reproducibly overship into negative inventory** after repair:
-  ``worst_removal + smart_batch_repair``, ``periodic_shaw_removal +
-  smart_batch_repair``, ``periodic_shaw_removal + regret_based_repair``, and
-  ``periodic_shaw_removal + lookahead_repair``. A further pair or two can appear
-  depending on ``PYTHONHASHSEED`` (set iteration order), so the composition is
-  not reproducible across processes yet.
+* all 110 pairs keep ``s_ikt`` consistent, never lose coverage, and are
+  hard-feasible.
 
-The deterministic invariants are asserted for all pairs. The four reproducible
-defects are pinned as strict ``xfail`` cases: when a fix lands they will
-``xpass`` and fail the suite, which is the signal to delete the marker.
+Before the suffix-availability guard (2026-10-17) four pairs reproducibly
+overshipped into negative inventory: ``worst_removal + smart_batch_repair``,
+``periodic_shaw_removal + smart_batch_repair``,
+``periodic_shaw_removal + regret_based_repair`` and
+``periodic_shaw_removal + lookahead_repair``. Those are covered by the matrix
+assertion here, so a regression fails with the pair name.
 """
 
 from __future__ import annotations
@@ -87,15 +85,6 @@ REPAIR_OPERATORS = {
     ),
 }
 
-# Reproducible under every observed PYTHONHASHSEED (2026-10-17).
-KNOWN_OVERSHIP = (
-    ("worst_removal", "smart_batch_repair"),
-    ("periodic_shaw_removal", "smart_batch_repair"),
-    ("periodic_shaw_removal", "regret_based_repair"),
-    ("periodic_shaw_removal", "lookahead_repair"),
-)
-
-
 def _load_data() -> DataALNS:
     data = DataALNS(
         str(BASE / "datasets" / "multiple-periods" / "small"),
@@ -150,22 +139,6 @@ def test_destroy_repair_keeps_coverage_and_inventory(
     assert _inventory_consistent(result), (
         f"{destroy_name} + {repair_name} left s_ikt inconsistent"
     )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "known overship: these compositions end with negative inventory "
-        "(plan A3, 2026-10-17); remove this marker when fixed"
-    ),
-)
-@pytest.mark.parametrize("destroy_name,repair_name", KNOWN_OVERSHIP)
-def test_known_overship_compositions_are_hard_feasible(
-    feasible_solution: SolutionState, destroy_name: str, repair_name: str
-) -> None:
-    state = DESTROY_OPERATORS[destroy_name](
-        feasible_solution.copy(), np.random.default_rng(SEED)
+    assert _hard_ok(result), (
+        f"{destroy_name} + {repair_name} produced a hard violation"
     )
-    result = REPAIR_OPERATORS[repair_name](state, np.random.default_rng(SEED))
-
-    assert _hard_ok(result)

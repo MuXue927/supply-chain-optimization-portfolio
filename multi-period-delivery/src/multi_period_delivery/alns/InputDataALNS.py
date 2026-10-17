@@ -572,8 +572,12 @@ class DataALNS:
         """
         if not hasattr(self, "_supply_chain_cache"):
             supply_chain = defaultdict(set)
-            for plant, skus_supply in self.skus_plant.items():
-                for dealer, skus_need in self.skus_dealer.items():
+            # Iterate the set-derived maps in sorted order: their insertion order
+            # (and therefore this dict's order) otherwise depends on
+            # PYTHONHASHSEED, which fed non-reproducible allocation order into
+            # the repair operators.
+            for plant, skus_supply in sorted(self.skus_plant.items()):
+                for dealer, skus_need in sorted(self.skus_dealer.items()):
                     inter = skus_supply.intersection(skus_need)
                     if inter:
                         supply_chain[plant, dealer] = inter
