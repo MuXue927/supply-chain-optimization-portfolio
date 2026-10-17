@@ -1282,6 +1282,10 @@ def regret_based_repair(
     time_limit = min(60.0, max(5.0, time_limit))
     repair_baseline_obj = prev_obj_saved
 
+    # Carried across while iterations: the pool adjusted after the previous
+    # commit. ``objective()``/``compute_inventory`` invalidate the state cache
+    # during the iteration, so it is re-attached just before the next build.
+    resource_pool = None
     while time.time() - t0 < time_limit:
         # Get the current unmet demand.
         removal = get_unmet_demand(state)
@@ -1297,6 +1301,11 @@ def regret_based_repair(
         # Cache the supply-chain map and build the resource pool once to avoid
         # repeated availability calculations in the inner loop.
         supply_chain = data.construct_supply_chain()
+        # Re-attach the pool adjusted at the end of the previous iteration. A full
+        # rebuild costs ~11 ms and used to run on every while iteration; the
+        # adjustment is exact (see the commit block), so reuse it instead.
+        if resource_pool is not None:
+            state._resource_pool_cache = resource_pool
         resource_pool = _construct_resource_pool(state, data)
         # Bind hot read-only dictionaries locally to reduce attribute lookup
         # overhead.
@@ -1687,11 +1696,16 @@ def regret_based_repair(
             # reevaluated.
             continue
         vehicle = Vehicle(plant_sel, dealer_sel, veh_type_sel, day_sel, data)
+        _pool_inv_before = None
         try:
             before_len = len(state.vehicles)
             commit_qty = _coerce_int(qty_to_commit, 0)
             if commit_qty <= 0:
                 continue
+            # Snapshot the shipment-day inventory first: the amount actually
+            # shipped (veh_loading can clamp it) drives the incremental pool
+            # update below.
+            _pool_inv_before = state.s_ikt.get((plant_sel, sku_sel, day_sel), 0)
             veh_loading(state, vehicle, {sku_sel: commit_qty}, commit=True)
             new_vs = state.vehicles[before_len:]
             if new_vs:
@@ -1719,6 +1733,24 @@ def regret_based_repair(
             # Commit failed; skip and continue. The next loop reevaluates unmet
             # demand entries.
             continue
+
+        # Update the resource pool incrementally instead of rebuilding it at the
+        # top of the next while iteration. A shipment of `shipped` units on
+        # (plant, sku, day) lowers availability for that day (through `used`) and
+        # for every later day (through s_ikt) by exactly `shipped`. Clamping is
+        # idempotent under subtraction, so max(0, old - shipped) matches a full
+        # rebuild. The adjusted object is carried in the local ``resource_pool``
+        # and re-attached at the top of the next iteration.
+        if _pool_inv_before is not None:
+            shipped = _pool_inv_before - state.s_ikt.get(
+                (plant_sel, sku_sel, day_sel), 0
+            )
+            if shipped > 0:
+                for d in range(day_sel, horizons + 1):
+                    pool_key = (plant_sel, sku_sel, d)
+                    resource_pool[pool_key] = max(
+                        0, resource_pool.get(pool_key, 0) - shipped
+                    )
 
     repair_baseline_value: float = float(
         repair_baseline_obj if repair_baseline_obj is not None else 0.0
