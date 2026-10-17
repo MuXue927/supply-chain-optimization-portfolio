@@ -289,6 +289,7 @@ def veh_loading(
     orders: dict[str, int],
     commit: bool = True,
     skip_compute_inventory: bool = True,
+    suffix_safe: bool = False,
 ) -> bool:
     """
     Wrapper that delegates to
@@ -320,7 +321,7 @@ def veh_loading(
     if not commit:
         # Simulate on a copy without touching the real state.
         tmp = state.copy()
-        _alnsopt.veh_loading(tmp, veh, orders)
+        _alnsopt.veh_loading(tmp, veh, orders, suffix_safe=suffix_safe)
         return True
 
     # commit == True: suppress compute_inventory when possible for batch updates.
@@ -333,7 +334,7 @@ def veh_loading(
                 orig_compute()
             # Temporarily disable compute_inventory with a no-op replacement.
             state.compute_inventory = lambda: None
-            _alnsopt.veh_loading(state, veh, orders)
+            _alnsopt.veh_loading(state, veh, orders, suffix_safe=suffix_safe)
         except Exception:
             # On any exception, restore the original function and re-raise so
             # the caller can execute fallback logic.
@@ -351,7 +352,7 @@ def veh_loading(
         return True
     else:
         # Original behavior: do not suppress compute_inventory.
-        _alnsopt.veh_loading(state, veh, orders)
+        _alnsopt.veh_loading(state, veh, orders, suffix_safe=suffix_safe)
         return True
 
 
@@ -391,6 +392,7 @@ def commit_load_with_tracking(
     qty: int,
     day: int,
     skip_compute_inventory: bool = True,
+    suffix_safe: bool = False,
 ) -> tuple[int, list[Vehicle]]:
     """
     Commit a single-SKU load and return (actual_loaded_qty, appended_new_vehicles).
@@ -412,6 +414,7 @@ def commit_load_with_tracking(
         {sku_id: request_qty},
         commit=True,
         skip_compute_inventory=skip_compute_inventory,
+        suffix_safe=suffix_safe,
     )
 
     after_route_qty = 0
@@ -1035,6 +1038,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                     request_qty,
                     day,
                     skip_compute_inventory=True,
+                    suffix_safe=True,
                 )
             except Exception:
                 continue
@@ -1060,6 +1064,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                     request_qty,
                     day,
                     skip_compute_inventory=True,
+                    suffix_safe=True,
                 )
                 if actual_loaded > 0:
                     loaded_total += actual_loaded
@@ -1150,6 +1155,7 @@ def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
                     remain_to_load,
                     day,
                     skip_compute_inventory=True,
+                    suffix_safe=True,
                 )
             except Exception:
                 continue
@@ -1169,6 +1175,7 @@ def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
                     remain_to_load,
                     day,
                     skip_compute_inventory=True,
+                    suffix_safe=True,
                 )
                 if actual_loaded > 0:
                     if new_vs:

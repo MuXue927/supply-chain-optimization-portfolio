@@ -1587,7 +1587,11 @@ def regret_based_repair(
                                 veh_sim = Vehicle(plant, dealer, veh_type, day, data)
                                 try:
                                     veh_loading(
-                                        tmp, veh_sim, {sku_id: est_qty}, commit=True
+                                        tmp,
+                                        veh_sim,
+                                        {sku_id: est_qty},
+                                        commit=True,
+                                        suffix_safe=True,
                                     )
                                     _, improvement, success = compute_improvement(
                                         tmp, prev_obj if prev_obj is not None else 0.0
@@ -1706,7 +1710,9 @@ def regret_based_repair(
             # shipped (veh_loading can clamp it) drives the incremental pool
             # update below.
             _pool_inv_before = state.s_ikt.get((plant_sel, sku_sel, day_sel), 0)
-            veh_loading(state, vehicle, {sku_sel: commit_qty}, commit=True)
+            veh_loading(
+                state, vehicle, {sku_sel: commit_qty}, commit=True, suffix_safe=True
+            )
             new_vs = state.vehicles[before_len:]
             if new_vs:
                 inserted_vehicles.extend(new_vs)
@@ -2359,6 +2365,7 @@ def lookahead_repair(
                         {sku_id: int(load_qty)},
                         commit=True,
                         skip_compute_inventory=True,
+                        suffix_safe=True,
                     )
                 except Exception as exc:
                     # This candidate cannot be applied; move on to the next one, but leave
