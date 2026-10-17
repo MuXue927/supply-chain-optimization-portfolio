@@ -16,7 +16,6 @@ state is not a feasible one), but the reason is now its own category.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,12 +23,14 @@ import pytest
 from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
 
 BASE = Path(__file__).resolve().parents[1]
+# Test scratch data lives under the repository's ignored ``tmp/`` directory.
+_TEST_OUTPUTS = BASE.parent / "tmp" / "test-runs"
 
 
 def _state() -> object:
     optimizer = ALNSOptimizer(
         input_file_loc=str(BASE / "datasets" / "multiple-periods" / "small"),
-        output_file_loc=str(Path(tempfile.gettempdir()) / "_validate_keys_probe"),
+        output_file_loc=str(_TEST_OUTPUTS / "_validate_keys_probe"),
     )
     optimizer.load_data("dataset_1")
     return optimizer.create_initial_solution()

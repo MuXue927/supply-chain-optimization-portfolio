@@ -15,7 +15,6 @@ silently start discarding candidates the simulation would have kept.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -26,12 +25,16 @@ from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
 from multi_period_delivery.alns.repair_utils import compute_mixed_operator_reward
 
 BASE = Path(__file__).resolve().parents[1]
+# Test scratch data lives under the repository's ignored ``tmp/`` directory:
+# ``tempfile.gettempdir()`` can fall back to the repository root itself on a
+# machine whose configured temp directory is not writable.
+_TEST_OUTPUTS = BASE.parent / "tmp" / "test-runs"
 
 
 def _state():
     optimizer = ALNSOptimizer(
         input_file_loc=str(BASE / "datasets" / "multiple-periods" / "small"),
-        output_file_loc=str(Path(tempfile.gettempdir()) / "_exact_sim_guard_probe"),
+        output_file_loc=str(_TEST_OUTPUTS / "_exact_sim_guard_probe"),
     )
     optimizer.load_data("dataset_1")
     state = optimizer.create_initial_solution()

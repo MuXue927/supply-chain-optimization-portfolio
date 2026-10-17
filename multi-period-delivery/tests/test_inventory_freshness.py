@@ -18,7 +18,6 @@ These tests pin the two things that make reusing the cached inventory safe:
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
@@ -27,12 +26,14 @@ from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.vehicle import inventory_stamp
 
 BASE = Path(__file__).resolve().parents[1]
+# Test scratch data lives under the repository's ignored ``tmp/`` directory.
+_TEST_OUTPUTS = BASE.parent / "tmp" / "test-runs"
 
 
 def _state():
     optimizer = ALNSOptimizer(
         input_file_loc=str(BASE / "datasets" / "multiple-periods" / "small"),
-        output_file_loc=str(Path(tempfile.gettempdir()) / "_inventory_freshness_probe"),
+        output_file_loc=str(_TEST_OUTPUTS / "_inventory_freshness_probe"),
     )
     optimizer.load_data("dataset_1")
     return optimizer.create_initial_solution()

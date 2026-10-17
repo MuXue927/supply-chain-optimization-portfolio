@@ -53,6 +53,10 @@ tmp_cplex_debug/
 # output location at <project>/tmp, so running the tests creates it. It is
 # regenerated on every run and must never be committed.
 tmp/
+# Safety net for pytest runs launched without the project's pytest.ini (which
+# otherwise places ``pytest-of-<user>/`` in the repository root when the system
+# temp directory is not writable).
+pytest-of-*/
 
 # Secrets and private data
 .env

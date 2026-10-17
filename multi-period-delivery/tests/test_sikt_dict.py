@@ -40,7 +40,6 @@ def test_it_behaves_like_a_dict() -> None:
 
 def test_solution_state_actually_uses_it() -> None:
     """If the state ever went back to a plain dict, the cache would never hit."""
-    import tempfile
     from pathlib import Path
 
     from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
@@ -48,7 +47,8 @@ def test_solution_state_actually_uses_it() -> None:
     base = Path(__file__).resolve().parents[1]
     optimizer = ALNSOptimizer(
         input_file_loc=str(base / "datasets" / "multiple-periods" / "small"),
-        output_file_loc=str(Path(tempfile.gettempdir()) / "_sikt_dict_probe"),
+        # Test scratch data lives under the repository's ignored ``tmp/`` directory.
+        output_file_loc=str(base.parent / "tmp" / "test-runs" / "_sikt_dict_probe"),
     )
     optimizer.load_data("dataset_1")
     state = optimizer.create_initial_solution()
