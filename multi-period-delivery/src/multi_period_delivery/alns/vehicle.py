@@ -331,7 +331,7 @@ class Vehicle:
         # Initialize capacity.
         try:
             self.max_capacity = int(self.data.veh_type_cap[self.type])
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             self.max_capacity = 0
         self.capacity = self.max_capacity
         # Initialize cargo as CargoDict so in-place changes update the cache.

@@ -311,7 +311,7 @@ class DataALNS:
             self.param_alpha = float(param.get("alpha", 2.0))
 
             self.logger.info("Configuration parameters loaded successfully")
-        except Exception as e:
+        except (AttributeError, OSError, TypeError, ValueError) as e:
             self.logger.error(f"Failed to load configuration parameters: {e}")
             raise
 

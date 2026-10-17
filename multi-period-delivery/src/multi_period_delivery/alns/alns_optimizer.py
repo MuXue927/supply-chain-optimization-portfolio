@@ -1110,7 +1110,7 @@ class ALNSOptimizer:
                 max_pairs = int(
                     getattr(ALNSConfig, "FINAL_BEST_CONSOLIDATION_MAX_PAIRS", 800)
                 )
-            except Exception:
+            except (TypeError, ValueError):
                 max_pairs = 800
 
             snapshot_before = safe_state_snapshot(self.best_solution)

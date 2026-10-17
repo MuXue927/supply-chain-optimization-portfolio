@@ -84,7 +84,7 @@ def _get_actual_reference(state) -> float | None:
     for attr in ("best_actual_obj", "initial_actual_obj"):
         try:
             ref = float(getattr(tracker, attr, float("inf")))
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if np.isfinite(ref) and abs(ref) > 1e-12:
             return ref
@@ -123,7 +123,7 @@ def compute_mixed_operator_reward(
         search_weight = float(getattr(ALNSConfig, "MIXED_REWARD_SEARCH_WEIGHT", 0.60))
         actual_weight = float(getattr(ALNSConfig, "MIXED_REWARD_ACTUAL_WEIGHT", 0.40))
         score_scale = float(getattr(ALNSConfig, "MIXED_REWARD_SCORE_SCALE", 100.0))
-    except Exception:
+    except (TypeError, ValueError):
         search_weight = 0.60
         actual_weight = 0.40
         score_scale = 100.0
@@ -247,7 +247,7 @@ def get_unmet_demand(state: SolutionState) -> dict[tuple[str, str], int]:
             len(getattr(state, "vehicles", [])),
             getattr(state, "last_objective", None),
         )
-    except Exception:
+    except (TypeError, ValueError):
         snapshot = None
 
     # try to reuse cached value if present and snapshot matches
@@ -1212,7 +1212,7 @@ def compute_improvement_fast_add_vehicle(
     data = state.data
     try:
         scale = float(getattr(ALNSConfig, "SCALE_FACTOR", 1e-3))
-    except Exception:
+    except (TypeError, ValueError):
         scale = 1e-3
 
     # Basic parameters.

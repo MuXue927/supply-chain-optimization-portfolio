@@ -22,7 +22,7 @@ def _safe_float(value: Any, default: float = float("inf")) -> float:
         if value is None:
             return default
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -265,7 +265,7 @@ class DemandConstraintAccept:
                         d = float(it.get("demand", 0))
                         s = float(it.get("shipped", 0))
                         unmet_total += max(0.0, d - s)
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         # Fall back to counting the entry when values are invalid.
                         unmet_total += 1.0
                 penalty = self.penalty_factor * unmet_total

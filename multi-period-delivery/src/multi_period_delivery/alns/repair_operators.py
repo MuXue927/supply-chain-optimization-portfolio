@@ -1313,7 +1313,7 @@ def regret_based_repair(
         _veh_type_cap = getattr(data, "veh_type_cap", {})
         try:
             _param_pun_factor1 = float(getattr(data, "param_pun_factor1", 1.0))
-        except Exception:
+        except (TypeError, ValueError):
             _param_pun_factor1 = 1.0
 
         # Local bindings to avoid repeated attribute lookups in hot loops

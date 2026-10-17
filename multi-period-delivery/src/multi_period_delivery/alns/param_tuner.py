@@ -297,7 +297,7 @@ class ParamAutoTuner:
             num_skus = int(self.instance_features.get("num_skus", 0))
             num_periods = int(self.instance_features.get("num_periods", 0))
             return max(1, num_dealers * max(1, num_skus) * max(1, num_periods))
-        except Exception:
+        except (TypeError, ValueError):
             return 1
 
     # -----------------------------------------------------------------
@@ -399,7 +399,7 @@ class ParamAutoTuner:
         if no_improve_iters is not None:
             try:
                 self.no_improve_iters = max(0, int(no_improve_iters))
-            except Exception:
+            except (TypeError, ValueError):
                 self.no_improve_iters = 0
 
         progress = current / maximum if maximum > 0 else 1.0

@@ -162,7 +162,7 @@ class CombinedStoppingCriterion:
                     else:
                         setattr(criterion, "max_iterations", target)
                     updated = True
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
         return updated
 

@@ -22,8 +22,14 @@ calls, and deleted 12 handlers that wrapped a plain attribute assignment in a
 ``try`` - ``SolutionState`` has no ``__slots__`` and no custom ``__setattr__``, so
 those could never fire.
 
-The remaining 410 are left deliberately: 88.6% of them wrap a try body containing
-a method call, whose internal exceptions cannot be inferred mechanically, so
+The 2026-10-17 pass lowered the count further (410 -> 381 -> 368) by narrowing
+handlers whose try bodies are builtin coercions (``float``/``int``/``len``) plus
+3-arg ``getattr`` (which cannot raise ``AttributeError``), and a handful of
+manually reviewed handlers with an explicit, small exception set (dict subscripts,
+``setattr``, ``json.load`` + ``float``).
+
+The remaining 368 are left deliberately: most wrap a try body containing a
+method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
 """
@@ -38,8 +44,9 @@ import pytest
 #: Highest accepted number of ``except Exception`` handlers across both packages.
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
-#: handlers). Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 381
+#: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
+#: Keep this ratcheted down as handlers are narrowed.
+BLIND_EXCEPT_BASELINE = 368
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
