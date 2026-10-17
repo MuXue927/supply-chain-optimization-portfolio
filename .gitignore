@@ -57,6 +57,8 @@ tmp/
 # otherwise places ``pytest-of-<user>/`` in the repository root when the system
 # temp directory is not writable).
 pytest-of-*/
+# pytest's configured basetemp (see pytest.ini / the subproject pyprojects).
+.pytest_tmp/
 
 # Secrets and private data
 .env

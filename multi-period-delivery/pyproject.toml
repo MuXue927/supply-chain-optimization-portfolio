@@ -51,11 +51,9 @@ include = ["multi_period_delivery*"]
 # combined run uses --import-mode=importlib (see ../../pytest.ini). Setting it
 # here keeps a run from inside this project consistent with the combined run.
 [tool.pytest.ini_options]
-# Keep per-test scratch directories under the ignored ``tmp/`` tree. Without
-# ``--basetemp`` pytest writes ``pytest-of-<user>/`` wherever
-# ``tempfile.gettempdir()`` resolves, which is the repository root on a machine
-# whose configured temp directory is not writable.
-addopts = "--import-mode=importlib --basetemp=tmp/pytest"
+# Keep per-test scratch directories out of the system temp dir, in a path whose
+# parent exists (pytest creates the basetemp without creating parents).
+addopts = "--import-mode=importlib --basetemp=.pytest_tmp"
 testpaths = ["tests"]
 
 # Lint gate enforced by CI (.github/workflows/ci.yml).
