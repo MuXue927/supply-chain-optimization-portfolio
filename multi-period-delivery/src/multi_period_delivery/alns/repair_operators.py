@@ -1529,18 +1529,10 @@ def regret_based_repair(
             # candidates.
             # Create a single temporary simulation base and perform apply+rollback
             # on it for multiple candidates to avoid repeated heavy copies.
-            try:
-                tmp_base = state.copy(clone_vehicles=False)
-                # Suppress compute_inventory on the temporary base state to
-                # avoid full recomputation during repeated exact evaluations.
-                try:
-                    tmp_base.suppress_compute_inventory()
-                except Exception:
-                    # Continue if the temporary object does not support the
-                    # interface, preserving backward compatibility.
-                    pass
-            except Exception:
-                tmp_base = None
+            # Create the simulation base lazily: most candidates are rejected
+            # by the fast estimator and never need a state copy. The copy must
+            # still be shared across exact simulations in this candidate loop.
+            tmp_base = None
             for key, plant, veh_type, day, est_qty in selected:
                 # avoid re-evaluating an identical candidate for the same state snapshot
                 combined_key = (key, state_snapshot)
@@ -1594,14 +1586,28 @@ def regret_based_repair(
                         # Use tmp_base (single copy) and apply+rollback to avoid repeated copies.
                         if tmp_base is None:
                             try:
-                                tmp = state.copy()
+                                tmp_base = state.copy(clone_vehicles=False)
                                 try:
-                                    tmp.suppress_compute_inventory()
+                                    tmp_base.suppress_compute_inventory()
                                 except Exception as exc:
-                                    record_swallowed("repair_operators.regret_based_repair", exc)
-                                    pass
+                                    record_swallowed(
+                                        "repair_operators.regret_based_repair", exc
+                                    )
                             except Exception:
-                                tmp = None
+                                tmp_base = None
+                            if tmp_base is None:
+                                try:
+                                    tmp_base = state.copy()
+                                    try:
+                                        tmp_base.suppress_compute_inventory()
+                                    except Exception as exc:
+                                        record_swallowed(
+                                            "repair_operators.regret_based_repair",
+                                            exc,
+                                        )
+                                except Exception:
+                                    tmp_base = None
+                            tmp = tmp_base
                         else:
                             tmp = tmp_base
                         improvement, success = 0.0, False

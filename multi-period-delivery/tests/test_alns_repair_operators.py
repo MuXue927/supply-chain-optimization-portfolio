@@ -163,3 +163,33 @@ def test_fill_minimum_load_repair_does_not_add_underloaded_vehicles(
 
     assert underloaded(state) <= before
     _assert_still_consistent(state)
+
+
+def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _destroyed(feasible_solution)
+    copy_calls = {"clone_false": 0}
+    original_copy = SolutionState.copy
+
+    def counted_copy(self: SolutionState, clone_vehicles: bool = True):
+        if not clone_vehicles:
+            copy_calls["clone_false"] += 1
+        return original_copy(self, clone_vehicles=clone_vehicles)
+
+    monkeypatch.setattr(SolutionState, "copy", counted_copy)
+    monkeypatch.setattr(
+        repair,
+        "compute_improvement_fast_add_vehicle",
+        lambda *args, **kwargs: (0.0, 0.0, False),
+    )
+
+    repair.regret_based_repair(
+        state,
+        np.random.default_rng(13),
+        k=2,
+        topN=6,
+        time_limit=1.0,
+    )
+
+    assert copy_calls["clone_false"] == 0
