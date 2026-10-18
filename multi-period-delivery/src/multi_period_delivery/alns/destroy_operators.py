@@ -144,10 +144,43 @@ class DestroyOperatorWrapper:
             for key in list(merged):
                 if key in dynamic:
                     merged[key] = dynamic[key]
-        return self.func(state, rng, **merged)
+        before_signature = (
+            state_structure_signature(state)
+            if self.__name__
+            in {
+                "surplus_inventory_removal",
+                "path_removal",
+                "infeasible_removal",
+            }
+            else None
+        )
+        result = self.func(state, rng, **merged)
+        if before_signature is not None and result is not None:
+            try:
+                result._destroy_noop = (
+                    before_signature == state_structure_signature(result)
+                )
+            except (AttributeError, TypeError):
+                pass
+        return result
 
     def __repr__(self):
         return f"<DestroyOperatorWrapper {self.__name__} fixed={self.fixed_kwargs}>"
+
+
+def state_structure_signature(state) -> tuple:
+    """Cheap exact signature used to identify a destroy no-op."""
+    return (
+        tuple(
+            (
+                getattr(vehicle, "id", None),
+                getattr(vehicle, "day", None),
+                tuple(sorted(getattr(vehicle, "cargo", {}).items())),
+            )
+            for vehicle in getattr(state, "vehicles", ())
+        ),
+        tuple(sorted(getattr(state, "s_ikt", {}).items())),
+    )
 
 
 # Factory helpers for common destroy operators

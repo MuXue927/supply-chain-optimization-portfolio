@@ -65,6 +65,7 @@ from .destroy_operators import (
     create_surplus_inventory_removal,
     create_worst_removal,
     infeasible_removal,
+    state_structure_signature,
     wrap_operator_no_args,
 )
 from .InputDataALNS import DataALNS
@@ -102,8 +103,48 @@ if TYPE_CHECKING:
 # Third-party ALNS imports
 from alns import ALNS
 from alns.accept import SimulatedAnnealing
+from alns.Outcome import Outcome
 from alns.Result import Result
 from alns.select import SegmentedRouletteWheel
+
+
+class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
+    """Roulette wheel that does not reward unchanged destroy/repair actions."""
+
+    def update(self, cand, d_idx, r_idx, outcome):
+        destroy_outcome = outcome
+        repair_outcome = outcome
+        if outcome == Outcome.ACCEPT:
+            if bool(getattr(cand, "_destroy_noop", False)):
+                destroy_outcome = Outcome.REJECT
+            if bool(getattr(cand, "_repair_noop", False)):
+                repair_outcome = Outcome.REJECT
+
+        self._d_seg_weights[d_idx] += self._scores[int(destroy_outcome)]
+        self._r_seg_weights[r_idx] += self._scores[int(repair_outcome)]
+
+
+class _NoOpFlagPreservingRepair:
+    """Carry destroy no-op state through a repair operator."""
+
+    def __init__(self, operator: Any) -> None:
+        self._operator = operator
+        self.__name__ = getattr(operator, "__name__", "repair_operator")
+
+    def __call__(self, state: Any, rng: Any, **kwargs: Any) -> Any:
+        destroy_noop = bool(getattr(state, "_destroy_noop", False))
+        before = state_structure_signature(state) if destroy_noop else None
+        result = self._operator(state, rng, **kwargs)
+        if destroy_noop and result is not None:
+            try:
+                result._destroy_noop = True
+                if before is not None:
+                    result._repair_noop = (
+                        before == state_structure_signature(result)
+                    )
+            except (AttributeError, TypeError):
+                pass
+        return result
 
 
 @contextmanager
@@ -494,6 +535,10 @@ class ALNSOptimizer:
 
             # Register repair operators.
             self._register_repair_operators(alns)
+            # Preserve no-op markers from destroy to repair so the selector can
+            # avoid rewarding an unchanged operator pair.
+            for name, operator in list(alns._r_ops.items()):
+                alns._r_ops[name] = _NoOpFlagPreservingRepair(operator)
 
             return alns
 
@@ -897,7 +942,7 @@ class ALNSOptimizer:
             # Use actual registration counts instead of hard-coded values.
             num_destroy = getattr(self, "_num_registered_destroy_ops", 7) or 7
             num_repair = getattr(self, "_num_registered_repair_ops", 6) or 6
-            select = SegmentedRouletteWheel(
+            select = NoOpAwareSegmentedRouletteWheel(
                 scores=getattr(ALNSConfig, "ROULETTE_SCORES", [1.0]),
                 decay=getattr(ALNSConfig, "ROULETTE_DECAY", 0.9),
                 seg_length=getattr(ALNSConfig, "ROULETTE_SEG_LENGTH", 100),
