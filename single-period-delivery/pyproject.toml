@@ -42,7 +42,8 @@ include = ["single_period_delivery*"]
 [tool.pytest.ini_options]
 # Keep per-test scratch directories out of the system temp dir, in a path whose
 # parent exists (pytest creates the basetemp without creating parents).
-addopts = "--import-mode=importlib --basetemp=.pytest_tmp"
+addopts = "--import-mode=importlib --basetemp=.pytest_tmp -m 'not slow'"
+markers = ["slow: long-running checks"]
 testpaths = ["tests"]
 
 # Lint gate enforced by CI (.github/workflows/ci.yml).
