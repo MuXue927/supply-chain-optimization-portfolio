@@ -1422,6 +1422,22 @@ def regret_based_repair(
             # candidates faster.
             # reuse the global pre-sorted vehicle type list computed once per operator call
             veh_types_sorted = veh_types_sorted_global
+            # These values depend only on (sku, vehicle type), not on the
+            # (plant, day) candidate. Compute them once per unmet SKU instead of
+            # once for every candidate in the hot triple loop.
+            sku_size = sku_sizes.get(sku_id, 0)
+            max_qty_by_type = {
+                veh_type: (
+                    int(veh_type_cap.get(veh_type, 0) // sku_size)
+                    if sku_size > 0
+                    else 0
+                )
+                for veh_type in veh_types_sorted
+            }
+            type_cost_by_type = {
+                veh_type: float(veh_type_cost.get(veh_type, 0.0))
+                for veh_type in veh_types_sorted
+            }
 
             # Two-stage evaluation to avoid expensive state.copy() for every candidate:
             # 1) Fast heuristic score to filter promising candidates
@@ -1444,16 +1460,12 @@ def regret_based_repair(
                     (d, resource_pool_get((plant, sku_id, d), 0)) for d in days_range
                 )
 
-                # pull sku_size once per (dealer,sku) candidate to avoid repeated dict lookups
-                sku_size = sku_sizes.get(sku_id, 0)
-
                 for day, available_val in day_items:
                     if available_val <= 0:
                         continue
 
                     for veh_type in veh_types_sorted:
-                        cap = veh_type_cap.get(veh_type, 0)
-                        max_qty_by_cap = int(cap // sku_size) if sku_size > 0 else 0
+                        max_qty_by_cap = max_qty_by_type[veh_type]
                         est_qty = min(remain_qty, available_val, max_qty_by_cap)
                         if est_qty <= 0:
                             continue
@@ -1475,7 +1487,7 @@ def regret_based_repair(
                             benefit = est_qty * _data_param_pun
                         except (TypeError, ValueError):
                             benefit = est_qty * 1.0
-                        cost = float(veh_type_cost.get(veh_type, 0.0))
+                        cost = type_cost_by_type[veh_type]
                         heuristic_score = benefit - cost
 
                         # maintain a bounded top_list of size up to max_sim with O(max_sim) insertion
