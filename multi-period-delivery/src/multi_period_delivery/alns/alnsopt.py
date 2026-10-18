@@ -1182,6 +1182,7 @@ def veh_loading(
         # Add the final non-empty vehicle once, using IDs to avoid costly equality checks.
         if not veh.is_empty() and veh.id not in vehicle_ids:
             state.vehicles.append(veh)
+            vehicle_ids.add(veh.id)
 
     # Incremental updates are complete, so no full recomputation is needed.
 
