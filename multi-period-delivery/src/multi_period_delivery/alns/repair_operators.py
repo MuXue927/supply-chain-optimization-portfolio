@@ -121,6 +121,27 @@ def _safe_prev_obj(state) -> float:
     return number
 
 
+def _runtime_deadline(state) -> float | None:
+    """Return the run's hard deadline for budget-aware operator loops.
+
+    Direct operator calls and unit tests have no tracker, so they retain their
+    existing unrestricted behavior. During an ALNS run the tracker shares the
+    stopping-rule clock and this deadline prevents one last long operator from
+    overrunning the runtime budget by tens of seconds.
+    """
+    tracker = getattr(state, "tracker", None)
+    if tracker is None or not hasattr(tracker, "elapsed_seconds"):
+        return None
+    try:
+        elapsed = float(tracker.elapsed_seconds())
+        budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 0.0))
+    except (TypeError, ValueError):
+        return None
+    if budget <= 0:
+        return None
+    return time.monotonic() + max(0.0, budget - elapsed)
+
+
 # ---------------------------
 # Repair-operator implementations for external use.
 # All operators accept partial/state and return a repaired state. Some copy the
@@ -254,6 +275,7 @@ def greedy_repair(
     logger.debug("[OPLOG] Starting greedy_repair operator")
     state = partial
     data = state.data
+    deadline = _runtime_deadline(state)
 
     prev_obj = None
     try:
@@ -341,13 +363,19 @@ def greedy_repair(
     # and decrements.
     inserted_vehicles = []
     for (dealer, sku_id), remain_demand, _ in unsatisfied:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         if remain_demand <= 0:
             continue
         plants = plants_for_dealer_sku.get((dealer, sku_id), [])
         for plant in plants:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             if remain_demand <= 0:
                 break
             for day in range(1, data.horizons + 1):
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
                 available = resource_pool.get((plant, sku_id, day), 0)
                 if available <= 0 or remain_demand <= 0:
                     continue
@@ -880,6 +908,7 @@ def local_search_repair(
     state = partial.copy()
     state = greedy_repair(state, rng)
     data = state.data
+    deadline = _runtime_deadline(state)
     improved = True
     iter_count = 0
 
@@ -894,13 +923,19 @@ def local_search_repair(
             max_iter = min(50, max(5, num_demands // 20))
         max_iter = max(1, max_iter)
 
-    while improved and iter_count < max_iter:
+    while (
+        improved
+        and iter_count < max_iter
+        and (deadline is None or time.monotonic() < deadline)
+    ):
         iter_count += 1
         improved = False
 
         old_obj = state.objective()
         # Traverse vehicles and try vehicle-type replacements.
         for i, veh in enumerate(list(state.vehicles)):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             current_load = state.compute_veh_load(veh)  # Current total load.
             cost = data.veh_type_cost[veh.type]  # Current vehicle-type cost.
 
@@ -1027,6 +1062,7 @@ def inventory_balance_repair(
     logger.debug("[OPLOG] Starting inventory_balance_repair operator")
     state = partial
     data = state.data
+    deadline = _runtime_deadline(state)
 
     prev_obj_saved: float = _safe_prev_obj(state)
 
@@ -1054,8 +1090,12 @@ def inventory_balance_repair(
     inventory_fresh = True
 
     for (plant, day), _ in sorted_plant_days:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         dealers = [dealer for (p, dealer), skus in supply_chain.items() if p == plant]
         for dealer in dealers:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             if not inventory_fresh:
                 try:
                     state.compute_inventory()
@@ -1263,6 +1303,9 @@ def smart_batch_repair(
         else defaults.get("timeout", min(60.0, max(10.0, num_demands * 0.1))),
         min(60.0, max(10.0, num_demands * 0.1)),
     )
+    deadline = _runtime_deadline(state)
+    if deadline is not None:
+        timeout = min(timeout, max(0.0, deadline - time.monotonic()))
 
     resource_pool = _construct_resource_pool(state, data)
 
@@ -1291,7 +1334,10 @@ def smart_batch_repair(
             break
 
     # Try to fill any remaining demand at the end.
-    if timeout is None or time.time() - t0 < timeout:
+    if (
+        (timeout is None or time.time() - t0 < timeout)
+        and (deadline is None or time.monotonic() < deadline)
+    ):
         inserted_vehicles = _force_load_remaining_demands(state, data)
         if inserted_vehicles:
             total_inserted.extend(inserted_vehicles)
@@ -1368,13 +1414,19 @@ def regret_based_repair(
         min(60.0, max(5.0, num_demands * 0.2)),
     )
     time_limit = min(60.0, max(5.0, time_limit))
+    deadline = _runtime_deadline(state)
+    if deadline is not None:
+        time_limit = min(time_limit, max(0.0, deadline - time.monotonic()))
     repair_baseline_obj = prev_obj_saved
 
     # Carried across while iterations: the pool adjusted after the previous
     # commit. ``objective()``/``compute_inventory`` invalidate the state cache
     # during the iteration, so it is re-attached just before the next build.
     resource_pool = None
-    while time.time() - t0 < time_limit:
+    while (
+        time.time() - t0 < time_limit
+        and (deadline is None or time.monotonic() < deadline)
+    ):
         # Get the current unmet demand.
         removal = get_unmet_demand(state)
         if not removal:

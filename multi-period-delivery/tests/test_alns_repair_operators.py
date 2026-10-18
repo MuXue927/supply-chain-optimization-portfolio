@@ -8,13 +8,16 @@ invariants asserted here for every operator, on a real small-dataset solution.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from multi_period_delivery.alns import destroy_operators as destroy
 from multi_period_delivery.alns import repair_operators as repair
+from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
 from multi_period_delivery.alns.InputDataALNS import DataALNS
@@ -144,6 +147,19 @@ def test_greedy_repair_does_not_rescan_the_global_vehicle_list(
     repair.greedy_repair(state, np.random.default_rng(13))
 
     _assert_still_consistent(state)
+
+
+def test_runtime_deadline_uses_tracker_without_affecting_direct_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 10.0)
+    state = SimpleNamespace(
+        tracker=SimpleNamespace(elapsed_seconds=lambda: 4.0),
+    )
+    deadline = repair._runtime_deadline(state)
+    assert deadline is not None
+    assert time.monotonic() <= deadline <= time.monotonic() + 7.0
+    assert repair._runtime_deadline(SimpleNamespace()) is None
 
 
 def test_cross_period_consolidation_never_loses_demand_coverage(
