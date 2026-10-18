@@ -131,6 +131,21 @@ def test_greedy_repair_recovers_demand_after_a_full_removal(
     _assert_still_consistent(state)
 
 
+def test_greedy_repair_does_not_rescan_the_global_vehicle_list(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _destroyed(feasible_solution)
+
+    def global_scan(*args, **kwargs):
+        raise AssertionError("greedy_repair should use its local route index")
+
+    monkeypatch.setattr(repair, "find_existing_route_vehicles", global_scan)
+
+    repair.greedy_repair(state, np.random.default_rng(13))
+
+    _assert_still_consistent(state)
+
+
 def test_cross_period_consolidation_never_loses_demand_coverage(
     feasible_solution: SolutionState,
 ) -> None:

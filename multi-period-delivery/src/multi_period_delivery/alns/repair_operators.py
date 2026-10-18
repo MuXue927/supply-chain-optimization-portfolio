@@ -263,6 +263,20 @@ def greedy_repair(
 
     shipped = state.compute_shipped()
     supply_chain = data.construct_supply_chain()
+    # Greedy examines the same route repeatedly while filling a demand. Keep a
+    # local route index rather than scanning all vehicles for every plant/day.
+    # This index is maintained below when overflow vehicles are appended.
+    route_vehicles: dict[tuple[str, str, int], list[Vehicle]] = {}
+    for vehicle in state.vehicles:
+        route_vehicles.setdefault(
+            (vehicle.fact_id, vehicle.dealer_id, vehicle.day), []
+        ).append(vehicle)
+    plants_for_dealer_sku: dict[tuple[str, str], list[str]] = {}
+    for (plant_key, dealer_key), skus in supply_chain.items():
+        for supply_sku in skus:
+            plants_for_dealer_sku.setdefault(
+                (dealer_key, supply_sku), []
+            ).append(plant_key)
 
     # Precompute to reduce repeated traversal.
     total_available_map = precompute_total_available(state, data, supply_chain)
@@ -325,11 +339,7 @@ def greedy_repair(
     for (dealer, sku_id), remain_demand, _ in unsatisfied:
         if remain_demand <= 0:
             continue
-        plants = [
-            plant
-            for (plant, dealer_key), skus in supply_chain.items()
-            if dealer_key == dealer and sku_id in skus
-        ]
+        plants = plants_for_dealer_sku.get((dealer, sku_id), [])
         for plant in plants:
             if remain_demand <= 0:
                 break
@@ -340,7 +350,17 @@ def greedy_repair(
 
                 # Fill existing vehicles on the same route first to reduce new
                 # vehicle creation.
-                for existing in find_existing_route_vehicles(state, plant, dealer, day):
+                route_key = (plant, dealer, day)
+                existing_candidates = [
+                    vehicle
+                    for vehicle in route_vehicles.get(route_key, ())
+                    if not vehicle.is_full()
+                ]
+                existing_candidates.sort(
+                    key=lambda vehicle: getattr(vehicle, "capacity", 0),
+                    reverse=True,
+                )
+                for existing in existing_candidates:
                     if remain_demand <= 0 or available <= 0:
                         break
                     request_qty = min(remain_demand, available)
@@ -360,6 +380,8 @@ def greedy_repair(
                         continue
                     if new_vs:
                         inserted_vehicles.extend(new_vs)
+                        for new_vehicle in new_vs:
+                            route_vehicles.setdefault(route_key, []).append(new_vehicle)
                     available = max(0, available - actual_loaded)
                     resource_pool[(plant, sku_id, day)] = available
                     remain_demand -= actual_loaded
@@ -403,6 +425,8 @@ def greedy_repair(
                 if actual_loaded > 0:
                     if new_vs:
                         inserted_vehicles.extend(new_vs)
+                        for new_vehicle in new_vs:
+                            route_vehicles.setdefault(route_key, []).append(new_vehicle)
                     else:
                         inserted_vehicles.append(vehicle)
                     resource_pool[(plant, sku_id, day)] = max(
