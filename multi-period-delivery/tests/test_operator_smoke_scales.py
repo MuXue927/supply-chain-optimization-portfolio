@@ -131,14 +131,8 @@ def test_destroy_operator_on_real_scale(base_solution: SolutionState, op_name: s
 
 @pytest.mark.parametrize("op_name", sorted(REPAIR_OPERATORS))
 def test_repair_operator_on_real_scale(
-    base_solution: SolutionState, op_name: str, request: pytest.FixtureRequest
+    base_solution: SolutionState, op_name: str
 ) -> None:
-    # Known large-scale defect (2026-10-18): it ends with negative inventory.
-    if request.node.callspec.params["base_solution"][0] == "large" and (
-        op_name == "inventory_balance_repair"
-    ):
-        pytest.xfail("known large-scale overship in inventory_balance_repair")
-
     destroyed = destroy.random_removal(
         base_solution.copy(), np.random.default_rng(3), degree=0.25
     )

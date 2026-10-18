@@ -935,6 +935,42 @@ def local_search_repair(
     return state
 
 
+def _rollback_load_if_inventory_negative(
+    state: SolutionState,
+    vehicle: Vehicle,
+    before_len: int,
+    before_cargo: dict,
+    before_s_ikt: dict,
+) -> bool:
+    """Recompute after a load; roll the load back when inventory goes negative.
+
+    ``inventory_balance_repair`` can, on large instances, accept loads whose
+    incremental deduction looks fine but whose full rebuild is negative. This
+    defensive check keeps the operator's contract (never leave negative
+    inventory): when the rebuild finds one, the appended vehicles are dropped,
+    the loaded vehicle's cargo is restored and ``s_ikt`` is put back.
+
+    Returns ``True`` when the load was kept.
+    """
+    try:
+        state.compute_inventory()
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        # Cannot certify the load, so treat it as a failure and roll back.
+        pass
+    if not any(value < 0 for value in state.s_ikt.values()):
+        return True
+    try:
+        del state.vehicles[before_len:]
+        vehicle.cargo = dict(before_cargo)
+        state.s_ikt.clear()
+        state.s_ikt.update(before_s_ikt)
+        state.mark_objective_dirty()
+    except (AttributeError, KeyError, TypeError, ValueError):
+        # Best effort: the caller still sees a failed load and will skip it.
+        pass
+    return False
+
+
 def inventory_balance_repair(
     partial: SolutionState, rng: rnd.Generator
 ) -> SolutionState:
@@ -1027,8 +1063,10 @@ def inventory_balance_repair(
                 )
                 for sku_id in candidate_orders
             }
+            before_len = len(state.vehicles)
+            before_cargo = dict(vehicle.cargo)
+            before_s_ikt = dict(state.s_ikt)
             try:
-                before_len = len(state.vehicles)
                 veh_loading(
                     state,
                     vehicle,
@@ -1054,7 +1092,11 @@ def inventory_balance_repair(
                     unsatisfied[(dealer, sku_id)] = max(
                         0, unsatisfied[(dealer, sku_id)] - loaded
                     )
-                inventory_fresh = False
+                inventory_fresh = _rollback_load_if_inventory_negative(
+                    state, vehicle, before_len, before_cargo, before_s_ikt
+                )
+                if not inventory_fresh:
+                    continue
             except Exception:
                 # Fall back to a call that does not suppress compute_inventory.
                 try:
@@ -1082,6 +1124,12 @@ def inventory_balance_repair(
                         unsatisfied[(dealer, sku_id)] = max(
                             0, unsatisfied[(dealer, sku_id)] - loaded
                         )
+                    if not _rollback_load_if_inventory_negative(
+                        state, vehicle, before_len, before_cargo, before_s_ikt
+                    ):
+                        inventory_fresh = False
+                        continue
+                    inventory_fresh = True
                 except Exception as exc:
                     record_swallowed("repair_operators.inventory_balance_repair", exc)
                     continue
