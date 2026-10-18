@@ -1056,6 +1056,7 @@ def veh_loading(
     veh: Vehicle,
     orders: dict[str, int],
     suffix_safe: bool = False,
+    plant_day_vehicles: list[Vehicle] | None = None,
 ):
     """
     Load a vehicle and update inventory incrementally.
@@ -1110,7 +1111,12 @@ def veh_loading(
 
     # Build used_inv and vehicle_ids in one pass.
     used_inv = {}
-    vehicles_list = state.vehicles
+    # Callers that already maintain a complete plant/day index may provide it to
+    # avoid scanning the full fleet. The index must include every dealer for the
+    # plant/day because inventory availability is shared across dealers.
+    vehicles_list = (
+        plant_day_vehicles if plant_day_vehicles is not None else state.vehicles
+    )
     vehicle_ids = set()
     for v in vehicles_list:
         if v.fact_id != fact_id or v.day != day:

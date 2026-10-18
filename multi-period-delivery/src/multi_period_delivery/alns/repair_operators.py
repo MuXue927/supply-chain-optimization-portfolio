@@ -267,10 +267,14 @@ def greedy_repair(
     # local route index rather than scanning all vehicles for every plant/day.
     # This index is maintained below when overflow vehicles are appended.
     route_vehicles: dict[tuple[str, str, int], list[Vehicle]] = {}
+    plant_day_vehicles: dict[tuple[str, int], list[Vehicle]] = {}
     for vehicle in state.vehicles:
         route_vehicles.setdefault(
             (vehicle.fact_id, vehicle.dealer_id, vehicle.day), []
         ).append(vehicle)
+        plant_day_vehicles.setdefault((vehicle.fact_id, vehicle.day), []).append(
+            vehicle
+        )
     plants_for_dealer_sku: dict[tuple[str, str], list[str]] = {}
     for (plant_key, dealer_key), skus in supply_chain.items():
         for supply_sku in skus:
@@ -372,6 +376,8 @@ def greedy_repair(
                             request_qty,
                             day,
                             skip_compute_inventory=True,
+                            route_vehicles=route_vehicles.get(route_key),
+                            plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                         )
                     except Exception as exc:
                         record_swallowed("repair_operators.greedy_repair", exc)
@@ -382,6 +388,9 @@ def greedy_repair(
                         inserted_vehicles.extend(new_vs)
                         for new_vehicle in new_vs:
                             route_vehicles.setdefault(route_key, []).append(new_vehicle)
+                            plant_day_vehicles.setdefault((plant, day), []).append(
+                                new_vehicle
+                            )
                     available = max(0, available - actual_loaded)
                     resource_pool[(plant, sku_id, day)] = available
                     remain_demand -= actual_loaded
@@ -407,6 +416,8 @@ def greedy_repair(
                         request_qty,
                         day,
                         skip_compute_inventory=True,
+                        route_vehicles=route_vehicles.get(route_key),
+                        plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                     )
                 except Exception:
                     try:
@@ -417,6 +428,8 @@ def greedy_repair(
                             request_qty,
                             day,
                             skip_compute_inventory=False,
+                            route_vehicles=route_vehicles.get(route_key),
+                            plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                         )
                     except Exception as exc:
                         record_swallowed("repair_operators.greedy_repair", exc)
@@ -427,6 +440,9 @@ def greedy_repair(
                         inserted_vehicles.extend(new_vs)
                         for new_vehicle in new_vs:
                             route_vehicles.setdefault(route_key, []).append(new_vehicle)
+                            plant_day_vehicles.setdefault((plant, day), []).append(
+                                new_vehicle
+                            )
                     else:
                         inserted_vehicles.append(vehicle)
                     resource_pool[(plant, sku_id, day)] = max(

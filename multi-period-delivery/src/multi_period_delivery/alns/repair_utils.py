@@ -290,6 +290,7 @@ def veh_loading(
     commit: bool = True,
     skip_compute_inventory: bool = True,
     suffix_safe: bool = False,
+    plant_day_vehicles: list[Vehicle] | None = None,
 ) -> bool:
     """
     Wrapper that delegates to
@@ -321,7 +322,13 @@ def veh_loading(
     if not commit:
         # Simulate on a copy without touching the real state.
         tmp = state.copy()
-        _alnsopt.veh_loading(tmp, veh, orders, suffix_safe=suffix_safe)
+        _alnsopt.veh_loading(
+            tmp,
+            veh,
+            orders,
+            suffix_safe=suffix_safe,
+            plant_day_vehicles=None,
+        )
         return True
 
     # commit == True: suppress compute_inventory when possible for batch updates.
@@ -334,7 +341,13 @@ def veh_loading(
                 orig_compute()
             # Temporarily disable compute_inventory with a no-op replacement.
             state.compute_inventory = lambda: None
-            _alnsopt.veh_loading(state, veh, orders, suffix_safe=suffix_safe)
+            _alnsopt.veh_loading(
+                state,
+                veh,
+                orders,
+                suffix_safe=suffix_safe,
+                plant_day_vehicles=plant_day_vehicles,
+            )
         except Exception:
             # On any exception, restore the original function and re-raise so
             # the caller can execute fallback logic.
@@ -352,7 +365,13 @@ def veh_loading(
         return True
     else:
         # Original behavior: do not suppress compute_inventory.
-        _alnsopt.veh_loading(state, veh, orders, suffix_safe=suffix_safe)
+        _alnsopt.veh_loading(
+            state,
+            veh,
+            orders,
+            suffix_safe=suffix_safe,
+            plant_day_vehicles=plant_day_vehicles,
+        )
         return True
 
 
@@ -393,6 +412,8 @@ def commit_load_with_tracking(
     day: int,
     skip_compute_inventory: bool = True,
     suffix_safe: bool = False,
+    route_vehicles: list[Vehicle] | None = None,
+    plant_day_vehicles: list[Vehicle] | None = None,
 ) -> tuple[int, list[Vehicle]]:
     """
     Commit a single-SKU load and return (actual_loaded_qty, appended_new_vehicles).
@@ -403,8 +424,11 @@ def commit_load_with_tracking(
         return 0, []
 
     before_len = len(state.vehicles)
+    route_snapshot = list(
+        route_vehicles if route_vehicles is not None else state.vehicles
+    )
     before_route_qty = 0
-    for v in state.vehicles:
+    for v in route_snapshot:
         if v.fact_id == veh.fact_id and v.day == day:
             before_route_qty += int(v.cargo.get((sku_id, day), 0))
 
@@ -415,15 +439,19 @@ def commit_load_with_tracking(
         commit=True,
         skip_compute_inventory=skip_compute_inventory,
         suffix_safe=suffix_safe,
+        plant_day_vehicles=plant_day_vehicles,
     )
 
     after_route_qty = 0
-    for v in state.vehicles:
+    for v in route_snapshot:
+        if v.fact_id == veh.fact_id and v.day == day:
+            after_route_qty += int(v.cargo.get((sku_id, day), 0))
+    new_vs = state.vehicles[before_len:]
+    for v in new_vs:
         if v.fact_id == veh.fact_id and v.day == day:
             after_route_qty += int(v.cargo.get((sku_id, day), 0))
 
     actual_loaded = max(0, int(after_route_qty - before_route_qty))
-    new_vs = state.vehicles[before_len:]
     return actual_loaded, new_vs
 
 
