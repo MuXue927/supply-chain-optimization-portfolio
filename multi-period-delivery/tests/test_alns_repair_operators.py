@@ -176,6 +176,46 @@ def test_cross_period_consolidation_never_loses_demand_coverage(
     _assert_still_consistent(state)
 
 
+def test_cross_period_consolidation_reuses_validation_for_candidate_cost(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _destroyed(feasible_solution)
+    active = False
+    copy_calls = 0
+    validate_calls = 0
+    original_copy = SolutionState.copy
+    original_validate_uncached = SolutionState._validate_uncached
+
+    def counted_copy(self: SolutionState, *args, **kwargs):
+        nonlocal copy_calls
+        if active:
+            copy_calls += 1
+        return original_copy(self, *args, **kwargs)
+
+    def counted_validate_uncached(self: SolutionState):
+        nonlocal validate_calls
+        if active:
+            validate_calls += 1
+        return original_validate_uncached(self)
+
+    monkeypatch.setattr(SolutionState, "copy", counted_copy)
+    monkeypatch.setattr(
+        SolutionState, "_validate_uncached", counted_validate_uncached
+    )
+    active = True
+    try:
+        repair.cross_period_consolidation_repair(
+            state, np.random.default_rng(3), time_limit=5.0, max_moves=10
+        )
+    finally:
+        active = False
+
+    # One validation for the initial cost, then exactly one per candidate copy.
+    # calculate_cost() must reuse the candidate's first validation from the memo.
+    assert copy_calls > 0
+    assert validate_calls == copy_calls
+
+
 def test_fill_minimum_load_repair_does_not_add_underloaded_vehicles(
     feasible_solution: SolutionState,
 ) -> None:
@@ -193,6 +233,29 @@ def test_fill_minimum_load_repair_does_not_add_underloaded_vehicles(
     repair.fill_minimum_load_repair(state, np.random.default_rng(2))
 
     assert underloaded(state) <= before
+    _assert_still_consistent(state)
+
+
+def test_fill_minimum_load_repair_trusts_incremental_inventory_after_commit(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _destroyed(feasible_solution)
+    inventory_calls = 0
+    original_compute_inventory = SolutionState.compute_inventory
+
+    def counted_compute_inventory(self: SolutionState):
+        nonlocal inventory_calls
+        inventory_calls += 1
+        return original_compute_inventory(self)
+
+    monkeypatch.setattr(SolutionState, "compute_inventory", counted_compute_inventory)
+    before_volume = sum(state.compute_veh_load(veh) for veh in state.vehicles)
+
+    repair.fill_minimum_load_repair(state, np.random.default_rng(2))
+
+    after_volume = sum(state.compute_veh_load(veh) for veh in state.vehicles)
+    assert after_volume > before_volume
+    assert inventory_calls == 1
     _assert_still_consistent(state)
 
 

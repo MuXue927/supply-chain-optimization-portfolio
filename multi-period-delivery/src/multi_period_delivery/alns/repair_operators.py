@@ -649,7 +649,9 @@ def fill_minimum_load_repair(
             if actual_loaded > 0:
                 current_load += actual_loaded * sku_size
                 deficit = min_load - current_load
-                inventory_fresh = False
+                # veh_loading() already deducted this load from s_ikt for
+                # every affected day, so a full inventory rebuild is redundant.
+                inventory_fresh = True
 
     try:
         state.mark_objective_dirty()
@@ -862,10 +864,14 @@ def cross_period_consolidation_repair(
                 ]
                 candidate.mark_objective_dirty()
                 try:
-                    feasible, _ = candidate.validate()
-                    if not feasible:
-                        continue
-                    candidate_cost = float(candidate.calculate_cost())
+                    # calculate_cost() validates again through actual_objective().
+                    # The candidate is unchanged between these calls, so reuse
+                    # the first proof within this explicit scope.
+                    with candidate.validation_memo_ctx():
+                        feasible, _ = candidate.validate()
+                        if not feasible:
+                            continue
+                        candidate_cost = float(candidate.calculate_cost())
                 except Exception as exc:
                     record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
                     continue
