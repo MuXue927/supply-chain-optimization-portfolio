@@ -151,7 +151,7 @@ class SolutionState:
             try:
                 if veh is None or veh.is_empty():
                     continue
-            except Exception:
+            except (AttributeError, TypeError):
                 continue
             yield veh
 
@@ -207,7 +207,7 @@ class SolutionState:
             if recorded is None or cache.get("shipments_arr") is None:
                 return False
             return inventory_stamp(getattr(self, "vehicles", ())) == recorded
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             # Any doubt at all means "not provably fresh", so recompute.
             return False
 
@@ -266,17 +266,17 @@ class SolutionState:
         try:
             if hasattr(self, "_vehicles_by_plant_day_map"):
                 delattr(self, "_vehicles_by_plant_day_map")
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         try:
             if hasattr(self, "_resource_pool_cache"):
                 delattr(self, "_resource_pool_cache")
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         try:
             if hasattr(self, "_unmet_cache"):
                 delattr(self, "_unmet_cache")
-        except Exception:
+        except (AttributeError, TypeError):
             pass
 
     def record_repair_audit(
@@ -1198,7 +1198,7 @@ def veh_loading(
     try:
         if hasattr(state, "_inventory_cache"):
             state._inventory_cache = None
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return True
 
@@ -1252,7 +1252,7 @@ def batch_update_inventory(state: SolutionState, vehicles: list[Vehicle], op_typ
     try:
         if hasattr(state, "_inventory_cache"):
             state._inventory_cache = None
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     # Return the summary for caller verification and logging.

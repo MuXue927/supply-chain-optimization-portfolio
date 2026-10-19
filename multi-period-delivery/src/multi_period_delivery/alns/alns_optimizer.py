@@ -989,14 +989,14 @@ class ALNSOptimizer:
                 # stopping configuration so progress-based policies remain consistent.
                 try:
                     self.set_max_iterations(dynamic_floor)
-                except Exception:
+                except (OverflowError, TypeError, ValueError):
                     pass
                 try:
                     if self.tracker is not None and hasattr(
                         self.tracker, "set_max_iterations"
                     ):
                         self.tracker.set_max_iterations(dynamic_floor)
-                except Exception:
+                except (OverflowError, TypeError, ValueError):
                     pass
             except Exception:
                 pass

@@ -163,7 +163,7 @@ class DemandConstraintAccept:
             try:
                 if veh is None or veh.is_empty():
                     continue
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
             count += 1
         return count

@@ -216,7 +216,7 @@ class ALNSTracker:
             for vt in list(getattr(state.data, "all_veh_types", []) or []):
                 try:
                     caps.append(float(state.data.veh_type_cap[vt]))
-                except Exception:
+                except (KeyError, OverflowError, TypeError, ValueError):
                     continue
             if caps:
                 caps.sort()
@@ -234,12 +234,12 @@ class ALNSTracker:
                     fixed_cost += float(state.data.veh_type_cost.get(veh.type, 0.0))
                     if cap >= threshold:
                         large_ratio += 1.0
-                except Exception:
+                except (AttributeError, KeyError, OverflowError, TypeError, ValueError):
                     continue
             if veh_count > 0 and total_cap > 1e-12:
                 load_ratio = total_load / total_cap
                 large_ratio = large_ratio / float(veh_count)
-        except Exception:
+        except (AttributeError, KeyError, OverflowError, TypeError, ValueError):
             pass
         bin_size = max(1, int(getattr(ALNSConfig, "ELITE_SIGNATURE_BIN_SIZE", 10)))
         return (
@@ -497,7 +497,7 @@ class ALNSTracker:
                             gap_vs_initial,
                         ]
                     )
-            except Exception as e:
+            except (OSError, UnicodeError, csv.Error, TypeError, ValueError) as e:
                 self.log_printer.print(
                     f"[WARN] Failed to append tracker CSV: {e}", color="yellow"
                 )
