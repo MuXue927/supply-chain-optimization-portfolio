@@ -93,6 +93,7 @@ from .repair_operators import (
     wrap_repair_no_args,
 )
 from .repair_utils import consolidate_route_vehicles
+from .snapshot import safe_state_snapshot
 from .swallowed import record_swallowed, report_swallowed
 
 # For type checking only (avoid runtime import when modules are optional)
@@ -232,22 +233,6 @@ def is_file_in_use(file_path):
         return False
     except PermissionError:
         return True
-
-
-def safe_state_snapshot(state: Any) -> Any:
-    if state is None:
-        return None
-    try:
-        if hasattr(state, "copy") and callable(getattr(state, "copy")):
-            return state.copy()
-    except Exception:
-        pass
-    try:
-        import copy as _copy
-
-        return _copy.deepcopy(state)
-    except Exception:
-        return state
 
 
 class ALNSOptimizer:

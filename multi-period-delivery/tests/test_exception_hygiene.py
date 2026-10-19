@@ -28,12 +28,13 @@ handlers whose try bodies are builtin coercions (``float``/``int``/``len``) plus
 manually reviewed handlers with an explicit, small exception set (dict subscripts,
 ``setattr``, ``json.load`` + ``float``).
 
-The 2026-10-19 maintenance pass lowered 368 -> 354 by narrowing cache cleanup
+The 2026-10-19 maintenance pass lowered 368 -> 352 by narrowing cache cleanup
 (``delattr``/attribute assignment), internal ``set_max_iterations`` coercions,
 tracker capacity/profile conversion, CSV append, used-vehicle iteration, and the
-inventory-freshness fail-closed check.
+inventory-freshness fail-closed check, then consolidating two duplicate
+snapshot helpers into one fail-closed implementation.
 
-The remaining 354 are left deliberately: most wrap a try body containing a
+The remaining 352 are left deliberately: most wrap a try body containing a
 method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
@@ -51,7 +52,7 @@ import pytest
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 354
+BLIND_EXCEPT_BASELINE = 352
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 

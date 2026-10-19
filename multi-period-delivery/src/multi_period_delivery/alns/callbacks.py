@@ -13,7 +13,6 @@ Design notes:
 
 from __future__ import annotations
 
-import copy
 import logging
 from collections.abc import Callable
 from math import isfinite
@@ -26,26 +25,13 @@ from .alnsopt import SolutionState
 from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
 from .progress import resolve_progress
+from .snapshot import safe_state_snapshot
 
 logger = logging.getLogger(__name__)
 
 
 def _callback_console_enabled() -> bool:
     return bool(getattr(ALNSConfig, "ENABLE_CALLBACK_DIAGNOSTICS_CONSOLE", False))
-
-
-def safe_state_snapshot(state: SolutionState | None) -> SolutionState | None:
-    if state is None:
-        return None
-    try:
-        if hasattr(state, "copy") and callable(getattr(state, "copy")):
-            return state.copy()
-    except Exception:
-        pass
-    try:
-        return copy.deepcopy(state)
-    except Exception:
-        return state
 
 
 def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str):

@@ -259,7 +259,7 @@ def test_safe_state_snapshot_falls_back_to_deepcopy() -> None:
     assert snapshot is not original
 
 
-def test_safe_state_snapshot_returns_the_object_when_everything_fails() -> None:
+def test_safe_state_snapshot_fails_closed_when_everything_fails() -> None:
     class _Uncopyable:
         def copy(self):
             raise RuntimeError("no copy")
@@ -269,7 +269,22 @@ def test_safe_state_snapshot_returns_the_object_when_everything_fails() -> None:
 
     original = _Uncopyable()
 
-    assert cb.safe_state_snapshot(original) is original
+    with pytest.raises(RuntimeError, match="independent state snapshot"):
+        cb.safe_state_snapshot(original)
+
+
+def test_safe_state_snapshot_rejects_copy_results_that_alias_the_original() -> None:
+    class _SelfReturning:
+        def copy(self):
+            return self
+
+        def __deepcopy__(self, memo):
+            return self
+
+    original = _SelfReturning()
+
+    with pytest.raises(RuntimeError, match="returned the original or None"):
+        cb.safe_state_snapshot(original)
 
 
 def test_dump_state_snapshot_survives_a_broken_objective() -> None:
