@@ -22,6 +22,7 @@ from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
 from multi_period_delivery.alns.InputDataALNS import DataALNS
 from multi_period_delivery.alns.repair_utils import get_unmet_demand
+from multi_period_delivery.alns.vehicle import Vehicle
 
 
 def _load_data() -> DataALNS:
@@ -257,6 +258,50 @@ def test_fill_minimum_load_repair_trusts_incremental_inventory_after_commit(
     assert after_volume > before_volume
     assert inventory_calls == 1
     _assert_still_consistent(state)
+
+
+def test_inventory_rollback_fails_closed_when_recompute_raises(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = feasible_solution.copy()
+    vehicle = next(veh for veh in state.vehicles if not veh.is_empty())
+    key = next(iter(vehicle.cargo))
+    before_len = len(state.vehicles)
+    before_cargo = dict(vehicle.cargo)
+    before_s_ikt = dict(state.s_ikt)
+    recorded: list[tuple[str, BaseException]] = []
+
+    vehicle.cargo[key] = vehicle.cargo[key] + 1
+    state.vehicles.append(
+        Vehicle(vehicle.fact_id, vehicle.dealer_id, vehicle.type, vehicle.day, state.data)
+    )
+
+    def raising_compute_inventory():
+        raise RuntimeError("recompute failed")
+
+    monkeypatch.setattr(state, "compute_inventory", raising_compute_inventory)
+    monkeypatch.setattr(
+        repair,
+        "record_swallowed",
+        lambda site, exc: recorded.append((site, exc)),
+    )
+
+    kept = repair._rollback_load_if_inventory_negative(
+        state,
+        vehicle,
+        before_len,
+        before_cargo,
+        before_s_ikt,
+    )
+
+    assert kept is False
+    assert len(state.vehicles) == before_len
+    assert vehicle.cargo == before_cargo
+    assert state.s_ikt == before_s_ikt
+    assert recorded[0][0] == (
+        "repair_operators.inventory_balance_repair.compute_inventory"
+    )
+    assert isinstance(recorded[0][1], RuntimeError)
 
 
 def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(

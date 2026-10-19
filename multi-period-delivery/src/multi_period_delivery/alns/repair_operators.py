@@ -1033,12 +1033,19 @@ def _rollback_load_if_inventory_negative(
 
     Returns ``True`` when the load was kept.
     """
+    inventory_certified = False
     try:
         state.compute_inventory()
-    except (AttributeError, TypeError, ValueError, RuntimeError):
+        inventory_certified = True
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
         # Cannot certify the load, so treat it as a failure and roll back.
-        pass
-    if not any(value < 0 for value in state.s_ikt.values()):
+        record_swallowed(
+            "repair_operators.inventory_balance_repair.compute_inventory",
+            exc,
+        )
+    if inventory_certified and not any(
+        value < 0 for value in state.s_ikt.values()
+    ):
         return True
     try:
         del state.vehicles[before_len:]
