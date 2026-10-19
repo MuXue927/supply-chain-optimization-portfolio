@@ -15,6 +15,7 @@ import numpy as np
 
 from .alns_config import default_config as ALNSConfig
 from .progress import resolve_progress
+from .swallowed import record_swallowed
 
 
 def _safe_float(value: Any, default: float = float("inf")) -> float:
@@ -247,11 +248,13 @@ class DemandConstraintAccept:
         """
         self._calls += 1
 
-        # If validation raises, treat the candidate as feasible without violations.
+        # An unverified candidate is not safe to accept. Record the failure so a
+        # systematic validator problem cannot silently disable the constraint.
         try:
             feasible, violations = candidate_state.validate()
-        except Exception:
-            feasible, violations = True, {}
+        except Exception as exc:
+            record_swallowed("accept.DemandConstraintAccept.validate", exc)
+            return False
 
         penalty = 0.0
         if not feasible:

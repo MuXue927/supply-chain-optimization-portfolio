@@ -14,6 +14,7 @@ import time
 import numpy as np
 import pytest
 
+from multi_period_delivery.alns import accept as accept_module
 from multi_period_delivery.alns.accept import (
     DemandConstraintAccept,
     _CandidateProxy,
@@ -154,6 +155,42 @@ def test_demand_accept_delegates_feasible_candidate_to_base() -> None:
     assert stats["calls"] == 1
     assert stats["accepted"] == 1
     assert stats["accept_rate"] == 1.0
+
+
+def test_demand_accept_rejects_candidate_when_validation_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None)
+    candidate = _FakeState()
+    recorded: list[tuple[str, BaseException]] = []
+
+    def raising_validate():
+        raise RuntimeError("validator exploded")
+
+    monkeypatch.setattr(candidate, "validate", raising_validate)
+    monkeypatch.setattr(
+        accept_module,
+        "record_swallowed",
+        lambda site, exc: recorded.append((site, exc)),
+    )
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is False
+    assert base.seen_objectives == []
+    assert len(recorded) == 1
+    assert recorded[0][0] == "accept.DemandConstraintAccept.validate"
+    assert isinstance(recorded[0][1], RuntimeError)
+    stats = acceptor.get_statistics()
+    assert stats["calls"] == 1
+    assert stats["accepted"] == 0
+    assert stats["accept_rate"] == 0.0
 
 
 def test_demand_accept_adds_penalty_for_unmet_demand() -> None:
