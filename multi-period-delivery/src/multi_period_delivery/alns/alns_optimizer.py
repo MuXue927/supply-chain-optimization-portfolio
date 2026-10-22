@@ -1195,6 +1195,7 @@ class ALNSOptimizer:
                 )
             except Exception:
                 before_cross_period_cost = None
+            cross_period_snapshot = safe_state_snapshot(self.best_solution)
             consolidation_failed = False
             try:
                 # The try covers only the consolidation itself, so a failure in
@@ -1228,15 +1229,10 @@ class ALNSOptimizer:
                 self.log_printer.print(
                     "Warning: final cross-period consolidation failed "
                     f"({type(exc).__name__}: {exc}); "
-                    + (
-                        "restored the pre-consolidation solution."
-                        if snapshot_before is not None
-                        else "kept the previous solution."
-                    ),
+                    "restored the pre-consolidation solution.",
                     color="bold red",
                 )
-                if snapshot_before is not None:
-                    self.best_solution = snapshot_before
+                self.best_solution = cross_period_snapshot
 
             # Report whichever solution is actually adopted. Computed after
             # the handler so the numbers always describe the delivered
