@@ -287,6 +287,56 @@ def test_safe_state_snapshot_rejects_copy_results_that_alias_the_original() -> N
         cb.safe_state_snapshot(original)
 
 
+def test_runtime_guard_rolls_back_to_verified_snapshot() -> None:
+    class _Snapshot:
+        def __init__(self, feasible: bool, vehicles: list[str]):
+            self.feasible = feasible
+            self.vehicles = list(vehicles)
+
+        def copy(self):
+            return _Snapshot(self.feasible, self.vehicles)
+
+        def validate(self):
+            return self.feasible, {}
+
+    class _State:
+        def __init__(self):
+            self.vehicles: list[str] = []
+
+        def replace_vehicles(self, vehicles):
+            self.vehicles = list(vehicles)
+
+        def compute_inventory(self):
+            return True
+
+        def validate(self):
+            return True, {}
+
+    class _Optimizer:
+        def __init__(self, best, incumbent):
+            self.best_feasible_state = best
+            self._incumbent_state_snapshot = incumbent
+            self.result = None
+
+    state = _State()
+    optimizer = _Optimizer(
+        best=_Snapshot(False, ["invalid"]),
+        incumbent=_Snapshot(True, ["verified"]),
+    )
+
+    assert cb._restore_verified_runtime_state(state, optimizer) is True
+    assert state.vehicles == ["verified"]
+
+    state = _State()
+    optimizer = _Optimizer(
+        best=_Snapshot(False, ["invalid"]),
+        incumbent=_Snapshot(False, ["also-invalid"]),
+    )
+
+    assert cb._restore_verified_runtime_state(state, optimizer) is False
+    assert state.vehicles == []
+
+
 def test_dump_state_snapshot_survives_a_broken_objective() -> None:
     class _Broken:
         def objective(self):

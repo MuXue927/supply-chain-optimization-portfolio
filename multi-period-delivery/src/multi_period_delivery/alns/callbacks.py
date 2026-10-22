@@ -26,12 +26,53 @@ from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
 from .progress import resolve_progress
 from .snapshot import safe_state_snapshot
+from .swallowed import record_swallowed
 
 logger = logging.getLogger(__name__)
 
 
+class RuntimeGuardError(RuntimeError):
+    """Raised when no verified feasible state can be restored."""
+
+
 def _callback_console_enabled() -> bool:
     return bool(getattr(ALNSConfig, "ENABLE_CALLBACK_DIAGNOSTICS_CONSOLE", False))
+
+
+def _runtime_rollback_sources(optimizer: Any) -> tuple[tuple[str, Any], ...]:
+    result = getattr(optimizer, "result", None)
+    return (
+        ("best_feasible_state", getattr(optimizer, "best_feasible_state", None)),
+        (
+            "_incumbent_state_snapshot",
+            getattr(optimizer, "_incumbent_state_snapshot", None),
+        ),
+        ("result.best_state", getattr(result, "best_state", None)),
+    )
+
+
+def _restore_verified_runtime_state(state: Any, optimizer: Any) -> bool:
+    """Restore the first snapshot that still passes full validation."""
+    sources = _runtime_rollback_sources(optimizer)
+    seen: set[int] = set()
+    for label, source in sources:
+        if source is None or id(source) in seen:
+            continue
+        seen.add(id(source))
+        try:
+            snapshot = safe_state_snapshot(source)
+            feasible, _ = snapshot.validate()
+            if not feasible:
+                continue
+            state.replace_vehicles(list(snapshot.vehicles))
+            state.compute_inventory()
+            feasible_after, _ = state.validate()
+            if feasible_after:
+                logger.info("[RUNTIME_GUARD] Restored verified snapshot from %s", label)
+                return True
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            record_swallowed(f"callbacks.runtime_guard.restore.{label}", exc)
+    return False
 
 
 def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str):
@@ -835,55 +876,49 @@ def make_callback_on_iteration(
                     if not reason_text:
                         reason_text = "unknown"
 
+                    only_unmet = (
+                        len(viol_counts) == 1 and "unmet_demand" in viol_counts
+                    )
                     best_feasible = getattr(optimizer, "best_feasible_state", None)
-                    if best_feasible is not None:
-                        try:
-                            rollback_state = safe_state_snapshot(best_feasible)
-                            state.replace_vehicles(list(rollback_state.vehicles))
-                            state.compute_inventory()
-                            feasible_after_rb, _ = state.validate()
-                            if feasible_after_rb:
-                                if _callback_console_enabled():
-                                    optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate infeasible ({reason_text}); rolled back to latest feasible snapshot",
-                                        color="yellow",
-                                    )
-                            else:
-                                logger.error(
-                                    "[RUNTIME_GUARD] State remains infeasible after rollback; keeping diagnostics"
-                                )
-                                if _callback_console_enabled():
-                                    optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Still infeasible after rollback; keeping diagnostics",
-                                        color="bold red",
-                                    )
-                        except Exception as rb_err:
-                            logger.exception("[RUNTIME_GUARD] Rollback failed: %s", rb_err)
+                    if best_feasible is not None or not only_unmet:
+                        if _restore_verified_runtime_state(state, optimizer):
                             if _callback_console_enabled():
                                 optimizer.log_printer.print(
-                                    f"[RUNTIME_GUARD] Rollback failed: {rb_err}",
+                                    f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate infeasible ({reason_text}); restored a verified feasible snapshot",
+                                    color="yellow",
+                                )
+                        elif any(
+                            source is not None
+                            for _label, source in _runtime_rollback_sources(optimizer)
+                        ):
+                            raise RuntimeGuardError(
+                                "No verified feasible state is available for "
+                                f"runtime rollback at iteration {cand_iter} "
+                                f"({reason_text})"
+                            )
+                        else:
+                            logger.error(
+                                "[RUNTIME_GUARD] No feasible rollback source exists; "
+                                "leaving the unverified candidate for rejection: %s",
+                                reason_text,
+                            )
+                            if _callback_console_enabled():
+                                optimizer.log_printer.print(
+                                    f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] "
+                                    f"Candidate infeasible ({reason_text}) and no "
+                                    "verified rollback source exists",
                                     color="bold red",
                                 )
                     else:
                         # Early in the run, candidates may be temporarily infeasible
                         # because unmet demand exists before the first feasible incumbent.
-                        only_unmet = (
-                            len(viol_counts) == 1 and "unmet_demand" in viol_counts
-                        )
                         should_log = next_iteration <= 5 or (next_iteration % 50 == 0)
                         if should_log:
-                            if only_unmet:
-                                if _callback_console_enabled():
-                                    optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate temporarily infeasible (unmet_demand={int(viol_counts.get('unmet_demand', 0))}); no best_feasible_state yet, continuing search",
-                                        color="yellow",
-                                    )
-                            else:
-                                if _callback_console_enabled():
-                                    optimizer.log_printer.print(
-                                        f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate infeasible ({reason_text}) and no best_feasible_state is available for rollback",
-                                        color="bold red",
-                                    )
+                            if _callback_console_enabled():
+                                optimizer.log_printer.print(
+                                    f"[RUNTIME_GUARD][candidate iteration #{cand_iter}] Candidate temporarily infeasible (unmet_demand={int(viol_counts.get('unmet_demand', 0))}); no verified incumbent yet, continuing search",
+                                    color="yellow",
+                                )
 
             # Advance optimizer's internal iteration counter if available (best-effort).
             # Synchronize the optimizer counter and optional ML components.
@@ -1566,6 +1601,8 @@ def make_callback_on_iteration(
             except Exception:
                 logger.exception("Tracker on_iteration call failed")
 
+        except RuntimeGuardError:
+            raise
         except Exception as e:
             logger.exception("callback_on_iteration unexpected error: %s", e)
 
@@ -1596,11 +1633,15 @@ def register_callbacks(
         _set_incumbent_snapshot(state)
         try:
             on_best(state, rng, **kwargs)
+        except RuntimeGuardError:
+            raise
         except Exception:
             optimizer.log_printer.print("Callback on best failed.", color="yellow")
 
         try:
             on_iter(state, rng, **kwargs)
+        except RuntimeGuardError:
+            raise
         except Exception:
             optimizer.log_printer.print(
                 "Callback on iteration (from best) failed.", color="yellow"
@@ -1610,6 +1651,8 @@ def register_callbacks(
         _set_incumbent_snapshot(state)
         try:
             on_iter(state, rng, **kwargs)
+        except RuntimeGuardError:
+            raise
         except Exception:
             optimizer.log_printer.print("Callback on iteration failed.", color="yellow")
 
@@ -1627,6 +1670,8 @@ def register_callbacks(
 
         try:
             on_iter(incumbent, rng, **kwargs)
+        except RuntimeGuardError:
+            raise
         except Exception:
             optimizer.log_printer.print(
                 "Callback on iteration (from reject) failed.", color="yellow"
