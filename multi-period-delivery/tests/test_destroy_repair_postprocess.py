@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from multi_period_delivery.alns import repair_utils
+from multi_period_delivery.alns import destroy_utils, repair_utils
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.destroy_utils import (
@@ -141,6 +141,78 @@ def test_post_destroy_preserves_distinct_partial_rollback_on_overlap() -> None:
     )
 
     _assert_inventory_matches_fresh(state)
+
+
+def test_post_destroy_recovers_from_partial_update_failure(monkeypatch) -> None:
+    state = _load_state()
+    vehicle = _vehicle_with_load(state)
+    state.vehicles = [vehicle]
+    state.mark_objective_dirty()
+    state.compute_inventory()
+
+    def partial_then_raise(current_state, _partial_updates):
+        key = ("8070", "O7132564089", 5)
+        current_state.s_ikt[key] = current_state.s_ikt.get(key, 0) + 17
+        raise ValueError("partial update failed")
+
+    monkeypatch.setattr(
+        destroy_utils,
+        "apply_batch_update",
+        lambda _state, _removed, _skip: (None, False),
+    )
+    monkeypatch.setattr(
+        destroy_utils,
+        "apply_partial_inventory_updates",
+        partial_then_raise,
+    )
+
+    post_destroy(
+        state,
+        [],
+        "partial_failure",
+        early=True,
+        prev_obj=1.0,
+        extra={"partial_updates": {("8070", "O7132564089", 5): 17}},
+    )
+
+    _assert_inventory_matches_fresh(state)
+    assert state._post_destroy_certified is True
+
+
+def test_post_destroy_marks_uncertified_when_inventory_recovery_fails(
+    monkeypatch,
+) -> None:
+    state = _load_state()
+    vehicle = _vehicle_with_load(state)
+    state.vehicles = [vehicle]
+    state.mark_objective_dirty()
+    state.compute_inventory()
+
+    def raising_batch_update(_state, _removed, _skip):
+        raise RuntimeError("batch update failed")
+
+    monkeypatch.setattr(destroy_utils, "apply_batch_update", raising_batch_update)
+
+    def raising_compute_inventory():
+        raise ValueError("inventory rebuild failed")
+
+    def raising_validate():
+        raise RuntimeError("validation failed")
+
+    monkeypatch.setattr(state, "compute_inventory", raising_compute_inventory)
+    monkeypatch.setattr(state, "validate", raising_validate)
+
+    post_destroy(
+        state,
+        [vehicle],
+        "inventory_failure",
+        early=True,
+        prev_obj=1.0,
+    )
+
+    assert state._post_destroy_certified is False
+    assert "inventory rebuild" in state._post_destroy_certification_error
+    assert "validation" in state._post_destroy_certification_error
 
 
 def test_physically_feasible_partial_repair_is_not_rolled_back() -> None:

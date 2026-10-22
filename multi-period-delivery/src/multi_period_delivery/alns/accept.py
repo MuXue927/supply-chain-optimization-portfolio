@@ -252,7 +252,15 @@ class DemandConstraintAccept:
         # certification could not be completed. Such a state must not be
         # accepted merely because a later validator call happens to succeed on
         # stale derived data.
-        if getattr(candidate_state, "_post_repair_certified", None) is False:
+        post_repair_certified = getattr(
+            candidate_state, "_post_repair_certified", None
+        )
+        if post_repair_certified is False:
+            return False
+        if (
+            getattr(candidate_state, "_post_destroy_certified", None) is False
+            and post_repair_certified is not True
+        ):
             return False
 
         # An unverified candidate is not safe to accept. Record the failure so a

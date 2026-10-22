@@ -42,6 +42,8 @@ import numpy as np
 # shared implementation also refuses to truncate a multi-element array.
 from .coercion import coerce_int as _coerce_int
 from .repair_utils import compute_mixed_operator_reward
+from .snapshot import restore_state_snapshot
+from .swallowed import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -244,9 +246,14 @@ def apply_partial_inventory_updates(state, partial_updates: dict | None):
     for key, raw_delta in partial_updates.items():
         try:
             plant, sku_id, day = key
-        except (TypeError, ValueError):
-            continue
-        delta = _coerce_int(raw_delta, default=0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid partial inventory key: {key!r}") from exc
+        try:
+            delta = int(raw_delta)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid partial inventory delta for {key!r}: {raw_delta!r}"
+            ) from exc
         if delta == 0:
             continue
         norm_key = (plant, sku_id, int(day))
@@ -265,6 +272,23 @@ def apply_partial_inventory_updates(state, partial_updates: dict | None):
             pass
 
     return applied
+
+
+_DESTROY_HARD_VIOLATION_KEYS = (
+    "veh_over_load",
+    "negative_inventory",
+    "plant_inv_exceed",
+    "cargo_day_mismatch",
+    "check_error",
+    "validation_error",
+)
+
+
+def _has_hard_destroy_violation(violations) -> bool:
+    """Return whether a destroy validation result contains a hard failure."""
+    if not isinstance(violations, dict):
+        return True
+    return any(bool(violations.get(key)) for key in _DESTROY_HARD_VIOLATION_KEYS)
 
 
 def compute_improvement_and_report(
@@ -339,6 +363,8 @@ def build_opjson_log(
     improvement,
     elapsed,
     batch_conflict: bool,
+    post_destroy_certified: bool,
+    post_destroy_error,
     removed_cargo_summary: dict,
     inventory_updates: dict | None,
     extra: dict | None,
@@ -370,6 +396,8 @@ def build_opjson_log(
         "improvement": to_native(improvement),
         "elapsed_sec": to_native(elapsed),
         "batch_update_conflict": bool(batch_conflict),
+        "post_destroy_certified": bool(post_destroy_certified),
+        "post_destroy_error": post_destroy_error,
         # keep only first 200 entries for safety
         "removed_cargo_summary": {
             to_native(k): to_native(v)
@@ -592,6 +620,11 @@ def post_destroy(
     apply_batch_update, compute_improvement_and_report, build_opjson_log,
     adjust_exploration, and to_native.
     """
+    pre_destroy_snapshot = getattr(state, "_pre_destroy_snapshot", None)
+    pre_destroy_snapshot_error = getattr(state, "_pre_destroy_snapshot_error", None)
+    state._post_destroy_certified = None
+    state._post_destroy_certification_error = None
+
     # 1) Summarize cargo from removed vehicles for the log summary.
     try:
         removed_cargo_summary = summarize_removed_cargo(removed)
@@ -608,15 +641,6 @@ def post_destroy(
     except Exception:
         inventory_updates = None
         batch_conflict = True
-
-    if batch_conflict:
-        # Rebuild the inventory table from the current vehicle set so a failed
-        # incremental restore cannot leave a silently inconsistent state.
-        try:
-            state.mark_objective_dirty()
-            state.compute_inventory()
-        except Exception:
-            pass
 
     # 2.1) Apply extra inventory deltas supplied by the operator, such as
     # partial rollbacks, and merge them with the batch update.
@@ -648,8 +672,71 @@ def post_destroy(
                     inventory_updates = {}
                 for k, v in partial_applied.items():
                     inventory_updates[k] = inventory_updates.get(k, 0) + v
-        except Exception:
+        except Exception as exc:
             batch_conflict = True
+            record_swallowed("destroy_utils.post_destroy.partial_updates", exc)
+
+    # A failed batch or partial update must be repaired from the current fleet,
+    # not followed by objective/reporting work on an unknown inventory table.
+    post_destroy_certified = not batch_conflict
+    post_destroy_error = None
+    if batch_conflict:
+        post_destroy_certified = False
+        try:
+            state.mark_objective_dirty()
+        except (AttributeError, TypeError) as exc:
+            post_destroy_error = (
+                f"inventory cache invalidation: {type(exc).__name__}: {exc}"
+            )
+            record_swallowed("destroy_utils.post_destroy.invalidate_cache", exc)
+        try:
+            state.compute_inventory()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            post_destroy_error = (
+                f"inventory rebuild: {type(exc).__name__}: {exc}"
+            )
+            record_swallowed("destroy_utils.post_destroy.compute_inventory", exc)
+
+        try:
+            _feasible, violations = state.validate()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            post_destroy_error = (
+                f"{post_destroy_error}; validation: {type(exc).__name__}: {exc}"
+                if post_destroy_error
+                else f"validation: {type(exc).__name__}: {exc}"
+            )
+            record_swallowed("destroy_utils.post_destroy.validate", exc)
+        else:
+            post_destroy_certified = not _has_hard_destroy_violation(violations)
+
+        if not post_destroy_certified and pre_destroy_snapshot is not None:
+            try:
+                restore_state_snapshot(state, pre_destroy_snapshot)
+                state._destroy_noop = True
+                state.compute_inventory()
+                _feasible, violations = state.validate()
+                post_destroy_certified = not _has_hard_destroy_violation(
+                    violations
+                )
+                post_destroy_error = None
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                post_destroy_error = (
+                    f"pre-destroy restore: {type(exc).__name__}: {exc}"
+                )
+                record_swallowed(
+                    "destroy_utils.post_destroy.restore_snapshot", exc
+                )
+
+        if not post_destroy_certified and post_destroy_error is None:
+            post_destroy_error = (
+                "post-destroy state retained a hard violation"
+                if pre_destroy_snapshot is not None
+                else pre_destroy_snapshot_error
+                or "inventory recovery had no pre-destroy snapshot"
+            )
+
+    state._post_destroy_certified = post_destroy_certified
+    state._post_destroy_certification_error = post_destroy_error
 
     # 3) Calculate elapsed time.
     elapsed = None
@@ -673,6 +760,8 @@ def post_destroy(
             "veh_after": int(len(state.vehicles)),
             "elapsed_sec": to_native(elapsed),
             "batch_update_conflict": bool(batch_conflict),
+            "post_destroy_certified": bool(post_destroy_certified),
+            "post_destroy_error": post_destroy_error,
             "removed_cargo_summary": {
                 k: to_native(v) for k, v in list(removed_cargo_summary.items())[:200]
             },
@@ -695,13 +784,14 @@ def post_destroy(
     # compute_improvement_and_report.
     new_obj = None
     improvement = 0.0
-    try:
-        new_obj, improvement, _ = compute_improvement_and_report(
-            state, prev_obj, op_name
-        )
-    except Exception:
-        new_obj = None
-        improvement = 0.0
+    if post_destroy_certified:
+        try:
+            new_obj, improvement, _ = compute_improvement_and_report(
+                state, prev_obj, op_name
+            )
+        except Exception:
+            new_obj = None
+            improvement = 0.0
 
     # 6) Record the phase and emit the final log.
     try:
@@ -720,6 +810,8 @@ def post_destroy(
             improvement=improvement,
             elapsed=elapsed,
             batch_conflict=batch_conflict,
+            post_destroy_certified=post_destroy_certified,
+            post_destroy_error=post_destroy_error,
             removed_cargo_summary=removed_cargo_summary,
             inventory_updates=inventory_updates,
             extra=extra,
@@ -738,6 +830,8 @@ def post_destroy(
                 "improvement": to_native(improvement),
                 "elapsed_sec": to_native(elapsed),
                 "batch_update_conflict": bool(batch_conflict),
+                "post_destroy_certified": bool(post_destroy_certified),
+                "post_destroy_error": post_destroy_error,
                 "removed_cargo_summary": {
                     k: to_native(v)
                     for k, v in list(removed_cargo_summary.items())[:200]

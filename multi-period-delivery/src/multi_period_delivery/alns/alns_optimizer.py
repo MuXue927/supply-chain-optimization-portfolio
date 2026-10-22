@@ -185,6 +185,52 @@ class _NoOpFlagPreservingRepair:
         return result
 
 
+class _PreDestroySnapshot:
+    """Attach one pre-destroy snapshot so post_destroy can roll back atomically."""
+
+    def __init__(self, operator: Any) -> None:
+        self._operator = operator
+        self.__name__ = getattr(operator, "__name__", "destroy_operator")
+
+    def __call__(self, state: Any, rng: Any, **kwargs: Any) -> Any:
+        snapshot = None
+        snapshot_error = None
+        try:
+            snapshot = safe_state_snapshot(state)
+            # Break the history chain before attaching this snapshot.
+            snapshot._pre_destroy_snapshot = None
+            snapshot._pre_destroy_snapshot_error = None
+            snapshot._post_destroy_certified = None
+            snapshot._post_destroy_certification_error = None
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            snapshot_error = f"{type(exc).__name__}: {exc}"
+            record_swallowed("alns_optimizer.destroy_pre_snapshot", exc)
+        try:
+            state._pre_destroy_snapshot = snapshot
+            state._pre_destroy_snapshot_error = snapshot_error
+            state._post_destroy_certified = None
+            state._post_destroy_certification_error = None
+        except (AttributeError, TypeError):
+            pass
+        try:
+            result = self._operator(state, rng, **kwargs)
+        finally:
+            try:
+                state._pre_destroy_snapshot = None
+                state._pre_destroy_snapshot_error = None
+            except (AttributeError, TypeError):
+                pass
+        for destroyed in (state, result):
+            if destroyed is None:
+                continue
+            try:
+                destroyed._pre_destroy_snapshot = None
+                destroyed._pre_destroy_snapshot_error = None
+            except (AttributeError, TypeError):
+                pass
+        return result
+
+
 @contextmanager
 def suppress_noisy_operator_stdout(enabled: bool = True):
     """Suppress high-volume operator prints while preserving key progress logs."""
@@ -554,6 +600,8 @@ class ALNSOptimizer:
 
             # Register destroy operators.
             self._register_destroy_operators(alns)
+            for name, operator in list(alns._d_ops.items()):
+                alns._d_ops[name] = _PreDestroySnapshot(operator)
 
             # Register repair operators.
             self._register_repair_operators(alns)

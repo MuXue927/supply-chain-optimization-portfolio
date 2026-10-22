@@ -176,6 +176,42 @@ def test_demand_accept_rejects_uncertified_post_repair_candidate() -> None:
     assert base.seen_objectives == []
 
 
+def test_demand_accept_rejects_failed_destroy_without_repair_certification() -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None, penalty_factor=1000.0)
+    candidate = _FakeState(objective=1.0)
+    candidate._post_destroy_certified = False
+    candidate._post_repair_certified = None
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is False
+    assert base.seen_objectives == []
+
+
+def test_demand_accept_allows_certified_repair_after_destroy_uncertainty() -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None, penalty_factor=1000.0)
+    candidate = _FakeState(objective=1.0)
+    candidate._post_destroy_certified = False
+    candidate._post_repair_certified = True
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is True
+    assert base.seen_objectives == [1.0]
+
+
 def test_demand_accept_rejects_candidate_when_validation_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

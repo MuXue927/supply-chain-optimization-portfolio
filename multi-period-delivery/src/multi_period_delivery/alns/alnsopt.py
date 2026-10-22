@@ -1064,6 +1064,18 @@ class SolutionState:
         new_state._post_repair_certification_error = getattr(
             self, "_post_repair_certification_error", None
         )
+        new_state._pre_destroy_snapshot = getattr(
+            self, "_pre_destroy_snapshot", None
+        )
+        new_state._pre_destroy_snapshot_error = getattr(
+            self, "_pre_destroy_snapshot_error", None
+        )
+        new_state._post_destroy_certified = getattr(
+            self, "_post_destroy_certified", None
+        )
+        new_state._post_destroy_certification_error = getattr(
+            self, "_post_destroy_certification_error", None
+        )
         return new_state
 
 

@@ -17,6 +17,7 @@ from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
 from .InputDataALNS import DataALNS
 from .param_tuner import ParamAutoTuner
+from .snapshot import restore_state_snapshot
 from .swallowed import record_swallowed
 from .vehicle import Vehicle
 
@@ -785,38 +786,6 @@ def _has_hard_post_repair_violation(violations) -> bool:
     return any(bool(violations.get(key)) for key in _HARD_POST_REPAIR_VIOLATION_KEYS)
 
 
-def _restore_state_from_snapshot(state: SolutionState, snapshot: SolutionState) -> None:
-    """Restore solution content while preserving the live object and audit trail."""
-    restored = snapshot.copy()
-    current_audit = {
-        key: dict(value) for key, value in getattr(state, "repair_audit", {}).items()
-    }
-
-    state.data = restored.data
-    state.vehicles = restored.vehicles
-    state.s_ikt = restored.s_ikt
-    state.s_indices = restored.s_indices
-    state.s_initialized = restored.s_initialized
-    state.shipped_cache = restored.shipped_cache
-    state.last_objective = restored.last_objective
-    state.objective_dirty = True
-    state._suppress_compute_inventory = False
-    state.repair_audit = current_audit
-    state._inventory_cache = None
-    state._validation_memo = None
-    state._validation_memo_enabled = False
-
-    for cache_name in (
-        "_vehicles_by_plant_day_map",
-        "_resource_pool_cache",
-        "_unmet_cache",
-    ):
-        try:
-            delattr(state, cache_name)
-        except (AttributeError, TypeError):
-            pass
-
-
 def post_repair(
     state: SolutionState,
     inserted: list[Vehicle],
@@ -948,7 +917,7 @@ def post_repair(
     if not feasible and hard_violation_exists:
         if pre_repair_snapshot is not None:
             try:
-                _restore_state_from_snapshot(state, pre_repair_snapshot)
+                restore_state_snapshot(state, pre_repair_snapshot)
                 rolled_back = True
                 rollback_source = "pre_repair_snapshot"
                 state._repair_noop = True
