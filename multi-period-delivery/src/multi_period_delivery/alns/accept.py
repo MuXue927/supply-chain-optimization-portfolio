@@ -258,6 +258,20 @@ class DemandConstraintAccept:
 
         penalty = 0.0
         if not feasible:
+            if not isinstance(violations, dict):
+                return False
+            hard_violation_keys = (
+                "negative_inventory",
+                "veh_over_load",
+                "plant_inv_exceed",
+                "cargo_day_mismatch",
+                "check_error",
+                "validation_error",
+                "inventory_inconsistency",
+            )
+            if any(violations.get(key) for key in hard_violation_keys):
+                return False
+
             # Inspect unmet-demand entries when present.
             unmet = violations.get("unmet_demand", [])
             if isinstance(unmet, list) and unmet:
@@ -277,6 +291,8 @@ class DemandConstraintAccept:
                 penalty = self.penalty_factor * (
                     len(unmet) if isinstance(unmet, list) else 1.0
                 )
+                if not unmet:
+                    return False
 
         # Accumulate the penalty for reporting.
         self._total_penalty += float(penalty)

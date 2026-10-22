@@ -193,6 +193,45 @@ def test_demand_accept_rejects_candidate_when_validation_raises(
     assert stats["accept_rate"] == 0.0
 
 
+def test_demand_accept_hard_rejects_non_demand_violations() -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None)
+    candidate = _FakeState(
+        feasible=False,
+        violations={"negative_inventory": [{"plant": "P1", "inventory": -5}]},
+    )
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is False
+    assert base.seen_objectives == []
+    stats = acceptor.get_statistics()
+    assert stats["calls"] == 1
+    assert stats["accepted"] == 0
+
+
+def test_demand_accept_rejects_malformed_infeasible_violations() -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None)
+    candidate = _FakeState(feasible=False)
+    candidate._violations = None
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is False
+    assert base.seen_objectives == []
+
+
 def test_demand_accept_adds_penalty_for_unmet_demand() -> None:
     base = _RecordingAcceptor()
     acceptor = DemandConstraintAccept(base, data=None, penalty_factor=10.0)
