@@ -53,7 +53,6 @@ Possible future improvements:
 # =========================
 # Standard library
 # =========================
-import copy
 import csv
 import os
 import time
@@ -72,6 +71,7 @@ from .alns_config import default_config as ALNSConfig
 # Internal project dependencies
 # =========================
 from .optutility import LogPrinter
+from .snapshot import replace_state_snapshot
 
 if TYPE_CHECKING:  # Import only for type checking to avoid runtime cycles.
     from .alnsopt import SolutionState
@@ -392,61 +392,65 @@ class ALNSTracker:
         improved = False
         if current_obj < self.best_obj and is_feasible:
             prev_best = self.best_obj
-            self.best_obj = current_obj
             # Save a deep copy of the best state so later in-place mutations do
             # not affect it.
-            try:
-                # Prefer SolutionState.copy() for a lightweight snapshot
-                self.best_solution = state.copy()
-            except Exception:
-                # Backward compatibility: fall back to deepcopy.
-                self.best_solution = copy.deepcopy(state)
-            improved = True
-            # Record the actual improvement, treating a previous inf as 0.
-            if prev_best != float("inf"):
-                self.recent_improvement = max(0.0, prev_best - current_obj)
-            else:
-                self.recent_improvement = 0.0
+            if replace_state_snapshot(
+                self,
+                "best_solution",
+                state,
+                site="alnstrack.best_solution",
+            ):
+                self.best_obj = current_obj
+                improved = True
+                # Record the actual improvement, treating a previous inf as 0.
+                if prev_best != float("inf"):
+                    self.recent_improvement = max(0.0, prev_best - current_obj)
+                else:
+                    self.recent_improvement = 0.0
 
-            search_improvement_vs_prev = float("nan")
-            if np.isfinite(prev_best) and abs(prev_best) > 1e-12:
-                search_improvement_vs_prev = float(
-                    (prev_best - current_obj) / abs(prev_best) * 100.0
+                search_improvement_vs_prev = float("nan")
+                if np.isfinite(prev_best) and abs(prev_best) > 1e-12:
+                    search_improvement_vs_prev = float(
+                        (prev_best - current_obj) / abs(prev_best) * 100.0
+                    )
+                elapsed_time = time.time() - self.start_time
+                actual_gap_from_initial = self._signed_gap_from_initial(
+                    current_actual_obj, self.initial_actual_obj
                 )
-            elapsed_time = time.time() - self.start_time
-            actual_gap_from_initial = self._signed_gap_from_initial(
-                current_actual_obj, self.initial_actual_obj
-            )
-            self.log_printer.print(
-                f"Iteration {self.iteration}: New best feasible solution found!",
-                color="bold green",
-            )
-            if np.isfinite(search_improvement_vs_prev):
                 self.log_printer.print(
-                    f"Search Objective: {self.best_obj:.6f}, Improvement vs Prev Best: +{search_improvement_vs_prev:.2f}%, Time: {elapsed_time:.2f}s",
+                    f"Iteration {self.iteration}: New best feasible solution found!",
                     color="bold green",
                 )
+                if np.isfinite(search_improvement_vs_prev):
+                    self.log_printer.print(
+                        f"Search Objective: {self.best_obj:.6f}, Improvement vs Prev Best: +{search_improvement_vs_prev:.2f}%, Time: {elapsed_time:.2f}s",
+                        color="bold green",
+                    )
+                else:
+                    self.log_printer.print(
+                        f"Search Objective: {self.best_obj:.6f}, Improvement vs Prev Best: N/A (first best), Time: {elapsed_time:.2f}s",
+                        color="bold green",
+                    )
+                try:
+                    self.log_printer.print(
+                        f"Actual Objective (Gurobi-aligned): {current_actual_obj:.2f}, Feasible: Yes, Gap vs Initial: {actual_gap_from_initial:+.2f}%",
+                        color="bold cyan",
+                    )
+                except Exception:
+                    pass
             else:
-                self.log_printer.print(
-                    f"Search Objective: {self.best_obj:.6f}, Improvement vs Prev Best: N/A (first best), Time: {elapsed_time:.2f}s",
-                    color="bold green",
-                )
-            try:
-                self.log_printer.print(
-                    f"Actual Objective (Gurobi-aligned): {current_actual_obj:.2f}, Feasible: Yes, Gap vs Initial: {actual_gap_from_initial:+.2f}%",
-                    color="bold cyan",
-                )
-            except Exception:
-                pass
+                self.best_obj = prev_best
 
         # Maintain a separate best feasible solution under the actual
         # objective for final reporting.
         if is_feasible and current_actual_obj < self.best_actual_obj:
-            self.best_actual_obj = current_actual_obj
-            try:
-                self.best_actual_solution = state.copy()
-            except Exception:
-                self.best_actual_solution = copy.deepcopy(state)
+            if replace_state_snapshot(
+                self,
+                "best_actual_solution",
+                state,
+                site="alnstrack.best_actual_solution",
+            ):
+                self.best_actual_obj = current_actual_obj
 
         # Maintain a small elite pool for path relinking and stagnation escape.
         try:

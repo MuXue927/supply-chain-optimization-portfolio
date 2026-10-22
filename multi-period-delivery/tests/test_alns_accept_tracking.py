@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from multi_period_delivery.alns import accept as accept_module
+from multi_period_delivery.alns import snapshot as snapshot_module
 from multi_period_delivery.alns.accept import (
     DemandConstraintAccept,
     _CandidateProxy,
@@ -318,6 +319,29 @@ def test_tracker_ignores_infeasible_improvements() -> None:
     )
 
     assert tracker.best_obj == 100.0
+
+
+def test_tracker_clears_stale_snapshots_when_copy_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = ALNSTracker()
+    tracker.best_solution = object()
+    tracker.best_actual_solution = object()
+
+    def raising_snapshot(_state):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(snapshot_module, "safe_state_snapshot", raising_snapshot)
+
+    tracker.on_iteration(
+        _FakeState(objective=9.0, actual=9.0),
+        np.random.default_rng(0),
+    )
+
+    assert tracker.best_obj == float("inf")
+    assert tracker.best_actual_obj == float("inf")
+    assert tracker.best_solution is None
+    assert tracker.best_actual_solution is None
 
 
 def test_tracker_should_stop_after_patience() -> None:

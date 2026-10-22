@@ -25,7 +25,7 @@ from .alnsopt import SolutionState
 from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
 from .progress import resolve_progress
-from .snapshot import safe_state_snapshot
+from .snapshot import replace_state_snapshot, safe_state_snapshot
 from .swallowed import record_swallowed
 
 logger = logging.getLogger(__name__)
@@ -77,16 +77,12 @@ def _restore_verified_runtime_state(state: Any, optimizer: Any) -> bool:
 
 def _store_incumbent_snapshot(optimizer: Any, state: SolutionState) -> bool:
     """Replace the incumbent snapshot, clearing stale state on failure."""
-    try:
-        optimizer._incumbent_state_snapshot = safe_state_snapshot(state)
-        return True
-    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        try:
-            optimizer._incumbent_state_snapshot = None
-        except (AttributeError, TypeError):
-            pass
-        record_swallowed("callbacks.incumbent_snapshot", exc)
-        return False
+    return replace_state_snapshot(
+        optimizer,
+        "_incumbent_state_snapshot",
+        state,
+        site="callbacks.incumbent_snapshot",
+    )
 
 
 def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str):

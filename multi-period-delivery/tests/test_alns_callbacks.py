@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from multi_period_delivery.alns import callbacks as cb
+from multi_period_delivery.alns import snapshot as snapshot_module
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
@@ -347,9 +348,9 @@ def test_incumbent_snapshot_failure_clears_stale_state(
     def raising_snapshot(_state):
         raise RuntimeError("snapshot failed")
 
-    monkeypatch.setattr(cb, "safe_state_snapshot", raising_snapshot)
+    monkeypatch.setattr(snapshot_module, "safe_state_snapshot", raising_snapshot)
     monkeypatch.setattr(
-        cb,
+        snapshot_module,
         "record_swallowed",
         lambda site, exc: recorded.append((site, exc)),
     )
