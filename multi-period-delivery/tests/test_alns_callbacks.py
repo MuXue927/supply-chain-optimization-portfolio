@@ -212,6 +212,35 @@ def test_record_best_feasible_updates_the_optimizer(
     assert optimizer.log_printer.messages
 
 
+def test_record_best_feasible_clears_stale_state_when_snapshot_fails(
+    feasible_solution: SolutionState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    optimizer = _DummyOptimizer()
+    stale = feasible_solution.copy()
+    monkeypatch.setattr(stale, "objective", lambda: 1e9)
+    optimizer.best_feasible_state = stale
+    optimizer.best_feasible_obj = 123.0
+    recorded: list[tuple[str, BaseException]] = []
+
+    def raising_snapshot(_state):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(snapshot_module, "safe_state_snapshot", raising_snapshot)
+    monkeypatch.setattr(
+        snapshot_module,
+        "record_swallowed",
+        lambda site, exc: recorded.append((site, exc)),
+    )
+
+    cb.record_best_feasible(optimizer, feasible_solution.copy())
+
+    assert optimizer.best_feasible_state is None
+    assert optimizer.best_feasible_obj == 123.0
+    assert recorded[0][0] == "callbacks.best_feasible"
+    assert isinstance(recorded[0][1], RuntimeError)
+
+
 def test_record_best_feasible_ignores_an_infeasible_candidate(data: DataALNS) -> None:
     optimizer = _DummyOptimizer()
 

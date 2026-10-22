@@ -628,7 +628,13 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
 
     if should_update:
         # Record a snapshot of the new best feasible solution.
-        optimizer.best_feasible_state = safe_state_snapshot(best)
+        if not replace_state_snapshot(
+            optimizer,
+            "best_feasible_state",
+            best,
+            site="callbacks.best_feasible",
+        ):
+            return
         optimizer.best_feasible_obj = best_obj if best_obj is not None else float("inf")
 
         try:
