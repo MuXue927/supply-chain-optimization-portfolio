@@ -75,6 +75,20 @@ def _restore_verified_runtime_state(state: Any, optimizer: Any) -> bool:
     return False
 
 
+def _store_incumbent_snapshot(optimizer: Any, state: SolutionState) -> bool:
+    """Replace the incumbent snapshot, clearing stale state on failure."""
+    try:
+        optimizer._incumbent_state_snapshot = safe_state_snapshot(state)
+        return True
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        try:
+            optimizer._incumbent_state_snapshot = None
+        except (AttributeError, TypeError):
+            pass
+        record_swallowed("callbacks.incumbent_snapshot", exc)
+        return False
+
+
 def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str):
     if state is None:
         return
@@ -1622,15 +1636,9 @@ def register_callbacks(
     on_best = make_callback_on_best(optimizer)
     on_iter = make_callback_on_iteration(optimizer, stop=stop)
 
-    def _set_incumbent_snapshot(state: SolutionState) -> None:
-        try:
-            optimizer._incumbent_state_snapshot = safe_state_snapshot(state)
-        except Exception:
-            pass
-
     # On a new global best, run on_best before on_iter to preserve behavior.
     def callback_on_best_combined(state, rng, **kwargs):
-        _set_incumbent_snapshot(state)
+        _store_incumbent_snapshot(optimizer, state)
         try:
             on_best(state, rng, **kwargs)
         except RuntimeGuardError:
@@ -1648,7 +1656,7 @@ def register_callbacks(
             )
 
     def callback_on_accept_or_better(state, rng, **kwargs):
-        _set_incumbent_snapshot(state)
+        _store_incumbent_snapshot(optimizer, state)
         try:
             on_iter(state, rng, **kwargs)
         except RuntimeGuardError:

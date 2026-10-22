@@ -337,6 +337,31 @@ def test_runtime_guard_rolls_back_to_verified_snapshot() -> None:
     assert state.vehicles == []
 
 
+def test_incumbent_snapshot_failure_clears_stale_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    optimizer = _DummyOptimizer()
+    optimizer._incumbent_state_snapshot = object()
+    recorded: list[tuple[str, BaseException]] = []
+
+    def raising_snapshot(_state):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(cb, "safe_state_snapshot", raising_snapshot)
+    monkeypatch.setattr(
+        cb,
+        "record_swallowed",
+        lambda site, exc: recorded.append((site, exc)),
+    )
+
+    stored = cb._store_incumbent_snapshot(optimizer, object())
+
+    assert stored is False
+    assert optimizer._incumbent_state_snapshot is None
+    assert recorded[0][0] == "callbacks.incumbent_snapshot"
+    assert isinstance(recorded[0][1], RuntimeError)
+
+
 def test_dump_state_snapshot_survives_a_broken_objective() -> None:
     class _Broken:
         def objective(self):
