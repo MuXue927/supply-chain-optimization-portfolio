@@ -287,6 +287,7 @@ class SolutionState:
         rolled_back: bool = False,
         inserted_cnt: int = 0,
         improvement: float = 0.0,
+        post_repair_certified: bool = True,
     ):
         """Aggregate repair feasibility diagnostics per operator."""
         name = str(op_name or "unknown_repair")
@@ -303,6 +304,7 @@ class SolutionState:
                 "fail_veh_over_load": 0,
                 "fail_plant_inv_exceed": 0,
                 "fail_unmet_demand": 0,
+                "post_repair_uncertified": 0,
             },
         )
         entry["attempts"] += 1
@@ -324,6 +326,8 @@ class SolutionState:
             entry["fail_plant_inv_exceed"] += 1
         if viol.get("unmet_demand"):
             entry["fail_unmet_demand"] += 1
+        if not post_repair_certified:
+            entry["post_repair_uncertified"] += 1
 
     def _validation_key(self):
         """O(1) key over every input ``_validate_uncached`` reads.
@@ -1048,6 +1052,18 @@ class SolutionState:
         new_state.repair_audit = {
             k: dict(v) for k, v in getattr(self, "repair_audit", {}).items()
         }
+        new_state._pre_repair_snapshot = getattr(
+            self, "_pre_repair_snapshot", None
+        )
+        new_state._pre_repair_snapshot_error = getattr(
+            self, "_pre_repair_snapshot_error", None
+        )
+        new_state._post_repair_certified = getattr(
+            self, "_post_repair_certified", None
+        )
+        new_state._post_repair_certification_error = getattr(
+            self, "_post_repair_certification_error", None
+        )
         return new_state
 
 

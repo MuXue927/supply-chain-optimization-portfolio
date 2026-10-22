@@ -211,6 +211,25 @@ def test_safe_state_snapshot_copies_the_state(tmp_path: Path) -> None:
     assert safe_state_snapshot(None) is None
 
 
+def test_repair_wrapper_exposes_pre_repair_snapshot(tmp_path: Path) -> None:
+    optimizer = _optimizer(tmp_path)
+    optimizer.load_data("dataset_1")
+    state = optimizer_module.SolutionState(optimizer.data)
+    seen = {}
+
+    def operator(current, _rng):
+        seen["snapshot"] = getattr(current, "_pre_repair_snapshot", None)
+        return current
+
+    wrapped = optimizer_module._NoOpFlagPreservingRepair(operator)
+    result = wrapped(state, object())
+
+    assert seen["snapshot"] is not None
+    assert seen["snapshot"] is not state
+    assert seen["snapshot"]._pre_repair_snapshot is None
+    assert result._pre_repair_snapshot is None
+
+
 def test_process_results_restores_pre_cross_period_state_when_consolidation_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

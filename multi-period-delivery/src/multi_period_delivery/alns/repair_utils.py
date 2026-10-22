@@ -768,6 +768,55 @@ def _check_inserted_feasibility(state, inserted):
         return False, {"validation_error": ["inconclusive"]}
 
 
+_HARD_POST_REPAIR_VIOLATION_KEYS = (
+    "veh_over_load",
+    "negative_inventory",
+    "plant_inv_exceed",
+    "cargo_day_mismatch",
+    "check_error",
+    "validation_error",
+)
+
+
+def _has_hard_post_repair_violation(violations) -> bool:
+    """Return whether the supplied validation result contains a hard failure."""
+    if not isinstance(violations, dict):
+        return True
+    return any(bool(violations.get(key)) for key in _HARD_POST_REPAIR_VIOLATION_KEYS)
+
+
+def _restore_state_from_snapshot(state: SolutionState, snapshot: SolutionState) -> None:
+    """Restore solution content while preserving the live object and audit trail."""
+    restored = snapshot.copy()
+    current_audit = {
+        key: dict(value) for key, value in getattr(state, "repair_audit", {}).items()
+    }
+
+    state.data = restored.data
+    state.vehicles = restored.vehicles
+    state.s_ikt = restored.s_ikt
+    state.s_indices = restored.s_indices
+    state.s_initialized = restored.s_initialized
+    state.shipped_cache = restored.shipped_cache
+    state.last_objective = restored.last_objective
+    state.objective_dirty = True
+    state._suppress_compute_inventory = False
+    state.repair_audit = current_audit
+    state._inventory_cache = None
+    state._validation_memo = None
+    state._validation_memo_enabled = False
+
+    for cache_name in (
+        "_vehicles_by_plant_day_map",
+        "_resource_pool_cache",
+        "_unmet_cache",
+    ):
+        try:
+            delattr(state, cache_name)
+        except (AttributeError, TypeError):
+            pass
+
+
 def post_repair(
     state: SolutionState,
     inserted: list[Vehicle],
@@ -784,6 +833,12 @@ def post_repair(
     - Compute improvement, report it to param_tuner and logs, and print a
       short JSON-style log entry.
     """
+    pre_repair_snapshot = getattr(state, "_pre_repair_snapshot", None)
+    pre_repair_snapshot_error = getattr(
+        state, "_pre_repair_snapshot_error", None
+    )
+    state._post_repair_certified = None
+    state._post_repair_certification_error = None
     merged_after_repair = 0
     # Apply the minimum-load post-processing step to every completed repair.
     # This keeps the fill logic independent of operator selection while still
@@ -865,13 +920,14 @@ def post_repair(
     # inserted-only check already produced feasible_tmp, reuse it to avoid
     # repeated validation calls.
     validator_crashed = False
+    validation_completed = True
     try:
         # Always run the full validator before rollback decisions. The
         # lightweight inserted-only check above covers vehicle overload but not
         # negative inventory or plant-capacity violations. Demand strictness is
         # handled inside validate(), not by skipping the physical checks.
         feasible, violations = state.validate()
-    except (AttributeError, TypeError, ValueError) as exc:
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         # validate() only raises on a programming error (probed: an inconsistent
         # state/data reference yields AttributeError). Treating that as "no
         # violations" skipped the rollback and kept an unverified solution, so
@@ -880,86 +936,148 @@ def post_repair(
         logger.debug(f"validate() failed during repair rollback check: {exc}")
         feasible, violations = False, {}
         validator_crashed = True
+        validation_completed = False
 
     rolled_back = False
-    hard_violation_exists = validator_crashed or bool(
+    rollback_certified = None
+    rollback_source = None
+    rollback_error = None
+    hard_violation_exists = validator_crashed or _has_hard_post_repair_violation(
         violations
-        and (
-            violations.get("veh_over_load")
-            or violations.get("negative_inventory")
-            or violations.get("plant_inv_exceed")
-            or violations.get("cargo_day_mismatch")
-        )
     )
     if not feasible and hard_violation_exists:
-        try:
-            # Collect vehicle ids to roll back.
+        if pre_repair_snapshot is not None:
+            try:
+                _restore_state_from_snapshot(state, pre_repair_snapshot)
+                rolled_back = True
+                rollback_source = "pre_repair_snapshot"
+                state._repair_noop = True
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                rollback_error = f"pre-snapshot restore: {type(exc).__name__}: {exc}"
+                record_swallowed(
+                    "repair_utils.post_repair.rollback_restore", exc
+                )
+
+        if not rolled_back:
             to_rollback_ids = {
                 getattr(v, "id", None)
                 for v in (inserted or [])
                 if getattr(v, "id", None) is not None
             }
             if to_rollback_ids:
-                before_cnt = len(state.vehicles)
-                # Keep vehicles that were not inserted by this operation.
                 state.vehicles = [
                     v
                     for v in state.vehicles
                     if getattr(v, "id", None) not in to_rollback_ids
                 ]
-                rolled_back = True
-                # Invalidate caches and rebuild the baseline inventory.
                 try:
                     state.mark_objective_dirty()
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
-                try:
-                    state.compute_inventory()
-                except Exception:
-                    pass
-                # Validate again after rollback.
-                try:
-                    feasible_after, violations_after = state.validate()
-                except Exception:
-                    feasible_after, violations_after = False, {}
-                print(
-                    f"[DIAG] post_repair op={op_name} rollback_applied removed={before_cnt - len(state.vehicles)} feasible_after={feasible_after} violations_after_count={sum(len(v) for v in violations_after.values() if v)}"
+                rolled_back = True
+                rollback_source = "inserted_vehicles"
+            else:
+                rollback_error = (
+                    "hard violation originated in existing vehicles and no "
+                    "pre-repair snapshot was available"
+                )
+
+        if rolled_back:
+            try:
+                state.compute_inventory()
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                rollback_error = (
+                    f"rollback inventory rebuild: {type(exc).__name__}: {exc}"
+                )
+                record_swallowed(
+                    "repair_utils.post_repair.rollback_compute_inventory", exc
+                )
+
+            try:
+                feasible_after, violations_after = state.validate()
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                feasible_after, violations_after = False, {}
+                rollback_certified = False
+                validation_error = (
+                    f"post-rollback validation: {type(exc).__name__}: {exc}"
+                )
+                rollback_error = (
+                    f"{rollback_error}; {validation_error}"
+                    if rollback_error
+                    else validation_error
+                )
+                record_swallowed(
+                    "repair_utils.post_repair.rollback_validate", exc
                 )
             else:
-                print(
-                    f"[DIAG] post_repair op={op_name} detected veh_over_load but no inserted ids to rollback"
+                rollback_certified = not _has_hard_post_repair_violation(
+                    violations_after
                 )
-        except Exception as e:
-            try:
-                print(f"[DIAG] post_repair op={op_name} rollback error: {e}")
-            except Exception:
-                pass
+
+            violation_count = sum(
+                len(value)
+                for value in violations_after.values()
+                if isinstance(value, (list, tuple, set, dict))
+            )
+            print(
+                f"[DIAG] post_repair op={op_name} rollback_applied "
+                f"source={rollback_source} feasible_after={feasible_after} "
+                f"certified={rollback_certified} "
+                f"violations_after_count={violation_count}"
+            )
+        else:
+            print(
+                f"[DIAG] post_repair op={op_name} rollback_unavailable "
+                f"error={rollback_error}"
+            )
+
+    if hard_violation_exists:
+        post_repair_certified = bool(rollback_certified)
+    else:
+        post_repair_certified = bool(validation_completed)
+
+    state._post_repair_certified = post_repair_certified
+    if post_repair_certified:
+        state._post_repair_certification_error = None
+    elif rollback_error is not None:
+        state._post_repair_certification_error = rollback_error
+    elif not validation_completed:
+        state._post_repair_certification_error = (
+            "pre-rollback validation did not complete"
+        )
+    elif pre_repair_snapshot_error is not None:
+        state._post_repair_certification_error = pre_repair_snapshot_error
+    else:
+        state._post_repair_certification_error = (
+            "post-repair state retained a hard violation"
+        )
 
     # Compute and report improvement. Prefer this module's incremental,
     # cache-friendly compute_improvement() to avoid unnecessary full
     # recomputation. Only the improvement delta feeds the tuner and audit
     # below; the objective/cached flags returned alongside it are ignored.
     improvement = 0.0
-    try:
-        if prev_obj is not None:
-            # compute_improvement will use state's cached last_objective / objective_dirty semantics
-            # and avoid calling state.objective() when possible.
-            _, improvement, _ = compute_improvement(state, prev_obj)
-        else:
-            # No prev_obj provided: try to reuse cached objective if present without forcing compute.
-            if getattr(state, "last_objective", None) is not None and not getattr(
-                state, "objective_dirty", True
-            ):
-                improvement = 0.0
+    if post_repair_certified and rollback_source != "pre_repair_snapshot":
+        try:
+            if prev_obj is not None:
+                # compute_improvement will use state's cached last_objective / objective_dirty semantics
+                # and avoid calling state.objective() when possible.
+                _, improvement, _ = compute_improvement(state, prev_obj)
             else:
-                # last resort: attempt to call objective() which may trigger compute_inventory()
-                try:
-                    state.objective()
+                # No prev_obj provided: try to reuse cached objective if present without forcing compute.
+                if getattr(state, "last_objective", None) is not None and not getattr(
+                    state, "objective_dirty", True
+                ):
                     improvement = 0.0
-                except Exception:
-                    improvement = 0.0
-    except Exception:
-        improvement = 0.0
+                else:
+                    # last resort: attempt to call objective() which may trigger compute_inventory()
+                    try:
+                        state.objective()
+                        improvement = 0.0
+                    except Exception:
+                        improvement = 0.0
+        except Exception:
+            improvement = 0.0
 
     # Emit a short JSON-style log entry.
     elapsed = time.time() - t0 if t0 is not None else None
@@ -983,6 +1101,7 @@ def post_repair(
                 rolled_back=bool(rolled_back),
                 inserted_cnt=len(inserted) if inserted else 0,
                 improvement=float(improvement),
+                post_repair_certified=post_repair_certified,
             )
     except Exception:
         pass

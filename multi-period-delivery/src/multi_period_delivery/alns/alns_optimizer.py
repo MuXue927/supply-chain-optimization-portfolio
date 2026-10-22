@@ -135,7 +135,36 @@ class _NoOpFlagPreservingRepair:
     def __call__(self, state: Any, rng: Any, **kwargs: Any) -> Any:
         destroy_noop = bool(getattr(state, "_destroy_noop", False))
         before = state_structure_signature(state) if destroy_noop else None
-        result = self._operator(state, rng, **kwargs)
+        pre_repair_snapshot = None
+        pre_repair_snapshot_error = None
+        try:
+            pre_repair_snapshot = safe_state_snapshot(state)
+            # copy() preserves repair metadata so an operator's own state.copy()
+            # can still reach post_repair. Break the history chain here; otherwise
+            # every accepted candidate would retain the previous candidate's
+            # full-state snapshot through this attribute.
+            pre_repair_snapshot._pre_repair_snapshot = None
+            pre_repair_snapshot._pre_repair_snapshot_error = None
+            pre_repair_snapshot._post_repair_certified = None
+            pre_repair_snapshot._post_repair_certification_error = None
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            pre_repair_snapshot_error = f"{type(exc).__name__}: {exc}"
+            record_swallowed("alns_optimizer.repair_pre_snapshot", exc)
+        try:
+            state._pre_repair_snapshot = pre_repair_snapshot
+            state._pre_repair_snapshot_error = pre_repair_snapshot_error
+            state._post_repair_certified = None
+            state._post_repair_certification_error = None
+        except (AttributeError, TypeError):
+            pass
+        try:
+            result = self._operator(state, rng, **kwargs)
+        finally:
+            try:
+                state._pre_repair_snapshot = None
+                state._pre_repair_snapshot_error = None
+            except (AttributeError, TypeError):
+                pass
         if destroy_noop and result is not None:
             try:
                 result._destroy_noop = True
@@ -143,6 +172,14 @@ class _NoOpFlagPreservingRepair:
                     result._repair_noop = (
                         before == state_structure_signature(result)
                     )
+            except (AttributeError, TypeError):
+                pass
+        for repaired in (state, result):
+            if repaired is None:
+                continue
+            try:
+                repaired._pre_repair_snapshot = None
+                repaired._pre_repair_snapshot_error = None
             except (AttributeError, TypeError):
                 pass
         return result
@@ -1378,6 +1415,9 @@ class ALNSOptimizer:
                             stats.get("fail_plant_inv_exceed", 0)
                         ),
                         "fail_unmet_demand": int(stats.get("fail_unmet_demand", 0)),
+                        "post_repair_uncertified": int(
+                            stats.get("post_repair_uncertified", 0)
+                        ),
                     }
                 )
 

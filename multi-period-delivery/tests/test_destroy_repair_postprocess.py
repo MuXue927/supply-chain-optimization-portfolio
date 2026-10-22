@@ -19,6 +19,7 @@ from multi_period_delivery.alns.repair_utils import (
     post_repair,
     veh_loading,
 )
+from multi_period_delivery.alns.snapshot import safe_state_snapshot
 from multi_period_delivery.alns.vehicle import Vehicle
 
 
@@ -202,6 +203,167 @@ def test_physical_rollback_is_checked_without_strict_demand(
     assert vehicle not in state.vehicles
     assert state.repair_audit["non_strict_invalid_repair"]["rolled_back"] == 1
     assert not state.validate()[1]["negative_inventory"]
+
+
+def test_post_repair_marks_existing_only_violation_uncertified_without_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repair_utils,
+        "consolidate_route_vehicles",
+        lambda _state, max_pairs_per_group=300: 0,
+    )
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        lambda current, _rng: current,
+    )
+
+    state = _load_state()
+    vehicle = _vehicle_with_load(state, qty=20)
+    vehicle.cargo[("O7132564089", 5)] += 10_000
+    state.vehicles = [vehicle]
+
+    post_repair(
+        state,
+        [],
+        op_name="existing_without_snapshot",
+        prev_obj=1.0,
+    )
+
+    assert vehicle in state.vehicles
+    assert state._post_repair_certified is False
+    assert "originated in existing vehicles" in state._post_repair_certification_error
+    audit = state.repair_audit["existing_without_snapshot"]
+    assert audit["rolled_back"] == 0
+    assert audit["post_repair_uncertified"] == 1
+
+
+def test_post_repair_restores_existing_vehicle_changes_from_pre_repair_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "STRICT_FEASIBILITY_MODE", False)
+    monkeypatch.setattr(ALNSConfig, "VALIDATE_REQUIRE_FULL_DEMAND", False)
+    monkeypatch.setattr(
+        repair_utils,
+        "consolidate_route_vehicles",
+        lambda _state, max_pairs_per_group=300: 0,
+    )
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        lambda current, _rng: current,
+    )
+
+    state = _load_state()
+    vehicle = _vehicle_with_load(state, qty=20)
+    state.vehicles = [vehicle]
+    state.mark_objective_dirty()
+    state.compute_inventory()
+    original_cargo = dict(vehicle.cargo)
+    state._pre_repair_snapshot = safe_state_snapshot(state)
+
+    vehicle.cargo[("O7132564089", 5)] += 10_000
+    post_repair(
+        state,
+        [],
+        op_name="existing_vehicle_rollback",
+        prev_obj=1.0,
+    )
+
+    assert state.vehicles[0].cargo == original_cargo
+    assert state._post_repair_certified is True
+    assert state._post_repair_certification_error is None
+    assert state.repair_audit["existing_vehicle_rollback"]["rolled_back"] == 1
+    assert (
+        state.repair_audit["existing_vehicle_rollback"][
+            "post_repair_uncertified"
+        ]
+        == 0
+    )
+
+
+def test_post_repair_marks_uncertified_when_rollback_inventory_rebuild_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repair_utils,
+        "consolidate_route_vehicles",
+        lambda _state, max_pairs_per_group=300: 0,
+    )
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        lambda current, _rng: current,
+    )
+
+    state = _load_state()
+    vehicle = _vehicle_with_load(state, qty=20)
+    state.vehicles = [vehicle]
+    state.mark_objective_dirty()
+
+    def raising_compute_inventory():
+        raise ValueError("inventory rebuild failed")
+
+    monkeypatch.setattr(state, "compute_inventory", raising_compute_inventory)
+
+    post_repair(
+        state,
+        [vehicle],
+        op_name="rollback_inventory_failure",
+        prev_obj=1.0,
+    )
+
+    assert state.vehicles == []
+    assert state._post_repair_certified is False
+    assert "rollback inventory rebuild" in state._post_repair_certification_error
+    audit = state.repair_audit["rollback_inventory_failure"]
+    assert audit["rolled_back"] == 1
+    assert audit["post_repair_uncertified"] == 1
+
+
+def test_post_repair_marks_uncertified_when_post_rollback_validation_raises(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repair_utils,
+        "consolidate_route_vehicles",
+        lambda _state, max_pairs_per_group=300: 0,
+    )
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        lambda current, _rng: current,
+    )
+    monkeypatch.setattr(
+        repair_utils,
+        "_check_inserted_feasibility",
+        lambda _state, _inserted: (False, {"negative_inventory": ["forced"]}),
+    )
+
+    state = _load_state()
+    vehicle = _vehicle_with_load(state, qty=20)
+    state.vehicles = [vehicle]
+    validate_calls = 0
+
+    def fail_after_rollback():
+        nonlocal validate_calls
+        validate_calls += 1
+        if validate_calls == 1:
+            return False, {"negative_inventory": ["forced"]}
+        raise RuntimeError("post-rollback validation failed")
+
+    monkeypatch.setattr(state, "validate", fail_after_rollback)
+
+    post_repair(
+        state,
+        [vehicle],
+        op_name="rollback_validation_failure",
+        prev_obj=1.0,
+    )
+
+    assert state.vehicles == []
+    assert state._post_repair_certified is False
+    assert "post-rollback validation" in state._post_repair_certification_error
+    audit = state.repair_audit["rollback_validation_failure"]
+    assert audit["rolled_back"] == 1
+    assert audit["post_repair_uncertified"] == 1
 
 
 def test_post_repair_fills_before_consolidation_and_preserves_capacity(

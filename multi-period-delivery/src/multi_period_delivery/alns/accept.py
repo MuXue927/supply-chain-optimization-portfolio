@@ -248,6 +248,13 @@ class DemandConstraintAccept:
         """
         self._calls += 1
 
+        # post_repair marks a candidate false when rollback or the post-rollback
+        # certification could not be completed. Such a state must not be
+        # accepted merely because a later validator call happens to succeed on
+        # stale derived data.
+        if getattr(candidate_state, "_post_repair_certified", None) is False:
+            return False
+
         # An unverified candidate is not safe to accept. Record the failure so a
         # systematic validator problem cannot silently disable the constraint.
         try:

@@ -158,6 +158,24 @@ def test_demand_accept_delegates_feasible_candidate_to_base() -> None:
     assert stats["accept_rate"] == 1.0
 
 
+def test_demand_accept_rejects_uncertified_post_repair_candidate() -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None, penalty_factor=1000.0)
+    candidate = _FakeState(objective=1.0)
+    candidate._post_repair_certified = False
+    candidate._post_repair_certification_error = "rollback validation failed"
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        candidate,
+    )
+
+    assert accepted is False
+    assert base.seen_objectives == []
+
+
 def test_demand_accept_rejects_candidate_when_validation_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
