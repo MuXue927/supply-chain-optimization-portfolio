@@ -55,6 +55,19 @@ def _assert_still_consistent(state: SolutionState) -> None:
     assert not violations["cargo_day_mismatch"]
 
 
+def _vehicle_layout(state: SolutionState) -> list[tuple]:
+    return sorted(
+        (
+            vehicle.fact_id,
+            vehicle.dealer_id,
+            vehicle.type,
+            vehicle.day,
+            tuple(sorted(vehicle.cargo.items())),
+        )
+        for vehicle in state.vehicles
+    )
+
+
 def _destroyed(state: SolutionState) -> SolutionState:
     """Return a copy with roughly a quarter of the fleet removed.
 
@@ -302,6 +315,75 @@ def test_inventory_rollback_fails_closed_when_recompute_raises(
         "repair_operators.inventory_balance_repair.compute_inventory"
     )
     assert isinstance(recorded[0][1], RuntimeError)
+
+
+def test_inventory_balance_retries_only_after_partial_load_is_restored(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline = _destroyed(feasible_solution)
+    repaired_baseline = repair.inventory_balance_repair(
+        baseline.copy(), np.random.default_rng(7)
+    )
+    flaky = _destroyed(feasible_solution)
+    original_veh_loading = repair.veh_loading
+    calls = {"n": 0}
+
+    def flaky_veh_loading(state, vehicle, orders, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            original_veh_loading(state, vehicle, orders, **kwargs)
+            raise RuntimeError("failure after partial commit")
+        return original_veh_loading(state, vehicle, orders, **kwargs)
+
+    monkeypatch.setattr(repair, "veh_loading", flaky_veh_loading)
+
+    repaired_flaky = repair.inventory_balance_repair(
+        flaky, np.random.default_rng(7)
+    )
+
+    assert calls["n"] > 1
+    assert _vehicle_layout(repaired_flaky) == _vehicle_layout(repaired_baseline)
+    assert repaired_flaky.s_ikt == repaired_baseline.s_ikt
+    assert get_unmet_demand(repaired_flaky) == get_unmet_demand(repaired_baseline)
+    _assert_still_consistent(repaired_flaky)
+
+
+def test_inventory_balance_does_not_spend_demand_when_load_is_rolled_back(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _destroyed(feasible_solution)
+    before_layout = _vehicle_layout(state)
+    before_inventory = dict(state.s_ikt)
+    before_unmet = get_unmet_demand(state)
+
+    def reject_and_restore(
+        current: SolutionState,
+        vehicle: Vehicle,
+        before_len: int,
+        before_cargo: dict,
+        before_s_ikt: dict,
+    ) -> bool:
+        assert repair._restore_load_checkpoint(
+            current,
+            vehicle,
+            before_len,
+            before_cargo,
+            before_s_ikt,
+        )
+        return False
+
+    monkeypatch.setattr(
+        repair,
+        "_rollback_load_if_inventory_negative",
+        reject_and_restore,
+    )
+    monkeypatch.setattr(repair, "post_repair", lambda *args, **kwargs: None)
+
+    repair.inventory_balance_repair(state, np.random.default_rng(7))
+
+    assert _vehicle_layout(state) == before_layout
+    assert state.s_ikt == before_inventory
+    assert get_unmet_demand(state) == before_unmet
 
 
 def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(

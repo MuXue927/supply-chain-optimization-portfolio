@@ -1016,6 +1016,29 @@ def local_search_repair(
     return state
 
 
+def _restore_load_checkpoint(
+    state: SolutionState,
+    vehicle: Vehicle,
+    before_len: int,
+    before_cargo: dict,
+    before_s_ikt: dict,
+) -> bool:
+    """Restore the mutation surface touched by one vehicle load attempt."""
+    try:
+        del state.vehicles[before_len:]
+        vehicle.cargo = dict(before_cargo)
+        state.s_ikt.clear()
+        state.s_ikt.update(before_s_ikt)
+        state.mark_objective_dirty()
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        record_swallowed(
+            "repair_operators.inventory_balance_repair.rollback",
+            exc,
+        )
+        return False
+    return True
+
+
 def _rollback_load_if_inventory_negative(
     state: SolutionState,
     vehicle: Vehicle,
@@ -1047,15 +1070,16 @@ def _rollback_load_if_inventory_negative(
         value < 0 for value in state.s_ikt.values()
     ):
         return True
-    try:
-        del state.vehicles[before_len:]
-        vehicle.cargo = dict(before_cargo)
-        state.s_ikt.clear()
-        state.s_ikt.update(before_s_ikt)
-        state.mark_objective_dirty()
-    except (AttributeError, KeyError, TypeError, ValueError):
-        # Best effort: the caller still sees a failed load and will skip it.
-        pass
+    if not _restore_load_checkpoint(
+        state,
+        vehicle,
+        before_len,
+        before_cargo,
+        before_s_ikt,
+    ):
+        raise RuntimeError(
+            "inventory_balance_repair could not roll back an uncertified load"
+        )
     return False
 
 
@@ -1167,33 +1191,27 @@ def inventory_balance_repair(
                     commit=True,
                     skip_compute_inventory=True,
                 )
-                # Capture all new vehicles actually added to state.vehicles by
-                # veh_loading.
-                new_vs = state.vehicles[before_len:]
-                inserted_vehicles.extend(new_vs)
-                # Update unsatisfied demand using the route-level quantity
-                # delta, which also captures loads added to existing vehicles.
-                for sku_id in list(candidate_orders.keys()):
-                    after_qty = sum(
-                        int(v.cargo.get((sku_id, day), 0))
-                        for v in state.vehicles
-                        if v.fact_id == plant
-                        and v.dealer_id == dealer
-                        and v.day == day
-                    )
-                    loaded = max(0, after_qty - before_route_qty.get(sku_id, 0))
-                    unsatisfied[(dealer, sku_id)] = max(
-                        0, unsatisfied[(dealer, sku_id)] - loaded
-                    )
-                inventory_fresh = _rollback_load_if_inventory_negative(
-                    state, vehicle, before_len, before_cargo, before_s_ikt
+            except Exception as exc:
+                record_swallowed(
+                    "repair_operators.inventory_balance_repair.load_skip",
+                    exc,
                 )
-                if not inventory_fresh:
-                    continue
-            except Exception:
-                # Fall back to a call that does not suppress compute_inventory.
+                if not _restore_load_checkpoint(
+                    state,
+                    vehicle,
+                    before_len,
+                    before_cargo,
+                    before_s_ikt,
+                ):
+                    raise RuntimeError(
+                        "inventory_balance_repair could not restore a "
+                        "partially applied load"
+                    ) from exc
+                # Only retry after the first attempt has been fully undone.
+                before_len = len(state.vehicles)
+                before_cargo = dict(vehicle.cargo)
+                before_s_ikt = dict(state.s_ikt)
                 try:
-                    before_len = len(state.vehicles)
                     veh_loading(
                         state,
                         vehicle,
@@ -1201,31 +1219,47 @@ def inventory_balance_repair(
                         commit=True,
                         skip_compute_inventory=False,
                     )
-                    new_vs = state.vehicles[before_len:]
-                    inserted_vehicles.extend(new_vs)
-                    for sku_id in list(candidate_orders.keys()):
-                        after_qty = sum(
-                            int(v.cargo.get((sku_id, day), 0))
-                            for v in state.vehicles
-                            if v.fact_id == plant
-                            and v.dealer_id == dealer
-                            and v.day == day
-                        )
-                        loaded = max(
-                            0, after_qty - before_route_qty.get(sku_id, 0)
-                        )
-                        unsatisfied[(dealer, sku_id)] = max(
-                            0, unsatisfied[(dealer, sku_id)] - loaded
-                        )
-                    if not _rollback_load_if_inventory_negative(
-                        state, vehicle, before_len, before_cargo, before_s_ikt
+                except Exception as fallback_exc:
+                    record_swallowed(
+                        "repair_operators.inventory_balance_repair.load_fallback",
+                        fallback_exc,
+                    )
+                    if not _restore_load_checkpoint(
+                        state,
+                        vehicle,
+                        before_len,
+                        before_cargo,
+                        before_s_ikt,
                     ):
-                        inventory_fresh = False
-                        continue
-                    inventory_fresh = True
-                except Exception as exc:
-                    record_swallowed("repair_operators.inventory_balance_repair", exc)
+                        raise RuntimeError(
+                            "inventory_balance_repair could not restore a "
+                            "failed fallback load"
+                        ) from fallback_exc
+                    inventory_fresh = False
                     continue
+
+            if not _rollback_load_if_inventory_negative(
+                state, vehicle, before_len, before_cargo, before_s_ikt
+            ):
+                inventory_fresh = False
+                continue
+
+            # Commit demand accounting only after the load is certified.
+            new_vs = state.vehicles[before_len:]
+            inserted_vehicles.extend(new_vs)
+            for sku_id in list(candidate_orders.keys()):
+                after_qty = sum(
+                    int(v.cargo.get((sku_id, day), 0))
+                    for v in state.vehicles
+                    if v.fact_id == plant
+                    and v.dealer_id == dealer
+                    and v.day == day
+                )
+                loaded = max(0, after_qty - before_route_qty.get(sku_id, 0))
+                unsatisfied[(dealer, sku_id)] = max(
+                    0, unsatisfied[(dealer, sku_id)] - loaded
+                )
+            inventory_fresh = True
 
     post_repair(
         state,
