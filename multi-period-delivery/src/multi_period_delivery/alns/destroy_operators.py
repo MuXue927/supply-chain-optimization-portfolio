@@ -108,6 +108,7 @@ from .destroy_utils import (
     resolve_degree,
 )
 from .inventory_utils import precompute_dealer_shipments, precompute_plant_day_inventory
+from .swallowed import record_swallowed
 
 # Short-lived cache for periodic_shaw_removal KMeans results keyed by
 # (n_clusters, rounded_mean_features). This avoids re-running KMeans when
@@ -544,7 +545,13 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
 
             if veh.is_empty():
                 remove_set.add(idx)
-        except Exception:
+        except Exception as exc:
+            # This block edits ``veh.cargo`` in place *before* it records the
+            # matching inventory delta. Bailing out silently could therefore
+            # leave a vehicle reduced without a compensating update, which
+            # post_destroy would not be able to distinguish from a genuine
+            # partial removal.
+            record_swallowed("destroy_operators.infeasible_removal.partial", exc)
             continue
 
     remove_indices = sorted(remove_set, reverse=True)
@@ -1245,8 +1252,10 @@ def cross_period_dealer_removal(
                 degree *= float(
                     getattr(ALNSConfig, "CROSS_PERIOD_REMOVAL_STAGNATION_BOOST", 1.20)
                 )
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError) as exc:
+            record_swallowed(
+                "destroy_operators.cross_period_dealer.stagnation_boost", exc
+            )
 
     degree = max(0.15, min(0.90, degree))
     target_remove = max(2, int(total_vehicles * degree))
@@ -1321,7 +1330,7 @@ def cross_period_dealer_removal(
             loaded = float(state.compute_veh_load(v))
             cap = float(getattr(v, "max_capacity", 0.0))
             return loaded / cap if cap > 1e-9 else 0.0
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return 0.0
 
     selected_items.sort(key=lambda x: _load_ratio(x[1]))
@@ -1392,7 +1401,7 @@ def period_range_removal(
             params_other = get_adaptive_parameters(
                 op_name="period_range_removal", param_tuner=state.param_tuner
             )
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             params_other = {}
         window_ratio = params_other.get(
             "window_ratio", defaults.get("window_ratio", 0.30)
@@ -1473,7 +1482,7 @@ def period_range_removal(
             loaded = float(state.compute_veh_load(v))
             cap = float(getattr(v, "max_capacity", 0.0))
             return loaded / cap if cap > 1e-9 else 0.0
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return 0.0
 
     candidates.sort(key=lambda x: _load_ratio(x[1]))
@@ -1589,16 +1598,16 @@ def path_removal(
         try:
             sel = rng.choice(len(top_paths), p=weights)
             selected_idx = ensure_pyint(sel)
-        except Exception:
+        except (TypeError, ValueError):
             selected_idx = ensure_pyint(rng.integers(0, len(top_paths)))
         target_path = top_paths[int(selected_idx)][0]
-    except Exception:
+    except (IndexError, TypeError, ValueError):
         # Fall back to robust integer handling and ensure Python int values;
         # finally fall back to a random path.
         try:
             selected_idx = int(np.atleast_1d(rng.integers(0, len(top_paths)))[0])
             target_path = top_paths[selected_idx][0]
-        except Exception:
+        except (IndexError, TypeError, ValueError):
             # Choose a random path and ensure it is a native Python tuple or
             # original path type to avoid serialization/comparison issues from
             # numpy.object_.
@@ -1636,7 +1645,7 @@ def path_removal(
                         candidate = candidate.decode()
                     except (AttributeError, UnicodeDecodeError):
                         candidate = str(candidate)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 # Final fallback to guarantee a serializable native Python
                 # candidate.
                 try:
@@ -1645,7 +1654,7 @@ def path_removal(
                         if isinstance(candidate, (list, tuple))
                         else str(candidate)
                     )
-                except Exception:
+                except (TypeError, ValueError):
                     candidate = str(candidate)
 
             # Ensure target_path is a pure Python tuple or original scalar.

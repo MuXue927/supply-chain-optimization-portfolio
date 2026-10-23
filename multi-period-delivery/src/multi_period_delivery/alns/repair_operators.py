@@ -280,7 +280,7 @@ def greedy_repair(
     prev_obj = None
     try:
         prev_obj = state.objective()
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         prev_obj = None
 
     shipped = state.compute_shipped()
@@ -320,7 +320,7 @@ def greedy_repair(
                     get_adaptive_parameters("greedy_repair", param_tuner=param_tuner)
                     or {}
                 )
-            except Exception:
+            except (AttributeError, KeyError, TypeError, ValueError):
                 params = {}
     if demand_weight is None:
         try:
@@ -447,7 +447,13 @@ def greedy_repair(
                         route_vehicles=route_vehicles.get(route_key),
                         plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                     )
-                except Exception:
+                except Exception as exc:
+                    # The fallback below recomputes inventory the slow way.
+                    # Record why the fast path failed: a systematic failure
+                    # silently doubles this operator's cost per insertion.
+                    record_swallowed(
+                        "repair_operators.greedy_repair.fast_load", exc
+                    )
                     try:
                         actual_loaded, new_vs = commit_load_with_tracking(
                             state,
@@ -566,12 +572,17 @@ def fill_minimum_load_repair(
         # Always start from a freshly computed table: callers frequently hand
         # over a state whose s_ikt is stale after their own edits.
         state.compute_inventory()
-    except Exception:
+    except Exception as exc:
+        # Returning without filling means this repair contributes nothing. That
+        # is a legitimate no-op only when the inventory is genuinely unusable,
+        # so the reason has to be countable.
+        record_swallowed("repair_operators.fill_minimum_load.inventory", exc)
         return state
 
     try:
         supply_chain = data.construct_supply_chain()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.fill_minimum_load.supply_chain", exc)
         return state
 
     vehicle_snapshot = list(state.vehicles)
@@ -618,8 +629,13 @@ def fill_minimum_load_repair(
                 try:
                     state.compute_inventory()
                     inventory_fresh = True
-                except Exception:
+                except Exception as exc:
                     # Fall back to the cached helper when the refresh fails.
+                    # A permanent failure here means every availability query in
+                    # this repair runs on a stale table, so count it.
+                    record_swallowed(
+                        "repair_operators.fill_minimum_load.refresh", exc
+                    )
                     inventory_fresh = False
 
             available = _suffix_available(
@@ -728,7 +744,7 @@ def cross_period_consolidation_repair(
     state = partial.copy()
     try:
         current_cost = float(state.calculate_cost())
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return partial
 
     if not np.isfinite(current_cost):
@@ -973,7 +989,7 @@ def local_search_repair(
                             loaded += q_k * data.sku_sizes.get(sku_k, 0)
                         new_veh._loaded_volume = loaded
                         new_veh.capacity = max(0, new_veh.max_capacity - loaded)
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         # Preserve cached values from the old vehicle on any
                         # exception for compatibility.
                         new_veh._loaded_volume = getattr(veh, "_loaded_volume", 0)
@@ -992,9 +1008,12 @@ def local_search_repair(
                             # Roll back.
                             state.vehicles[i] = old_veh
                             state.mark_objective_dirty()
-                    except Exception:
+                    except Exception as exc:
                         # Ensure rollback to the old vehicle and continue after
                         # an exception.
+                        record_swallowed(
+                            "repair_operators.local_search_repair.trial", exc
+                        )
                         state.vehicles[i] = old_veh
                         state.mark_objective_dirty()
                         continue
@@ -1137,7 +1156,10 @@ def inventory_balance_repair(
                 try:
                     state.compute_inventory()
                     inventory_fresh = True
-                except Exception:
+                except Exception as exc:
+                    record_swallowed(
+                        "repair_operators.inventory_balance.refresh", exc
+                    )
                     inventory_fresh = False
 
             # Build constrained orders: each SKU is limited by unmet demand and
@@ -1444,7 +1466,7 @@ def regret_based_repair(
     prev_obj_saved = None
     try:
         prev_obj_saved = state.objective()
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         prev_obj_saved = None
 
     inserted_vehicles = []  # Inserted vehicles for logging or analysis.
@@ -1481,7 +1503,7 @@ def regret_based_repair(
         # evaluate candidates against the current repaired state snapshot
         try:
             prev_obj = state.objective()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             prev_obj = None
         regret_list = []
 
@@ -1691,19 +1713,29 @@ def regret_based_repair(
                     continue
                 try:
                     # Fast approximate evaluation (cheap, does not copy state)
+                    fast_unknown = False
                     try:
                         _, fast_impr, fast_ok = compute_improvement_fast_add_vehicle(
                             state, plant, dealer, veh_type, day, sku_id, est_qty
                         )
-                    except Exception:
+                    except Exception as exc:
+                        # A crash is *not* evidence that the candidate is bad.
+                        # Treating it as ``(0.0, False)`` silently turned this
+                        # operator into a no-op (measured: 7 insertions -> -1).
+                        # Fall through to the exact simulation instead, which is
+                        # slower but answers the question correctly.
+                        record_swallowed(
+                            "repair_operators.regret.fast_estimate", exc
+                        )
                         fast_impr, fast_ok = 0.0, False
+                        fast_unknown = True
 
                     # Configurable threshold for doing a full exact simulation
                     full_sim_threshold = float(
                         getattr(ALNSConfig, "REGRET_FULL_SIM_THRESHOLD", 0.0) or 0.0
                     )
 
-                    if fast_ok and fast_impr > full_sim_threshold:
+                    if fast_unknown or (fast_ok and fast_impr > full_sim_threshold):
                         # Perform full (exact) simulation only when the fast estimator
                         # indicates a promising candidate.
                         # Try a cheap delta computation path that avoids any copy/compute_inventory
@@ -1718,9 +1750,13 @@ def regret_based_repair(
                                 # skip expensive simulation.
                                 global_memo[combined_key] = (float(_impr_d), True)
                                 continue
-                        except Exception:
-                            # Fall through to the full simulation path on any error.
-                            pass
+                        except Exception as exc:
+                            # Fall through to the full simulation path on any
+                            # error. Record it: the delta path is a speed-up,
+                            # and losing it silently costs ~10x per candidate.
+                            record_swallowed(
+                                "repair_operators.regret.delta_estimate", exc
+                            )
 
                         # A non-finite baseline objective (a hard physical
                         # violation) makes the mixed reward "zero improvement,
@@ -1777,7 +1813,7 @@ def regret_based_repair(
                                 before_suppress = getattr(
                                     tmp, "_suppress_compute_inventory", False
                                 )
-                            except Exception:
+                            except (AttributeError, TypeError, ValueError):
                                 before_vehicles_len = len(tmp.vehicles)
                                 before_s_ikt_vals = {}
                                 before_last_obj = getattr(tmp, "last_objective", None)
@@ -1801,9 +1837,15 @@ def regret_based_repair(
                                     _, improvement, success = compute_improvement(
                                         tmp, prev_obj if prev_obj is not None else 0.0
                                     )
-                                except Exception:
+                                except Exception as exc:
+                                    record_swallowed(
+                                        "repair_operators.regret.simulate", exc
+                                    )
                                     improvement, success = 0.0, False
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed(
+                                    "repair_operators.regret.simulate_setup", exc
+                                )
                                 improvement, success = 0.0, False
 
                             # rollback: remove appended vehicles and restore s_ikt + caches
@@ -1830,12 +1872,15 @@ def regret_based_repair(
                                         "_suppress_compute_inventory",
                                         before_suppress,
                                     )
-                                except Exception:
+                                except (AttributeError, TypeError):
                                     # Best-effort rollback: ignore restoration failures.
                                     pass
-                            except Exception:
+                            except Exception as exc:
                                 # Best-effort rollback; drop tmp_base if rollback
                                 # fails to avoid reuse.
+                                record_swallowed(
+                                    "repair_operators.regret.rollback", exc
+                                )
                                 tmp_base = None
                             # store exact-simulation result in global_memo for this state snapshot
                             try:
@@ -1940,9 +1985,10 @@ def regret_based_repair(
                     state.mark_objective_dirty()
                 except (AttributeError, TypeError) as exc:
                     record_swallowed("repair_operators.greedy_repair.invalidate", exc)
-        except Exception:
+        except Exception as exc:
             # Commit failed; skip and continue. The next loop reevaluates unmet
             # demand entries.
+            record_swallowed("repair_operators.greedy_repair.commit", exc)
             continue
 
         # Update the resource pool incrementally instead of rebuilding it at the
@@ -2156,7 +2202,11 @@ def sequential_repair(
     shipped_cache = {}
     try:
         shipped_cache = state.compute_shipped()
-    except Exception:
+    except Exception as exc:
+        # An empty shipped cache makes every demand look unmet, so this repair
+        # would over-insert vehicles. Keep the fallback (it is still the
+        # safest continuation) but make it visible.
+        record_swallowed("repair_operators.sequential.compute_shipped", exc)
         shipped_cache = {}
 
     # Repair in period order.
@@ -2400,7 +2450,8 @@ def lookahead_repair(
 
     try:
         shipped_cache = state.compute_shipped()
-    except Exception:
+    except Exception as exc:
+        record_swallowed("repair_operators.lookahead.compute_shipped", exc)
         shipped_cache = {}
 
     supply_chain = data.construct_supply_chain()

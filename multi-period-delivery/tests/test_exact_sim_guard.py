@@ -22,6 +22,7 @@ import pytest
 
 from multi_period_delivery.alns import repair_operators as ro
 from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+from multi_period_delivery.alns.destroy_operators import random_removal
 from multi_period_delivery.alns.repair_utils import compute_mixed_operator_reward
 
 BASE = Path(__file__).resolve().parents[1]
@@ -114,3 +115,32 @@ def test_regret_skips_the_simulation_when_the_baseline_is_non_finite(
     # kept the simulation count at zero.
     assert deltas["n"] > 0
     assert sims["n"] == 0
+
+
+def test_fast_estimator_crash_falls_back_to_the_exact_simulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crashed estimator says nothing about the candidate's quality.
+
+    Before the fallback, the handler memoized ``(0.0, False)`` - "not worth
+    inserting" - so a broken estimator quietly turned the whole operator into a
+    no-op. Measured on ``dataset_1``: 7 insertions became a net removal of 1.
+    """
+    state = _state()
+    state = random_removal(state, np.random.default_rng(11))
+    before = len(state.vehicles)
+    recorded: list[str] = []
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("fast estimator exploded")
+
+    monkeypatch.setattr(ro, "compute_improvement_fast_add_vehicle", _explode)
+    monkeypatch.setattr(
+        ro, "record_swallowed", lambda site, exc: recorded.append(site)
+    )
+
+    result = ro.regret_based_repair(state, np.random.default_rng(7), k=2, topN=3)
+
+    # The operator still repairs: the crash no longer reads as "bad candidate".
+    assert len(result.vehicles) >= before
+    assert "repair_operators.regret.fast_estimate" in recorded

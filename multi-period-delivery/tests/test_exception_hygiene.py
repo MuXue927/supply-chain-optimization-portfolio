@@ -46,9 +46,12 @@ failures observable, taking 336 -> 321. The operator pass narrowed 31 more
 ``is_empty``/``is_full`` probes, dict copies, and cache invalidation), taking
 321 -> 290. The destroy-utils/tracker/ML pass extracted the repeated
 ``OPJSON`` sampling block into one helper and narrowed a further 22 handlers,
-taking 290 -> 268.
+taking 290 -> 268. The operator-site pass made the state-modifying calls
+observable (greedy fast/slow load, fill-minimum-load inventory and supply
+chain, local-search trial, sequential/lookahead shipped cache) and fixed the
+regret fast-estimator fallback, taking 268 -> 251.
 
-The remaining 268 are left deliberately: most wrap a try body containing a
+The remaining 251 are left deliberately: most wrap a try body containing a
 method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
@@ -65,9 +68,9 @@ import pytest
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
-#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290, then 268.
+#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290, 268, 251.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 268
+BLIND_EXCEPT_BASELINE = 251
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
