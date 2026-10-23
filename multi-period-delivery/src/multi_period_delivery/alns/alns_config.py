@@ -689,6 +689,30 @@ class ALNSConfig:
     # candidates pass it, so this gate filters by sign, not by magnitude.
     REGRET_FULL_SIM_THRESHOLD: float = 0.001
 
+    # Reuse each demand's candidate shortlist across the while passes of one
+    # ``regret_based_repair`` call.
+    #
+    # A pass commits a single vehicle, so only demands on that vehicle's SKU
+    # can see availability move; everything else re-enumerates an identical
+    # candidate set. Measured on medium/dataset_13: 98.4% of demand x pass
+    # pairs have unchanged inputs, and their shortlists match element by
+    # element (set, order and truncation) - reuse is bit-for-bit equivalent
+    # (verified: 429 passes, identical commit at every one, identical final
+    # state, 13.29 s -> 9.23 s for that call).
+    #
+    # Only the shortlist is cached. The improvement scores are recomputed
+    # every pass: reusing them was measured to drift by 1.5e-8..3.0e-8
+    # (``prev_obj - (prev_obj + delta)`` rounding), which is not equivalent.
+    #
+    # **Off by default.** The operator's own 10 s budget was implicitly
+    # calibrated against the old per-pass cost, so a ~3x cheaper pass turns one
+    # repair into an exhaustive greedy fill: at a fixed 150 s run budget the
+    # iteration count moved 181->227, 324->122, 252->192 on seeds 42/7/123,
+    # and final cost moved -4.7..+52.7 (one seed clearly worse, none clearly
+    # better). Rebalancing belongs to the next round - cap commits per call or
+    # normalise the operator reward by time - before this is enabled.
+    REGRET_SHORTLIST_CACHE: bool = False
+
     # --------------------------
     # Logging / persistence
     # --------------------------

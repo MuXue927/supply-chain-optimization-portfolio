@@ -1492,6 +1492,18 @@ def regret_based_repair(
     # commit. ``objective()``/``compute_inventory`` invalidate the state cache
     # during the iteration, so it is re-attached just before the next build.
     resource_pool = None
+    # Per-call shortlist cache (M25/L1). A pass commits exactly one vehicle, so
+    # only demands sharing that vehicle's SKU can see their availability move;
+    # the rest re-enumerate an identical candidate set. Measured on
+    # medium/dataset_13: 98.4% of the demand x pass pairs have unchanged inputs.
+    # Keys are (dealer, sku); values are
+    # (unmet quantity, availability generation, shortlist tuple). The cache is
+    # scoped to this call on purpose - ``post_repair`` and the next operator
+    # change the state wholesale.
+    shortlist_cache: dict[tuple[str, str], tuple[int, int, tuple]] = {}
+    avail_gen: dict[str, int] = {}
+    _prev_avail: dict[tuple[str, str, int], float] = {}
+    _cache_on = bool(getattr(ALNSConfig, "REGRET_SHORTLIST_CACHE", True))
     while (
         time.time() - t0 < time_limit
         and (deadline is None or time.monotonic() < deadline)
@@ -1548,6 +1560,18 @@ def regret_based_repair(
         veh_type_cap = _veh_type_cap
         _data_param_pun = _param_pun_factor1
 
+        # Effective availability is ``min(pool, suffix)`` - the exact quantity
+        # the enumeration caps to and ``veh_loading(suffix_safe=True)`` accepts
+        # (M23). A generation counter per SKU invalidates every shortlist that
+        # could have changed, and nothing else.
+        if _cache_on:
+            for _ak, _suffix_val in suffix_balance.items():
+                _pool_val = resource_pool_get(_ak, 0)
+                _eff = _suffix_val if _suffix_val < _pool_val else _pool_val
+                if _prev_avail.get(_ak) != _eff:
+                    _prev_avail[_ak] = _eff
+                    avail_gen[_ak[1]] = avail_gen.get(_ak[1], 0) + 1
+
         # ensure shipped_cache exists to increase chance of delta-path usage
         try:
             if getattr(state, "shipped_cache", None) is None:
@@ -1580,6 +1604,21 @@ def regret_based_repair(
             candidates = []
             # use mapping to get available plants quickly (avoids repeated supply_chain iteration)
             available_plants = plants_for_dealer_sku.get((dealer, sku_id), [])
+            # Reuse the shortlist when nothing it depends on moved: the unmet
+            # quantity and this SKU's availability both drive the scan, and
+            # both are checked. Scoring below is still recomputed - caching it
+            # was rejected in M25 (1.5e-8..3.0e-8 float drift).
+            _gen_now = avail_gen.get(sku_id, 0)
+            _cached = shortlist_cache.get((dealer, sku_id)) if _cache_on else None
+            _hit = bool(
+                _cached is not None
+                and _cached[0] == remain_qty
+                and _cached[1] == _gen_now
+            )
+            _cached_shortlist = _cached[2] if _hit else ()
+            # Skipping the scan is the whole point; the per-SKU setup below is
+            # cheap and stays, so the two paths share one code shape.
+            _plants_to_scan = () if _hit else available_plants
 
             # This loop is a performance hot spot. Minimize expensive
             # state.copy(), veh_loading(), and compute_improvement() calls.
@@ -1630,7 +1669,7 @@ def regret_based_repair(
             _seen_local = set()
             # Precompute day_maps for all available_plants once per demand to avoid repeated get_day_map calls.
             # This moves the potentially-expensive resource_pool_get_day_map call out of the inner veh_type loop.
-            for plant in available_plants:
+            for plant in _plants_to_scan:
                 # obtain a day->available view for this (plant, sku) to avoid repeated tuple-key lookups
                 # generator over days to avoid list allocations
                 day_items = (
@@ -1697,16 +1736,21 @@ def regret_based_repair(
                                     est_qty,
                                 )
 
-            if not top_list:
+            if not top_list and not _hit:
+                if _cache_on:
+                    shortlist_cache[(dealer, sku_id)] = (remain_qty, _gen_now, ())
                 continue
 
-            # extract selected candidates sorted descending by heuristic score
-            selected = list(top_list)
-            selected.sort(key=lambda x: x[0], reverse=True)
-            # normalize format to (key, plant, veh_type, day, est_qty)
-            selected = [
-                (item[1], item[2], item[3], item[4], item[5]) for item in selected
-            ]
+            if _hit:
+                selected = list(_cached_shortlist)
+            else:
+                # extract selected candidates sorted descending by heuristic score
+                selected = list(top_list)
+                selected.sort(key=lambda x: x[0], reverse=True)
+                # normalize format to (key, plant, veh_type, day, est_qty)
+                selected = [
+                    (item[1], item[2], item[3], item[4], item[5]) for item in selected
+                ]
 
             # 'selected' already contains the top heuristic candidates (from bounded heap).
             # Respect max_sim as an additional safety cap (may be lower than heap size).
@@ -1715,6 +1759,12 @@ def regret_based_repair(
             )
             if len(selected) > max_sim:
                 selected = selected[:max_sim]
+            if _cache_on:
+                shortlist_cache[(dealer, sku_id)] = (
+                    remain_qty,
+                    _gen_now,
+                    tuple(selected),
+                )
 
             # For selected promises, first use a fast approximate estimator to avoid
             # performing a full state.copy() + veh_loading for every candidate.

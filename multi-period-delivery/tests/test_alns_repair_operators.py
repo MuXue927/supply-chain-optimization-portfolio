@@ -22,7 +22,7 @@ from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
 from multi_period_delivery.alns.InputDataALNS import DataALNS
-from multi_period_delivery.alns.repair_utils import get_unmet_demand
+from multi_period_delivery.alns.repair_utils import ResourcePool, get_unmet_demand
 from multi_period_delivery.alns.vehicle import Vehicle
 
 
@@ -449,6 +449,68 @@ def test_regret_repair_never_commits_a_vehicle_the_loader_rejects(
     assert appended, "regret inserted nothing; the invariant was not exercised"
     empty = [veh for veh in appended if not (veh.cargo or {})]
     assert not empty, f"{len(empty)} of {len(appended)} appended vehicles carry no cargo"
+
+
+def _fleet_layout(state: SolutionState) -> list[tuple]:
+    return [
+        (
+            veh.fact_id,
+            veh.dealer_id,
+            veh.type,
+            veh.day,
+            tuple(sorted((veh.cargo or {}).items())),
+        )
+        for veh in state.vehicles
+    ]
+
+
+def test_shortlist_cache_reuses_the_scan_without_changing_the_result(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reusing a shortlist must not change a single commit.
+
+    A pass commits one vehicle and then re-enumerates every unmet demand. The
+    cache only skips the ``plant x day x vehicle type`` scan for demands whose
+    unmet quantity and SKU availability are unchanged, and the improvement
+    scores are still recomputed, so the outcome has to be *identical* rather
+    than merely close.
+
+    ``ResourcePool.get`` is counted as the observable of the scan: a reuse that
+    never fires would leave the count unchanged and this test would still pass
+    its equality half, so the ratio is asserted first.
+    """
+    scans = {"count": 0}
+    original_get = ResourcePool.get
+
+    def counted_get(self, key, default=0):
+        scans["count"] += 1
+        return original_get(self, key, default)
+
+    monkeypatch.setattr(ResourcePool, "get", counted_get)
+
+    def run(cache_on: bool) -> tuple[SolutionState, int]:
+        monkeypatch.setattr(ALNSConfig, "REGRET_SHORTLIST_CACHE", cache_on)
+        state = _destroyed(feasible_solution)
+        before = scans["count"]
+        repaired = repair.regret_based_repair(
+            state,
+            np.random.default_rng(13),
+            k=2,
+            topN=6,
+            time_limit=3.0,
+        )
+        return repaired, scans["count"] - before
+
+    without, scans_without = run(False)
+    with_cache, scans_with = run(True)
+
+    assert scans_without > 0, "the scan never ran; the comparison is vacuous"
+    assert scans_with < scans_without, (
+        f"cache reused nothing: {scans_with} scans vs {scans_without} without it"
+    )
+    assert _fleet_layout(with_cache) == _fleet_layout(without)
+    assert with_cache.s_ikt == without.s_ikt
+    assert with_cache.calculate_cost() == without.calculate_cost()
 
 
 def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(
