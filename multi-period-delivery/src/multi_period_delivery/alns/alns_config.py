@@ -679,9 +679,14 @@ class ALNSConfig:
     REGRET_SIM_MAX_SIMULATE: int = 4
 
     # Require the fast estimator improvement to exceed this threshold before
-    # performing an expensive full simulation. Value is in the "fast-impr"
-    # estimator scale (typically small); increase to be more conservative.
-    # Lowering this value makes the gate stricter (fewer full sims). Set to 1e-3.
+    # taking a candidate further (delta estimate, else full simulation).
+    #
+    # Direction: a *higher* threshold is stricter (fewer candidates pass);
+    # lowering it admits more. At the 1e-3 default the threshold is effectively
+    # a sign test - "estimated improvement is positive" - because the estimator
+    # returns ``(benefit - cost - penalty) * SCALE_FACTOR`` with magnitudes far
+    # above 1e-3. Measured on medium/dataset_13 (2026-10-23): 98.6% of
+    # candidates pass it, so this gate filters by sign, not by magnitude.
     REGRET_FULL_SIM_THRESHOLD: float = 0.001
 
     # --------------------------
