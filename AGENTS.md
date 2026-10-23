@@ -76,9 +76,10 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-23 19:15   HEAD = e251e68（120 commits）   586 passed / 42 deselected
-覆盖率 65.50%（门禁 56%）   ruff 干净   盲 except Exception 249
-下一优先级：M25（regret 候选枚举的增量语义设计，只读轮）
+2026-10-23 21:52   HEAD = 27c19d7   587 passed / 42 deselected
+覆盖率 65.56%（门禁 56%）   ruff 干净   盲 except Exception 249
+下一优先级：让 regret 单次调用的工作量恒定（提交数上界 / 按耗时归一回报），
+再讨论是否开启 REGRET_SHORTLIST_CACHE（M26 已实现，算子级等价，默认关闭）
 ```
 
 ## 9. 失败也要记录
