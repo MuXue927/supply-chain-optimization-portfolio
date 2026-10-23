@@ -2115,14 +2115,25 @@ def fleet_consolidation_repair(
                 prev_obj=prev_obj_saved,
                 t0=time.time(),
             )
-        except Exception as e:
+        except Exception as exc:
+            # ``post_repair`` is what certifies the merged state. If it raises,
+            # ``_post_repair_certified`` stays unset - and the acceptor reads an
+            # unset flag as "no objection", so the unverified merge would be
+            # accepted. Deliver the pre-consolidation state instead and report
+            # this operator as a no-op.
+            record_swallowed(
+                "repair_operators.fleet_consolidation_repair.post_repair", exc
+            )
+            restored = current.copy()
             try:
-                logger.debug(
-                    f"[OPLOG] fleet_consolidation_repair: post_repair exception: {e}"
+                restored._repair_noop = True
+                restored._post_repair_certification_error = (
+                    "fleet consolidation could not be certified: "
+                    f"{type(exc).__name__}: {exc}"
                 )
-            except Exception as exc:
-                record_swallowed("repair_operators.fleet_consolidation_repair", exc)
+            except (AttributeError, TypeError):
                 pass
+            return restored
 
         # Log the consolidation result.
         try:
@@ -2137,13 +2148,16 @@ def fleet_consolidation_repair(
         return state
 
     except Exception as e:
-        # On exception, return a copy of the original state.
+        # On exception, return a copy of the original state. This also covers a
+        # half-applied in-place merge: ``consolidate_route_vehicles`` edits
+        # cargo before it commits the vehicle list, so ``state`` may be corrupt
+        # here and must not be returned.
+        record_swallowed("repair_operators.fleet_consolidation_repair", e)
         try:
             logger.warning(
                 f"[OPLOG] fleet_consolidation_repair: exception {e}; returning original state"
             )
-        except Exception as exc:
-            record_swallowed("repair_operators.fleet_consolidation_repair", exc)
+        except (OSError, UnicodeError, ValueError):
             pass
         return current.copy()
 

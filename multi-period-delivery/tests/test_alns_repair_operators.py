@@ -17,6 +17,7 @@ import pytest
 
 from multi_period_delivery.alns import destroy_operators as destroy
 from multi_period_delivery.alns import repair_operators as repair
+from multi_period_delivery.alns import repair_utils
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
@@ -53,6 +54,37 @@ def _assert_still_consistent(state: SolutionState) -> None:
     assert not violations["negative_inventory"]
     assert not violations["veh_over_load"]
     assert not violations["cargo_day_mismatch"]
+
+
+def test_fleet_consolidation_returns_the_original_when_post_repair_raises(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An uncertified merge must never be handed back as a candidate.
+
+    ``post_repair`` is the step that certifies the merged state. When it
+    raises, ``_post_repair_certified`` stays unset, and the acceptor reads an
+    unset flag as "no objection" - so returning the merge would let an
+    unverified consolidation through.
+    """
+    state = feasible_solution.copy()
+    layout = _vehicle_layout(state)
+    recorded: list[str] = []
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("post_repair exploded")
+
+    # ``fleet_consolidation_repair`` imports ``post_repair`` locally, so the
+    # patch has to land on the defining module.
+    monkeypatch.setattr(repair_utils, "post_repair", _explode)
+    monkeypatch.setattr(
+        repair, "record_swallowed", lambda site, exc: recorded.append(site)
+    )
+
+    result = repair.fleet_consolidation_repair(state, np.random.default_rng(3))
+
+    assert _vehicle_layout(result) == layout
+    assert result._repair_noop is True
+    assert "repair_operators.fleet_consolidation_repair.post_repair" in recorded
 
 
 def _vehicle_layout(state: SolutionState) -> list[tuple]:

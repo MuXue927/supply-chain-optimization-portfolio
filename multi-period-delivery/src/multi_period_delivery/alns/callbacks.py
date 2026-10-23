@@ -1164,7 +1164,8 @@ def make_callback_on_iteration(
                                     f"[LIGHT_INTENSIFY] it={iteration} apply vehicle elimination from best feasible snapshot"
                                 )
                                 record_best_feasible(optimizer, state)
-            except Exception:
+            except Exception as exc:
+                record_swallowed("callbacks.light_intensify", exc)
                 logger.exception("Light vehicle intensification failed in callback")
 
             # Elite path relinking: select a structurally diverse elite target
@@ -1313,18 +1314,28 @@ def make_callback_on_iteration(
                                             f"[ELITE_RELINK] it={iteration} progressive relink steps={applied_steps} (target_obj={_safe_float(picked['obj']):.4f})"
                                         )
                                         record_best_feasible(optimizer, state)
-                            except Exception:
+                            except Exception as exc:
+                                record_swallowed(
+                                    "callbacks.elite_relink.apply", exc
+                                )
                                 applied = False
 
                             if not applied:
                                 try:
                                     state.replace_vehicles(list(backup_state.vehicles))
                                     state.compute_inventory()
-                                except Exception:
+                                except Exception as exc:
+                                    # The jump was rejected but the incumbent could
+                                    # not be restored: the live state now holds a
+                                    # candidate the policy decided against.
+                                    record_swallowed(
+                                        "callbacks.elite_relink.rollback", exc
+                                    )
                                     logger.exception(
                                         "Elite relink rollback failed after unsuccessful jump"
                                     )
-            except Exception:
+            except Exception as exc:
+                record_swallowed("callbacks.elite_relink", exc)
                 logger.exception("Elite path relink failed in callback")
 
             # Stagnation escape: actual-objective-aware basin jump from the best feasible state.
@@ -1463,7 +1474,8 @@ def make_callback_on_iteration(
                                         f"[STAGNATION_ESCAPE] it={iteration} accepted strong period-range jump (search={cand_obj:.4f}, actual={cand_actual:.2f}, veh={cand_veh})"
                                     )
                                     record_best_feasible(optimizer, state)
-            except Exception:
+            except Exception as exc:
+                record_swallowed("callbacks.stagnation_escape", exc)
                 logger.exception("Stagnation escape restart failed in callback")
 
             # Report status every 50 iterations when available.
@@ -1614,12 +1626,17 @@ def make_callback_on_iteration(
                     optimizer.tracker, "on_iteration"
                 ):
                     optimizer.tracker.on_iteration(state, rng, **kwargs)
-            except Exception:
+            except Exception as exc:
+                # The tracker is the only record of the search trajectory. If
+                # this fails, statistics and progress gates silently stop
+                # advancing, so the degradation must be countable.
+                record_swallowed("callbacks.tracker_on_iteration", exc)
                 logger.exception("Tracker on_iteration call failed")
 
         except RuntimeGuardError:
             raise
         except Exception as e:
+            record_swallowed("callbacks.on_iteration", e)
             logger.exception("callback_on_iteration unexpected error: %s", e)
 
     return callback_on_iteration
@@ -1645,14 +1662,16 @@ def register_callbacks(
             on_best(state, rng, **kwargs)
         except RuntimeGuardError:
             raise
-        except Exception:
+        except Exception as exc:
+            record_swallowed("callbacks.on_best", exc)
             optimizer.log_printer.print("Callback on best failed.", color="yellow")
 
         try:
             on_iter(state, rng, **kwargs)
         except RuntimeGuardError:
             raise
-        except Exception:
+        except Exception as exc:
+            record_swallowed("callbacks.on_best.on_iter", exc)
             optimizer.log_printer.print(
                 "Callback on iteration (from best) failed.", color="yellow"
             )
@@ -1663,7 +1682,8 @@ def register_callbacks(
             on_iter(state, rng, **kwargs)
         except RuntimeGuardError:
             raise
-        except Exception:
+        except Exception as exc:
+            record_swallowed("callbacks.on_accept_or_better", exc)
             optimizer.log_printer.print("Callback on iteration failed.", color="yellow")
 
     def callback_on_reject(state, rng, **kwargs):
@@ -1682,7 +1702,8 @@ def register_callbacks(
             on_iter(incumbent, rng, **kwargs)
         except RuntimeGuardError:
             raise
-        except Exception:
+        except Exception as exc:
+            record_swallowed("callbacks.on_reject", exc)
             optimizer.log_printer.print(
                 "Callback on iteration (from reject) failed.", color="yellow"
             )
@@ -1692,5 +1713,6 @@ def register_callbacks(
         alns_instance.on_better(callback_on_accept_or_better)
         alns_instance.on_accept(callback_on_accept_or_better)
         alns_instance.on_reject(callback_on_reject)
-    except Exception:
+    except Exception as exc:
+        record_swallowed("callbacks.register", exc)
         logger.exception("Failed to register callbacks on ALNS instance")

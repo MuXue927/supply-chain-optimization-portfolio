@@ -49,9 +49,12 @@ failures observable, taking 336 -> 321. The operator pass narrowed 31 more
 taking 290 -> 268. The operator-site pass made the state-modifying calls
 observable (greedy fast/slow load, fill-minimum-load inventory and supply
 chain, local-search trial, sequential/lookahead shipped cache) and fixed the
-regret fast-estimator fallback, taking 268 -> 251.
+regret fast-estimator fallback, taking 268 -> 251. The callback pass made the
+light-intensify, elite-relink, stagnation-escape, tracker and registration
+handlers countable, and fixed fleet consolidation returning an uncertified
+merge, taking 251 -> 249.
 
-The remaining 251 are left deliberately: most wrap a try body containing a
+The remaining 249 are left deliberately: most wrap a try body containing a
 method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
@@ -68,9 +71,10 @@ import pytest
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
-#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290, 268, 251.
+#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290,
+#: 268, 251, then 249.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 251
+BLIND_EXCEPT_BASELINE = 249
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
