@@ -418,6 +418,39 @@ def test_inventory_balance_does_not_spend_demand_when_load_is_rolled_back(
     assert get_unmet_demand(state) == before_unmet
 
 
+def test_regret_repair_never_commits_a_vehicle_the_loader_rejects(
+    feasible_solution: SolutionState,
+) -> None:
+    """Every vehicle regret adds must carry cargo.
+
+    ``veh_loading(suffix_safe=True)`` refuses a load when any later period has
+    no slack, while the resource pool only knows the load's own day. Before the
+    availability cap the two disagreed: regret appended a vehicle that shipped
+    nothing, then re-picked the same demand until its time budget ran out
+    (measured on medium/dataset_13: 59-88% of commits shipped zero).
+
+    A vehicle appended with empty cargo is the observable signature of that
+    mismatch, so it is asserted directly.
+    """
+    state = _destroyed(feasible_solution)
+    before_total = len(state.vehicles)
+
+    repaired = repair.regret_based_repair(
+        state,
+        np.random.default_rng(13),
+        k=2,
+        topN=6,
+        time_limit=3.0,
+    )
+
+    appended = repaired.vehicles[before_total:]
+    # Guard against a vacuous pass: the operator must have inserted something
+    # for the assertion below to mean anything.
+    assert appended, "regret inserted nothing; the invariant was not exercised"
+    empty = [veh for veh in appended if not (veh.cargo or {})]
+    assert not empty, f"{len(empty)} of {len(appended)} appended vehicles carry no cargo"
+
+
 def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:

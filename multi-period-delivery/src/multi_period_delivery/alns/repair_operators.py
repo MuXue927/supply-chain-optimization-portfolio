@@ -1516,6 +1516,22 @@ def regret_based_repair(
         if resource_pool is not None:
             state._resource_pool_cache = resource_pool
         resource_pool = _construct_resource_pool(state, data)
+        # ``veh_loading(..., suffix_safe=True)`` refuses a load when *any* later
+        # period lacks slack, but the pool only knows the load's own day. Left
+        # unaligned, regret keeps selecting a (plant, sku, day) the loader will
+        # reject, ships nothing, and re-picks the same demand until its budget
+        # runs out (measured on medium/dataset_13: 59-88% of commits shipped
+        # zero, always the same demand). Precompute the suffix minimum of the
+        # closing balances - the exact quantity the loader minimises over - and
+        # cap availability with it below.
+        suffix_balance: dict[tuple[str, str, int], float] = {}
+        for _plant in sorted(getattr(data, "plants", []) or []):
+            for _sku in sorted(data.skus_plant.get(_plant, []) or []):
+                running = None
+                for _d in range(horizons, 0, -1):
+                    bal = state.s_ikt.get((_plant, _sku, _d), 0)
+                    running = bal if running is None else min(running, bal)
+                    suffix_balance[(_plant, _sku, _d)] = running
         # Bind hot read-only dictionaries locally to reduce attribute lookup
         # overhead.
         _sku_sizes = getattr(data, "sku_sizes", {})
@@ -1622,6 +1638,12 @@ def regret_based_repair(
                 )
 
                 for day, available_val in day_items:
+                    # Cap by the suffix minimum: a load that leaves a later
+                    # period negative is rejected by the loader, so a candidate
+                    # above this cap would only burn the pass.
+                    _cap = suffix_balance.get((plant, sku_id, day))
+                    if _cap is not None and _cap < available_val:
+                        available_val = _cap
                     if available_val <= 0:
                         continue
 
@@ -1944,6 +1966,9 @@ def regret_based_repair(
             avail_now = _construct_resource_availability(
                 state, plant_sel, sku_sel, day_sel
             )
+        _commit_cap = suffix_balance.get((plant_sel, sku_sel, day_sel))
+        if _commit_cap is not None and _commit_cap < avail_now:
+            avail_now = _commit_cap
         qty_to_commit = min(qty_sel, avail_now)
         if qty_to_commit <= 0:
             # No availability; skip this iteration so other tasks can be
