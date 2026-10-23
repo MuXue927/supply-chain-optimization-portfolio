@@ -9,6 +9,7 @@ Responsibilities:
 - Track calls, acceptances, and accumulated penalties for diagnostics and tuning.
 """
 
+import inspect
 from typing import Any
 
 import numpy as np
@@ -27,6 +28,35 @@ def _safe_float(value: Any, default: float = float("inf")) -> float:
         return default
 
 
+def _resolve_base_arity(base_acceptor: Any) -> int:
+    """
+    Decide once how the base acceptor wants best/current/candidate.
+
+    Modern ``alns`` acceptors take ``(rng, best, current, candidate)``; the
+    pre-4.0 ``alns`` contract was ``(current, candidate, best)``. Probing that with
+    ``try: ... except TypeError`` is unsafe: a ``TypeError`` raised *inside* a
+    wider signature (for example an optional fourth parameter) makes the
+    fallback bind again and runs the acceptor twice with shifted roles.
+
+    Introspection failure falls back to the modern four-argument contract; a
+    genuinely incompatible callable then fails visibly at the single call site.
+    """
+    try:
+        parameters = list(inspect.signature(base_acceptor).parameters.values())
+    except (TypeError, ValueError):
+        return 4
+    if any(param.kind is param.VAR_POSITIONAL for param in parameters):
+        return 4
+    positional = [
+        param
+        for param in parameters
+        if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) == 3:
+        return 3
+    return 4
+
+
 class _CandidateProxy:
     """
     Proxy for a candidate state.
@@ -42,8 +72,11 @@ class _CandidateProxy:
     """
 
     def __init__(self, original, penalty: float):
-        self._orig = original
-        self._penalty = float(penalty)
+        # Name-mangled so a wrapped state that happens to define ``_orig`` or
+        # ``_penalty`` cannot be shadowed by the proxy's own bookkeeping.
+        self.__orig = original
+        self.__penalty = float(penalty)
+        self.__penalized: float | None = None
 
     def objective(self):
         """
@@ -51,19 +84,26 @@ class _CandidateProxy:
 
         The original objective is converted to float when possible. Exceptions
         and non-finite values are preserved, and finite values are increased by
-        the precomputed penalty.
+        the precomputed penalty. The value is computed once per proxy so a base
+        acceptor that asks twice cannot see two different numbers for the same
+        candidate.
         """
+        if self.__penalized is not None:
+            return self.__penalized
         try:
-            base = float(self._orig.objective())
-        except Exception:
+            base = float(self.__orig.objective())
+        except Exception as exc:
+            record_swallowed("accept._CandidateProxy.objective", exc)
             base = float("inf")
         if not np.isfinite(base):
+            self.__penalized = base
             return base
-        return base + self._penalty
+        self.__penalized = base + self.__penalty
+        return self.__penalized
 
     def validate(self):
         """Delegate validation to preserve the original behavior."""
-        return self._orig.validate()
+        return self.__orig.validate()
 
     def compute_shipped(self):
         """
@@ -72,8 +112,8 @@ class _CandidateProxy:
         If the wrapped object implements ``compute_shipped()``, delegate to it;
         otherwise return an empty dictionary.
         """
-        if hasattr(self._orig, "compute_shipped"):
-            return self._orig.compute_shipped()
+        if hasattr(self.__orig, "compute_shipped"):
+            return self.__orig.compute_shipped()
         return {}
 
     def __getattr__(self, name: str) -> Any:
@@ -84,7 +124,10 @@ class _CandidateProxy:
         provided by the wrapped object, allowing the proxy to substitute for it
         in most contexts.
         """
-        return getattr(self._orig, name)
+        if name in ("_CandidateProxy__orig", "_CandidateProxy__penalized"):
+            # Guard against recursion while the instance is only half-built.
+            raise AttributeError(name)
+        return getattr(self.__orig, name)
 
 
 class DemandConstraintAccept:
@@ -94,7 +137,10 @@ class DemandConstraintAccept:
     Before delegating to the base acceptor, this class inspects the candidate's
     validation result and computes a penalty. It then wraps the candidate in
     ``_CandidateProxy`` so ``objective()`` includes the penalty without changing
-    the original state object. Statistics are collected for later analysis.
+    the original state object. The base acceptor's argument convention is
+    resolved from its signature once, at construction, so a failure inside the
+    acceptor cannot be mistaken for a signature mismatch. Statistics are
+    collected for later analysis.
 
     Minimum interface contract expected by tests:
       - Callable:
@@ -126,6 +172,7 @@ class DemandConstraintAccept:
           - ``_total_penalty``: accumulated penalty for averages and diagnostics.
         """
         self.base = base_acceptor
+        self._base_arity = _resolve_base_arity(base_acceptor)
         self.data = data
         self.penalty_factor = float(penalty_factor)
 
@@ -153,35 +200,75 @@ class DemandConstraintAccept:
                 getattr(state, "iter_used_vehicles")
             ):
                 return len(list(state.iter_used_vehicles()))
-        except Exception:
-            pass
+        except Exception as exc:
+            record_swallowed(
+                "accept.DemandConstraintAccept.count_vehicles_iter", exc
+            )
         try:
             vehicles = list(getattr(state, "vehicles", []) or [])
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as exc:
+            # ``getattr`` with a default cannot miss, so this covers a raising
+            # property, a non-iterable container, or a bad ``__bool__``.
+            record_swallowed(
+                "accept.DemandConstraintAccept.count_vehicles_list", exc
+            )
             vehicles = []
         count = 0
         for veh in vehicles:
             try:
                 if veh is None or veh.is_empty():
                     continue
-            except (AttributeError, TypeError):
-                pass
+            except (AttributeError, TypeError) as exc:
+                # An unreadable vehicle is counted as in use: the fleet
+                # heuristic must not reward a state it cannot inspect.
+                record_swallowed(
+                    "accept.DemandConstraintAccept.count_vehicles_empty", exc
+                )
             count += 1
         return count
 
-    def _actual_priority_accept(self, current_state, candidate_state, progress: float) -> bool:
-        current_actual = _safe_float(
-            getattr(current_state, "calculate_cost", lambda: None)()
+    def _read_metric(self, state, method_name: str, site: str) -> float | None:
+        """
+        Read one scalar metric, returning ``None`` when it cannot be trusted.
+
+        ``None`` is distinct from ``inf``: an infinite objective is a legitimate
+        value, while a raising or missing method means the late-search policy
+        has no basis for a decision and must defer to the base acceptor.
+        """
+        method = getattr(state, method_name, None)
+        if not callable(method):
+            return None
+        try:
+            return _safe_float(method())
+        except Exception as exc:
+            record_swallowed(site, exc)
+            return None
+
+    def _actual_priority_accept(
+        self, current_state, candidate_state, progress: float
+    ) -> bool | None:
+        current_actual = self._read_metric(
+            current_state,
+            "calculate_cost",
+            "accept.DemandConstraintAccept.actual_priority.current_cost",
         )
-        candidate_actual = _safe_float(
-            getattr(candidate_state, "calculate_cost", lambda: None)()
+        candidate_actual = self._read_metric(
+            candidate_state,
+            "calculate_cost",
+            "accept.DemandConstraintAccept.actual_priority.candidate_cost",
         )
-        current_search = _safe_float(
-            getattr(current_state, "objective", lambda: None)()
+        current_search = self._read_metric(
+            current_state,
+            "objective",
+            "accept.DemandConstraintAccept.actual_priority.current_objective",
         )
-        candidate_search = _safe_float(
-            getattr(candidate_state, "objective", lambda: None)()
+        candidate_search = self._read_metric(
+            candidate_state,
+            "objective",
+            "accept.DemandConstraintAccept.actual_priority.candidate_objective",
         )
+        if None in (current_actual, candidate_actual, current_search, candidate_search):
+            return None
 
         actual_abs_tol = float(
             getattr(ALNSConfig, "ACTUAL_PRIORITY_ACTUAL_ABS_TOL", 0.25)
@@ -243,8 +330,14 @@ class DemandConstraintAccept:
         2) Validate the candidate and collect violations.
         3) Compute the penalty from the violations.
         4) Wrap the candidate so ``objective()`` includes the penalty.
-        5) Delegate to the base acceptor with signature fallbacks.
+        5) Delegate to the base acceptor exactly once.
         6) Update acceptance statistics and return the result.
+
+        Failure policy: an unreadable candidate or an exception from the base
+        acceptor rejects the candidate and records the swallowed failure. At
+        the late "actual priority" stage an unreadable metric defers to the base
+        acceptor instead, because rejecting every candidate would stall the
+        search for the remainder of the run.
         """
         self._calls += 1
 
@@ -318,31 +411,31 @@ class DemandConstraintAccept:
         )
 
         if feasible and progress >= actual_priority_start:
-            accepted = self._actual_priority_accept(
+            decision = self._actual_priority_accept(
                 current_state,
                 candidate_state,
                 progress,
             )
-            if accepted:
-                self._accepted += 1
-            return accepted
+            if decision is not None:
+                if decision:
+                    self._accepted += 1
+                return decision
+            # A broken metric must not abort the search or silently reject every
+            # remaining candidate; fall through to the temperature-based policy.
 
         # Wrap the candidate so objective() returns base + penalty.
         proxy = _CandidateProxy(candidate_state, penalty)
 
-        # Delegate to base acceptor (most acceptors follow signature used in tests)
-        # Try the common four-argument signature, then a fallback signature.
+        # The calling convention was resolved from the signature at construction
+        # time, so the acceptor runs exactly once even when it fails internally.
         try:
-            accepted = bool(self.base(rng, best_state, current_state, proxy))
-        except TypeError:
-            # Some implementations may use a three-argument signature.
-            try:
-                accepted = bool(self.base(best_state, current_state, proxy))
-            except Exception:
-                # Treat repeated failures as rejection.
-                accepted = False
-        except Exception:
-            # Treat other exceptions as rejection.
+            if self._base_arity == 3:
+                # Pre-4.0 alns order: (current, candidate, best).
+                accepted = bool(self.base(current_state, proxy, best_state))
+            else:
+                accepted = bool(self.base(rng, best_state, current_state, proxy))
+        except Exception as exc:
+            record_swallowed("accept.DemandConstraintAccept.base", exc)
             accepted = False
 
         if accepted:

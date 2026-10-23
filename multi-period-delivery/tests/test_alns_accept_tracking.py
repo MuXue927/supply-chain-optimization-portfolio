@@ -67,8 +67,10 @@ class _FakeState:
         self._violations = violations if violations is not None else {}
         self.vehicles = list(vehicles or [])
         self.data = _FakeData()
+        self.objective_calls = 0
 
     def objective(self) -> float:
+        self.objective_calls += 1
         return self._objective
 
     def calculate_cost(self) -> float:
@@ -134,6 +136,27 @@ def test_candidate_proxy_keeps_non_finite_objective() -> None:
     proxy = _CandidateProxy(state, penalty=100.0)
 
     assert proxy.objective() == float("inf")
+
+
+def test_candidate_proxy_evaluates_objective_once() -> None:
+    state = _FakeState(objective=10.0)
+    proxy = _CandidateProxy(state, penalty=2.5)
+
+    assert proxy.objective() == 12.5
+    assert proxy.objective() == 12.5
+    # A base acceptor that asks twice sees one stable number and no extra work.
+    assert state.objective_calls == 1
+
+
+def test_candidate_proxy_does_not_shadow_state_attributes() -> None:
+    state = _FakeState(objective=10.0)
+    state._orig = "solution-owned"
+    state._penalty = "solution-owned"
+
+    proxy = _CandidateProxy(state, penalty=1.0)
+
+    assert proxy._orig == "solution-owned"
+    assert proxy._penalty == "solution-owned"
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +269,121 @@ def test_demand_accept_rejects_candidate_when_validation_raises(
     assert stats["calls"] == 1
     assert stats["accepted"] == 0
     assert stats["accept_rate"] == 0.0
+
+
+def test_demand_accept_calls_defaulted_base_acceptor_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An internal ``TypeError`` must not be retried as a 3-arg fallback."""
+
+    class _DefaultedAcceptor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, rng, best, current, candidate=None):
+            self.calls += 1
+            raise TypeError("internal comparison failed")
+
+    base = _DefaultedAcceptor()
+    acceptor = DemandConstraintAccept(base, data=None)
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        accept_module, "record_swallowed", lambda site, exc: recorded.append(site)
+    )
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        _FakeState(objective=8.0),
+    )
+
+    assert accepted is False
+    assert base.calls == 1
+    assert recorded == ["accept.DemandConstraintAccept.base"]
+
+
+def test_demand_accept_binds_legacy_three_argument_acceptor() -> None:
+    class _LegacyAcceptor:
+        def __init__(self) -> None:
+            self.roles: tuple[type, type, type] | None = None
+
+        def __call__(self, current, candidate, best):
+            self.roles = (type(current), type(candidate), type(best))
+            return True
+
+    base = _LegacyAcceptor()
+    acceptor = DemandConstraintAccept(base, data=None)
+    best = _FakeState()
+    current = _FakeState()
+
+    accepted = acceptor(
+        np.random.default_rng(0), best, current, _FakeState(objective=8.0)
+    )
+
+    assert accepted is True
+    # Legacy order is (current, candidate, best): candidate is the proxy.
+    assert base.roles == (_FakeState, _CandidateProxy, _FakeState)
+
+
+def test_demand_accept_records_base_acceptor_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ExplodingAcceptor:
+        def __call__(self, rng, best, current, candidate):
+            raise RuntimeError("base acceptor exploded")
+
+    acceptor = DemandConstraintAccept(_ExplodingAcceptor(), data=None)
+    recorded: list[tuple[str, BaseException]] = []
+    monkeypatch.setattr(
+        accept_module,
+        "record_swallowed",
+        lambda site, exc: recorded.append((site, exc)),
+    )
+
+    accepted = acceptor(
+        np.random.default_rng(0),
+        _FakeState(),
+        _FakeState(),
+        _FakeState(objective=8.0),
+    )
+
+    assert accepted is False
+    assert len(recorded) == 1
+    assert recorded[0][0] == "accept.DemandConstraintAccept.base"
+    assert isinstance(recorded[0][1], RuntimeError)
+
+
+def test_demand_accept_late_stage_falls_back_when_metric_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _RecordingAcceptor(decision=True)
+    acceptor = DemandConstraintAccept(base, data=None)
+    late_tracker = _FakeTracker(
+        iteration=90, max_iterations=100, elapsed=0.9 * float(ALNSConfig.MAX_RUNTIME)
+    )
+    current = _FakeState(objective=100.0, actual=100.0)
+    current.tracker = late_tracker
+    candidate = _FakeState(objective=90.0, actual=90.0)
+    candidate.tracker = late_tracker
+    recorded: list[str] = []
+
+    def raising_cost():
+        raise RuntimeError("calculate_cost exploded")
+
+    monkeypatch.setattr(candidate, "calculate_cost", raising_cost)
+    monkeypatch.setattr(
+        accept_module, "record_swallowed", lambda site, exc: recorded.append(site)
+    )
+
+    accepted = acceptor(np.random.default_rng(0), current, current, candidate)
+
+    # The broken metric defers to the base acceptor instead of aborting the run.
+    assert accepted is True
+    assert base.seen_objectives == [90.0]
+    assert recorded == [
+        "accept.DemandConstraintAccept.actual_priority.candidate_cost"
+    ]
 
 
 def test_demand_accept_hard_rejects_non_demand_violations() -> None:
