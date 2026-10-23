@@ -322,6 +322,92 @@ def test_process_results_restores_pre_cross_period_state_when_consolidation_rais
     assert optimizer.best_solution.vehicles == ["original"]
 
 
+def test_process_results_restores_pre_light_consolidation_state_when_merge_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mid-way merge failure must not keep the half-consolidated incumbent."""
+
+    class _State:
+        def __init__(self, vehicles: list[str]) -> None:
+            self.vehicles = list(vehicles)
+
+        def copy(self):
+            return _State(self.vehicles)
+
+        def objective(self) -> float:
+            return 10.0
+
+        def calculate_cost(self) -> float:
+            return 10.0
+
+        def validate(self):
+            return True, {}
+
+    class _Result:
+        best_state = _State(["original"])
+
+    class _Tracker:
+        initial_search_obj = 20.0
+        initial_actual_obj = 20.0
+
+        def get_statistics(self):
+            return {
+                "best_actual_solution": None,
+                "final_gap": -50.0,
+                "final_actual_gap": -50.0,
+                "total_iterations": 1,
+            }
+
+        def _signed_gap_from_initial(self, value, initial):
+            return (value - initial) / initial * 100.0
+
+    class _Printer:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def print(self, message="", **_kwargs):
+            self.messages.append(str(message))
+
+    optimizer = object.__new__(ALNSOptimizer)
+    optimizer.result = _Result()
+    optimizer.best_feasible_state = None
+    optimizer.tracker = _Tracker()
+    optimizer.rng = object()
+    optimizer.log_printer = _Printer()
+    for method_name in (
+        "_update_demands",
+        "_update_inventory",
+        "_output_results",
+        "_generate_statistics",
+        "_write_repair_audit_report",
+    ):
+        monkeypatch.setattr(optimizer, method_name, lambda: None)
+    monkeypatch.setattr(ALNSConfig, "PREFER_FINAL_BEST_ACTUAL_SOLUTION", False)
+    monkeypatch.setattr(ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True)
+
+    def _fail_after_mutating(state, *_args, **_kwargs):
+        state.vehicles.append("half-merged")
+        raise RuntimeError("light consolidation failed")
+
+    monkeypatch.setattr(
+        optimizer_module, "consolidate_route_vehicles", _fail_after_mutating
+    )
+    # The later cross-period pass is irrelevant here; keep it a no-op.
+    monkeypatch.setattr(
+        optimizer_module,
+        "cross_period_consolidation_repair",
+        lambda state, *_args, **_kwargs: state,
+    )
+
+    optimizer._process_results()
+
+    assert optimizer.best_solution.vehicles == ["original"]
+    assert any(
+        "final light consolidation failed" in message
+        for message in optimizer.log_printer.messages
+    )
+
+
 # ---------------------------------------------------------------------------
 # The shared short run
 # ---------------------------------------------------------------------------

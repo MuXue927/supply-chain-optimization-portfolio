@@ -1059,17 +1059,23 @@ class ALNSOptimizer:
                 # stopping configuration so progress-based policies remain consistent.
                 try:
                     self.set_max_iterations(dynamic_floor)
-                except (OverflowError, TypeError, ValueError):
-                    pass
+                except (OverflowError, TypeError, ValueError) as exc:
+                    record_swallowed(
+                        "alns_optimizer.dynamic_cap.optimizer", exc
+                    )
                 try:
                     if self.tracker is not None and hasattr(
                         self.tracker, "set_max_iterations"
                     ):
                         self.tracker.set_max_iterations(dynamic_floor)
-                except (OverflowError, TypeError, ValueError):
-                    pass
-            except Exception:
-                pass
+                except (OverflowError, TypeError, ValueError) as exc:
+                    record_swallowed(
+                        "alns_optimizer.dynamic_cap.tracker", exc
+                    )
+            except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+                # ``compute_dynamic_iteration_cap`` only reads config values and
+                # coerces them; anything outside this set is a real defect.
+                record_swallowed("alns_optimizer.dynamic_cap.compute", exc)
 
             self.log_printer.print(
                 f"Combined stopping rule: dynamic iteration cap, runtime budget {getattr(ALNSConfig, 'MAX_RUNTIME', 900)} seconds"
@@ -1092,8 +1098,8 @@ class ALNSOptimizer:
                     self.tracker, "set_max_iterations"
                 ):
                     self.tracker.set_max_iterations(int(dynamic_cap))
-            except Exception:
-                pass
+            except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+                record_swallowed("alns_optimizer.tracker_dynamic_cap", exc)
             # Attach the tracker to the initial solution for repair operators.
             init_sol.set_tracker(self.tracker)
             try:
@@ -1101,8 +1107,8 @@ class ALNSOptimizer:
                     initial_search_obj=float(init_sol.objective()),
                     initial_actual_obj=float(init_sol.calculate_cost()),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                record_swallowed("alns_optimizer.tracker_initial_reference", exc)
 
             # Record a strictly feasible initial state as an early rollback baseline.
             try:
@@ -1110,8 +1116,10 @@ class ALNSOptimizer:
                 if init_feasible:
                     self.best_feasible_state = safe_state_snapshot(init_sol)
                     self.best_feasible_obj = float(init_sol.objective())
-            except Exception:
-                pass
+            except Exception as exc:
+                # Without this baseline the final feasibility fallback has
+                # nothing to recover, so the degradation must be visible.
+                record_swallowed("alns_optimizer.initial_feasible_baseline", exc)
 
             register_callbacks(alns, self, stop=stop)
             # Give the tuner the same stopwatch the stop rule and tracker use,
@@ -1142,7 +1150,7 @@ class ALNSOptimizer:
                 # print to stdout as well as logger in case logger not configured
                 try:
                     print("ALNS iterate exception traceback:\\n", tb)
-                except Exception:
+                except (OSError, ValueError):
                     pass
                 logger.error("ALNS iterate failed: %s", e)
                 logger.debug(tb)
@@ -1211,9 +1219,12 @@ class ALNSOptimizer:
                         < len(self.best_solution.vehicles)
                     ):
                         self.best_solution = callback_snapshot
-                except Exception:
+                except Exception as exc:
                     # Keep the safer callback-maintained feasible state if
                     # objective comparison is unavailable.
+                    record_swallowed(
+                        "alns_optimizer.callback_best_comparison", exc
+                    )
                     self.best_solution = callback_snapshot
 
         # Run one light consolidation before output and roll back if infeasible.
@@ -1234,13 +1245,30 @@ class ALNSOptimizer:
                 merged_cnt = consolidate_route_vehicles(
                     self.best_solution, max_pairs_per_group=max(1, max_pairs)
                 )
-            except Exception:
+            except Exception as exc:
+                # The merge edits the incumbent in place, so a mid-way failure
+                # can leave a half-consolidated state that never passed the
+                # feasibility check below. Restore the snapshot instead of
+                # silently delivering (or later discarding) it.
+                record_swallowed(
+                    "alns_optimizer.final_light_consolidation", exc
+                )
+                self.best_solution = snapshot_before
                 merged_cnt = 0
+                self.log_printer.print(
+                    "Warning: final light consolidation failed "
+                    f"({type(exc).__name__}: {exc}); "
+                    "restored the pre-consolidation solution.",
+                    color="bold red",
+                )
 
             if merged_cnt > 0:
                 try:
                     feasible_after, _ = self.best_solution.validate()
-                except Exception:
+                except Exception as exc:
+                    record_swallowed(
+                        "alns_optimizer.final_light_consolidation_validate", exc
+                    )
                     feasible_after = False
                 cost_after = None
                 cost_before = None
@@ -1248,8 +1276,10 @@ class ALNSOptimizer:
                     cost_after = float(self.best_solution.calculate_cost())
                     if snapshot_before is not None:
                         cost_before = float(snapshot_before.calculate_cost())
-                except Exception:
-                    pass
+                except Exception as exc:
+                    record_swallowed(
+                        "alns_optimizer.final_light_consolidation_cost", exc
+                    )
                 if (
                     not feasible_after
                     or (
@@ -1278,7 +1308,10 @@ class ALNSOptimizer:
                 before_cross_period_cost = float(
                     self.best_solution.calculate_cost()
                 )
-            except Exception:
+            except Exception as exc:
+                record_swallowed(
+                    "alns_optimizer.final_cross_period_cost_before", exc
+                )
                 before_cross_period_cost = None
             cross_period_snapshot = safe_state_snapshot(self.best_solution)
             consolidation_failed = False
@@ -1385,7 +1418,8 @@ class ALNSOptimizer:
                     best_search_obj, self.tracker.initial_search_obj
                 )
             )
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as exc:
+            record_swallowed("alns_optimizer.final_gap", exc)
             final_gap = float(tracker_stats["final_gap"])
         try:
             final_actual_gap = float(
@@ -1393,7 +1427,8 @@ class ALNSOptimizer:
                     best_actual_obj, self.tracker.initial_actual_obj
                 )
             )
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as exc:
+            record_swallowed("alns_optimizer.final_actual_gap", exc)
             final_actual_gap = float(tracker_stats["final_actual_gap"])
 
         # Print statistics.

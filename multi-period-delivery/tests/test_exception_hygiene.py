@@ -36,9 +36,11 @@ snapshot helpers into one fail-closed implementation and making runtime-guard
 rollback failures and incumbent snapshot failures explicit. The acceptance
 boundary audit then removed the nested fallback handler in
 ``DemandConstraintAccept`` (the acceptor's calling convention is now resolved
-from its signature), taking 342 -> 341.
+from its signature), taking 342 -> 341. The optimizer post-processing pass then
+narrowed the dynamic-cap and final-gap handlers and made the final
+light-consolidation failure restore its snapshot, taking 341 -> 336.
 
-The remaining 341 are left deliberately: most wrap a try body containing a
+The remaining 336 are left deliberately: most wrap a try body containing a
 method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
@@ -55,9 +57,9 @@ import pytest
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
-#: The 2026-10-22/23 correctness passes lowered it to 348, 343, 342 and then 341.
+#: The 2026-10-22/23 correctness passes lowered it to 348, 343, 342, 341, then 336.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 341
+BLIND_EXCEPT_BASELINE = 336
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
