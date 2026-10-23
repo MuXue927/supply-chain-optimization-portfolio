@@ -50,7 +50,7 @@ class MinimalVehicle:
         # capacities
         try:
             self.max_capacity = data.veh_type_cap[veh_type]
-        except Exception:
+        except (KeyError, TypeError):
             self.max_capacity = 0
         self.capacity = self.max_capacity
         self.cargo = {}
@@ -189,7 +189,7 @@ def _construct_resource_availability(
                     m[sku_k] = m.get(sku_k, 0) + q
         try:
             setattr(state, vbkey, vehicles_map)
-        except Exception:
+        except (AttributeError, TypeError):
             # If the attribute cannot be set, continue without caching for
             # compatibility with read-only objects.
             pass
@@ -218,7 +218,7 @@ def _construct_resource_pool(
     pool = build_resource_pool(state, data)
     try:
         setattr(state, "_resource_pool_cache", pool)
-    except Exception:
+    except (AttributeError, TypeError):
         # Skip caching when the attribute cannot be set, such as on read-only
         # objects.
         pass
@@ -258,7 +258,7 @@ def get_unmet_demand(state: SolutionState) -> dict[tuple[str, str], int]:
             cached_snapshot, cached_removal = cache
             if snapshot is not None and cached_snapshot == snapshot:
                 return dict(cached_removal)
-        except Exception:
+        except (TypeError, ValueError):
             # fallthrough to recompute
             pass
 
@@ -275,7 +275,7 @@ def get_unmet_demand(state: SolutionState) -> dict[tuple[str, str], int]:
     # store into cache (best-effort; ignore failures on read-only wrappers)
     try:
         setattr(state, "_unmet_cache", (snapshot, removal_list))
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     return dict(removal_list)
@@ -314,7 +314,7 @@ def veh_loading(
     """
     try:
         from . import alnsopt as _alnsopt
-    except Exception:
+    except ImportError:
         raise RuntimeError(
             "Cannot import multi_period_delivery.alns.alnsopt; the veh_loading "
             "wrapper cannot work."
@@ -398,7 +398,7 @@ def find_existing_route_vehicles(
         try:
             if veh.is_full():
                 continue
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         candidates.append(veh)
     candidates.sort(key=lambda v: getattr(v, "capacity", 0), reverse=True)
@@ -636,7 +636,7 @@ def consolidate_route_vehicles(
         try:
             if veh.is_empty():
                 continue
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         key = (veh.fact_id, veh.dealer_id, veh.day)
         groups.setdefault(key, []).append(veh)
@@ -708,7 +708,7 @@ def consolidate_route_vehicles(
         state.vehicles = new_vehicles
         try:
             state.mark_objective_dirty()
-        except Exception:
+        except (AttributeError, TypeError):
             pass
     return merged_total
 
@@ -809,6 +809,15 @@ def post_repair(
     state._post_repair_certified = None
     state._post_repair_certification_error = None
     merged_after_repair = 0
+    # Set when a failure leaves the state in a shape the validator cannot be
+    # trusted to reject; certification is then withheld explicitly.
+    certification_blocker: str | None = None
+    # Declared here because a failed post-consolidation also rolls the repair
+    # back, before the validation section below runs.
+    rolled_back = False
+    rollback_certified = None
+    rollback_source = None
+    rollback_error = None
     # Apply the minimum-load post-processing step to every completed repair.
     # This keeps the fill logic independent of operator selection while still
     # allowing repairs to cross the minimum-load threshold using spare stock.
@@ -816,8 +825,11 @@ def post_repair(
         from .repair_operators import fill_minimum_load_repair
 
         fill_minimum_load_repair(state, None)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Filling spare stock into under-loaded vehicles is an optimisation.
+        # Losing it is acceptable; losing it silently is not, because an
+        # operator that systematically fails here looks merely weak.
+        record_swallowed("repair_utils.post_repair.fill_minimum_load", exc)
     try:
         if getattr(ALNSConfig, "REPAIR_ENABLE_POST_CONSOLIDATION", True):
             max_pairs = int(
@@ -826,8 +838,39 @@ def post_repair(
             merged_after_repair = consolidate_route_vehicles(
                 state, max_pairs_per_group=max(1, max_pairs)
             )
-    except Exception:
+    except Exception as exc:
+        # ``consolidate_route_vehicles`` merges cargo in place before it commits
+        # the new vehicle list. A mid-way failure therefore leaves *duplicated*
+        # cargo on vehicles that are all still present - over-shipping, which
+        # validate() does not treat as a hard violation. Do not rely on the
+        # validator here: restore the pre-repair state, or withhold
+        # certification if even that is impossible.
+        record_swallowed("repair_utils.post_repair.consolidation", exc)
         merged_after_repair = 0
+        if pre_repair_snapshot is not None:
+            try:
+                restore_state_snapshot(state, pre_repair_snapshot)
+                state._repair_noop = True
+                inserted = []
+                # Treat the restored state as a rollback so the improvement
+                # calculation reports 0 instead of scoring the discarded repair.
+                rollback_source = "pre_repair_snapshot"
+                rolled_back = True
+            except (AttributeError, RuntimeError, TypeError, ValueError) as restore_exc:
+                record_swallowed(
+                    "repair_utils.post_repair.consolidation_restore",
+                    restore_exc,
+                )
+                certification_blocker = (
+                    "post-repair consolidation failed and the pre-repair "
+                    f"snapshot could not be restored: "
+                    f"{type(restore_exc).__name__}: {restore_exc}"
+                )
+        else:
+            certification_blocker = (
+                "post-repair consolidation failed with no pre-repair snapshot "
+                "to restore"
+            )
 
     # Lightweight inserted-only feasibility check (see the helper for the failure
     # policy). This replaces a ~70-line try that also swallowed every error from
@@ -907,10 +950,6 @@ def post_repair(
         validator_crashed = True
         validation_completed = False
 
-    rolled_back = False
-    rollback_certified = None
-    rollback_source = None
-    rollback_error = None
     hard_violation_exists = validator_crashed or _has_hard_post_repair_violation(
         violations
     )
@@ -1003,11 +1042,15 @@ def post_repair(
     if hard_violation_exists:
         post_repair_certified = bool(rollback_certified)
     else:
-        post_repair_certified = bool(validation_completed)
+        post_repair_certified = bool(validation_completed) and (
+            certification_blocker is None
+        )
 
     state._post_repair_certified = post_repair_certified
     if post_repair_certified:
         state._post_repair_certification_error = None
+    elif certification_blocker is not None:
+        state._post_repair_certification_error = certification_blocker
     elif rollback_error is not None:
         state._post_repair_certification_error = rollback_error
     elif not validation_completed:

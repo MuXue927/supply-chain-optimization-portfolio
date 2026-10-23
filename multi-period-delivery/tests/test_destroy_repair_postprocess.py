@@ -353,6 +353,83 @@ def test_post_repair_restores_existing_vehicle_changes_from_pre_repair_snapshot(
     )
 
 
+def test_post_repair_restores_state_when_consolidation_fails_mid_merge(
+    monkeypatch,
+) -> None:
+    """A half-finished in-place merge must not survive as a certified state."""
+
+    def _fill_noop(current, _rng):
+        return current
+
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        _fill_noop,
+    )
+
+    state = _load_state()
+    vehicles = [_vehicle_with_load(state, qty=5), _vehicle_with_load(state, qty=7)]
+    state.vehicles = list(vehicles)
+    state.mark_objective_dirty()
+    state.compute_inventory()
+    state._pre_repair_snapshot = safe_state_snapshot(state)
+    original_cargo = [dict(vehicle.cargo) for vehicle in vehicles]
+
+    def _merge_then_fail(current_state, max_pairs_per_group=300):
+        target, source = current_state.vehicles[1], current_state.vehicles[0]
+        for key, qty in source.cargo.items():
+            target.cargo[key] = target.cargo.get(key, 0) + qty
+        raise RuntimeError("consolidation failed mid-merge")
+
+    monkeypatch.setattr(
+        repair_utils, "consolidate_route_vehicles", _merge_then_fail
+    )
+
+    post_repair(state, [], op_name="consolidation_crash", prev_obj=1.0)
+
+    assert [dict(vehicle.cargo) for vehicle in state.vehicles] == original_cargo
+    assert state._post_repair_certified is True
+    assert state._post_repair_certification_error is None
+    # The discarded repair is reported as a rollback, not as a 0% improvement.
+    assert state.repair_audit["consolidation_crash"]["rolled_back"] == 1
+
+
+def test_post_repair_is_uncertified_when_consolidation_fails_without_snapshot(
+    monkeypatch,
+) -> None:
+    def _fill_noop(current, _rng):
+        return current
+
+    monkeypatch.setattr(
+        "multi_period_delivery.alns.repair_operators.fill_minimum_load_repair",
+        _fill_noop,
+    )
+
+    state = _load_state()
+    vehicles = [_vehicle_with_load(state, qty=5), _vehicle_with_load(state, qty=7)]
+    state.vehicles = list(vehicles)
+    state.mark_objective_dirty()
+    state.compute_inventory()
+
+    def _merge_then_fail(current_state, max_pairs_per_group=300):
+        target, source = current_state.vehicles[1], current_state.vehicles[0]
+        for key, qty in source.cargo.items():
+            target.cargo[key] = target.cargo.get(key, 0) + qty
+        raise RuntimeError("consolidation failed mid-merge")
+
+    monkeypatch.setattr(
+        repair_utils, "consolidate_route_vehicles", _merge_then_fail
+    )
+
+    post_repair(state, [], op_name="consolidation_no_snapshot", prev_obj=1.0)
+
+    assert state._post_repair_certified is False
+    assert "no pre-repair snapshot" in state._post_repair_certification_error
+    assert (
+        state.repair_audit["consolidation_no_snapshot"]["post_repair_uncertified"]
+        == 1
+    )
+
+
 def test_post_repair_marks_uncertified_when_rollback_inventory_rebuild_fails(
     monkeypatch,
 ) -> None:

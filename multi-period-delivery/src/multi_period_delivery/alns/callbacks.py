@@ -99,7 +99,7 @@ def _safe_float(value: Any, default: float = float("inf")) -> float:
         if value is None:
             return default
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -108,7 +108,7 @@ def _get_capacity_threshold(data) -> float:
     for vt in list(getattr(data, "all_veh_types", []) or []):
         try:
             caps.append(float(data.veh_type_cap[vt]))
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             continue
 
     if not caps:
@@ -132,7 +132,7 @@ def build_state_profile(state: SolutionState) -> dict[str, float]:
             try:
                 if veh is None or veh.is_empty():
                     continue
-            except Exception:
+            except (AttributeError, TypeError):
                 continue
             vehicles.append(veh)
 
@@ -294,14 +294,14 @@ def _used_vehicle_count(state: SolutionState | None) -> int:
     ):
         try:
             return int(state.count_used_vehicles())
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
     cnt = 0
     for veh in list(state.vehicles):
         try:
             if veh is None or veh.is_empty():
                 continue
-        except Exception:
+        except (AttributeError, TypeError):
             continue
         cnt += 1
     return cnt
@@ -618,7 +618,7 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
                 curr_iter = getattr(tracker, "_iteration_count", 0)
                 if max_iter > 0:
                     progress = min(1.0, float(curr_iter) / float(max_iter))
-    except Exception:
+    except (TypeError, ValueError):
         progress = 0.0
     progress = max(0.0, min(1.0, progress))
 
