@@ -72,6 +72,7 @@ from .alns_config import default_config as ALNSConfig
 # =========================
 from .optutility import LogPrinter
 from .snapshot import replace_state_snapshot
+from .swallowed import record_swallowed
 
 if TYPE_CHECKING:  # Import only for type checking to avoid runtime cycles.
     from .alnsopt import SolutionState
@@ -201,7 +202,7 @@ class ALNSTracker:
                 if hasattr(state, "iter_used_vehicles")
                 else list(getattr(state, "vehicles", []) or [])
             )
-        except Exception:
+        except (AttributeError, TypeError):
             vehicles = list(getattr(state, "vehicles", []) or [])
 
         veh_count = int(len(vehicles))
@@ -255,14 +256,14 @@ class ALNSTracker:
             return False
         try:
             feasible, _ = state.validate()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             feasible = False
         if not feasible:
             return False
 
         try:
             obj = float(state.objective())
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return False
         if not np.isfinite(obj):
             return False
@@ -279,7 +280,7 @@ class ALNSTracker:
                 "fixed_cost": float(state.calculate_cost()),
             }
             sig = self._profile_signature(state)
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             profile = {
                 "vehicles": float(len(getattr(state, "vehicles", []) or [])),
                 "load_ratio": 0.0,
@@ -436,8 +437,10 @@ class ALNSTracker:
                         f"Actual Objective (Gurobi-aligned): {current_actual_obj:.2f}, Feasible: Yes, Gap vs Initial: {actual_gap_from_initial:+.2f}%",
                         color="bold cyan",
                     )
-                except Exception:
-                    pass
+                except (OSError, UnicodeError, ValueError) as exc:
+                    # Console rendering is cosmetic; a broken writer must not
+                    # abort the iteration, but it should be countable.
+                    record_swallowed("alnstrack.print_actual_objective", exc)
             else:
                 self.best_obj = prev_best
 
@@ -461,8 +464,8 @@ class ALNSTracker:
                 improved or self.iteration % elite_sample_interval == 0
             ):
                 self.record_elite_candidate(state)
-        except Exception:
-            pass
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            record_swallowed("alnstrack.elite_pool_sample", exc)
 
         # Maintain the no-improvement count for early stopping
         if improved:

@@ -132,11 +132,34 @@ def summarize_removed_cargo(removed) -> dict[tuple[Any, Any, Any], int]:
             for (sku_id, day), qty in getattr(veh, "cargo", {}).items():
                 key = (to_native(plant), to_native(sku_id), to_native(day))
                 summary[key] += _coerce_int(qty, default=0)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             # Skip records that fail to parse so one bad entry does not affect
             # the overall summary.
             continue
     return dict(summary)
+
+
+def _opjson_log_enabled() -> bool:
+    """
+    Return whether sampled ``OPJSON`` debug logging should emit this time.
+
+    Extracted because four call sites repeated the same
+    import-plus-``getattr``-plus-threshold dance, each wrapped in its own
+    handler. A configured sampling rate of 1 (the default) means "always log".
+
+    A missing or malformed setting must not silence diagnostics, so both
+    failure paths favour logging over skipping.
+    """
+    try:
+        from .alns_config import default_config as config
+
+        sampling = getattr(config, "OPJSON_SAMPLING_RATE", 1)
+    except ImportError:
+        return True
+    try:
+        return sampling <= 1 or random.random() < 1.0 / max(1, int(sampling))
+    except (TypeError, ValueError):
+        return True
 
 
 def apply_batch_update(state, removed, skip_batch_update: bool):
@@ -173,7 +196,11 @@ def apply_batch_update(state, removed, skip_batch_update: bool):
             inventory_updates = (
                 _batch_update_inventory(state, removed, op_type="destroy") or {}
             )
-        except Exception:
+        except Exception as exc:
+            # A failing batch restore is handled by recomputing from the fleet,
+            # but it must be visible: otherwise a permanently broken batch path
+            # looks like "no inventory to restore".
+            record_swallowed("destroy_utils.batch_update_inventory", exc)
             inventory_updates = None
             batch_conflict = True
     return inventory_updates, batch_conflict
@@ -327,28 +354,26 @@ def compute_improvement_and_report(
             prev_obj,
             actual_obj=None,
         )
-    except Exception:
+    except Exception as exc:
+        record_swallowed("destroy_utils.compute_mixed_reward", exc)
         new_obj = None
         improvement = 0.0
         success = False
 
     # report to param tuner if present (update + adjust with skip_update to avoid double counting)
-    try:
-        tuner = getattr(state, "param_tuner", None)
-        if tuner and hasattr(tuner, "update_operator_performance"):
-            try:
-                tuner.update_operator_performance(op_name, improvement, success=success)
-            except Exception:
-                pass
-            try:
-                if hasattr(tuner, "adjust_operator_params"):
-                    tuner.adjust_operator_params(
-                        op_name, improvement, success=success, skip_update=True
-                    )
-            except Exception:
-                pass
-    except Exception:
-        pass
+    tuner = getattr(state, "param_tuner", None)
+    if tuner and hasattr(tuner, "update_operator_performance"):
+        try:
+            tuner.update_operator_performance(op_name, improvement, success=success)
+        except Exception as exc:
+            record_swallowed("destroy_utils.tuner.update_performance", exc)
+        try:
+            if hasattr(tuner, "adjust_operator_params"):
+                tuner.adjust_operator_params(
+                    op_name, improvement, success=success, skip_update=True
+                )
+        except Exception as exc:
+            record_swallowed("destroy_utils.tuner.adjust_params", exc)
 
     return new_obj, improvement, success
 
@@ -477,9 +502,11 @@ def adjust_exploration(state: SolutionState):
                 max_iter,
                 no_improve_iters=stats.get("no_improve_iters", 0),
             )
-    except Exception:
-        # Fail gracefully so the main flow is not affected.
-        pass
+    except Exception as exc:
+        # Fail gracefully so the main flow is not affected, but keep the
+        # degradation countable: a tuner that never receives iterations
+        # silently loses its phase schedule.
+        record_swallowed("destroy_utils.adjust_exploration", exc)
 
 
 def get_adaptive_parameters(op_name: str, param_tuner):
@@ -498,13 +525,7 @@ def get_adaptive_parameters(op_name: str, param_tuner):
         # Use logger.debug instead of print and apply sampling to reduce
         # hot-path overhead.
         try:
-            try:
-                from .alns_config import default_config as ALNSConfig
-
-                sampling = getattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 1)
-            except Exception:
-                sampling = 1
-            if sampling <= 1 or random.random() < 1.0 / max(1, int(sampling)):
+            if _opjson_log_enabled():
                 logger.debug(f"get_adaptive_parameters({op_name}) exception: {e}")
         except Exception:
             pass
@@ -525,7 +546,7 @@ def resolve_degree(op_name: str, state, degree):
         from .alns_config import default_config as ALNSConfig
 
         op_defaults = ALNSConfig.get_operator_default(op_name).get("params", {}) or {}
-    except Exception:
+    except (AttributeError, ImportError, TypeError):
         op_defaults = {}
 
     # Fallback defaults.
@@ -586,13 +607,7 @@ def resolve_degree(op_name: str, state, degree):
             )
         except Exception as e:
             try:
-                from .alns_config import default_config as ALNSConfig
-
-                sampling = getattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 1)
-            except Exception:
-                sampling = 1
-            try:
-                if sampling <= 1 or random.random() < 1.0 / max(1, int(sampling)):
+                if _opjson_log_enabled():
                     logger.debug(f"adaptive_degree call failed for {op_name}: {e}")
             except Exception:
                 pass
@@ -628,7 +643,8 @@ def post_destroy(
     # 1) Summarize cargo from removed vehicles for the log summary.
     try:
         removed_cargo_summary = summarize_removed_cargo(removed)
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as exc:
+        record_swallowed("destroy_utils.summarize_removed_cargo", exc)
         removed_cargo_summary = {}
 
     # 2) Apply batch inventory restoration through apply_batch_update.
@@ -672,7 +688,7 @@ def post_destroy(
                     inventory_updates = {}
                 for k, v in partial_applied.items():
                     inventory_updates[k] = inventory_updates.get(k, 0) + v
-        except Exception as exc:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             batch_conflict = True
             record_swallowed("destroy_utils.post_destroy.partial_updates", exc)
 
@@ -750,8 +766,8 @@ def post_destroy(
     if early:
         try:
             adjust_exploration(state)
-        except Exception:
-            pass
+        except Exception as exc:
+            record_swallowed("destroy_utils.post_destroy.adjust_exploration", exc)
         log_entry = {
             "tag": "destroy",
             "op": op_name,
@@ -768,13 +784,7 @@ def post_destroy(
             "extra": extra,
         }
         try:
-            try:
-                from .alns_config import default_config as ALNSConfig
-
-                sampling = getattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 1)
-            except Exception:
-                sampling = 1
-            if sampling <= 1 or random.random() < 1.0 / max(1, int(sampling)):
+            if _opjson_log_enabled():
                 logger.debug(f"[OPJSON] {log_entry}")
         except Exception:
             pass
@@ -789,15 +799,16 @@ def post_destroy(
             new_obj, improvement, _ = compute_improvement_and_report(
                 state, prev_obj, op_name
             )
-        except Exception:
+        except Exception as exc:
+            record_swallowed("destroy_utils.compute_improvement", exc)
             new_obj = None
             improvement = 0.0
 
     # 6) Record the phase and emit the final log.
     try:
         adjust_exploration(state)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_swallowed("destroy_utils.post_destroy.adjust_exploration", exc)
 
     try:
         log_entry = build_opjson_log(
@@ -816,7 +827,8 @@ def post_destroy(
             inventory_updates=inventory_updates,
             extra=extra,
         )
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as exc:
+        record_swallowed("destroy_utils.build_opjson_log", exc)
         # fallback simple log
         try:
             log_entry = {
@@ -841,17 +853,11 @@ def post_destroy(
                 else None,
                 "extra": extra,
             }
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             log_entry = {"tag": "destroy", "op": op_name, "error": "failed_build_log"}
 
     try:
-        try:
-            from .alns_config import default_config as ALNSConfig
-
-            sampling = getattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 1)
-        except Exception:
-            sampling = 1
-        if sampling <= 1 or random.random() < 1.0 / max(1, int(sampling)):
+        if _opjson_log_enabled():
             logger.debug(f"[OPJSON] {log_entry}")
     except Exception:
         pass

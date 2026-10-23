@@ -250,8 +250,10 @@ class MLOperatorSelector:
                 self.param_tuner.set_iteration(
                     int(current), int(maximum), no_improve_iters=int(no_improve_iters)
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            # The selector can run without the tuner staying in sync, but a
+            # permanently failing sync would silently freeze the tuner's phase.
+            record_swallowed("ml_operator_selector.set_iteration", exc)
 
     def _resolve_progress(self, state: SolutionState | None) -> float:
         """
@@ -366,7 +368,7 @@ class MLOperatorSelector:
                 continue
             try:
                 register(op_name, {}, {})
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 # The selector remains usable even if a custom tuner rejects
                 # registration; parameter lookups are already guarded.
                 pass
@@ -390,7 +392,7 @@ class MLOperatorSelector:
         # maintain numerical stability.
         try:
             obj_value = _finite_float(state.objective(), 1e6)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             obj_value = 1e6
         features.append(obj_value)
 
@@ -469,7 +471,8 @@ class MLOperatorSelector:
         # 4. Demand fulfillment
         try:
             shipped = state.compute_shipped() or {}
-        except Exception:
+        except Exception as exc:
+            record_swallowed("ml_operator_selector.compute_shipped", exc)
             shipped = {}
         total_demand = (
             sum(_finite_float(value, 0.0) for value in data.demands.values())
@@ -499,7 +502,8 @@ class MLOperatorSelector:
         if tracker is not None:
             try:
                 stats = tracker.get_statistics() or {}
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as exc:
+                record_swallowed("ml_operator_selector.tracker_stats", exc)
                 stats = {}
             current_iter = _finite_float(
                 stats.get("total_iterations", 0), 0.0
@@ -730,7 +734,7 @@ class MLOperatorSelector:
         try:
             X = np.asarray(feature_buffer, dtype=float)
             y = np.asarray(performance_buffer, dtype=float).reshape(-1)
-        except Exception:
+        except (TypeError, ValueError):
             return None, np.asarray([], dtype=float)
 
         if X.ndim != 2 or X.shape[0] == 0 or y.size == 0:
@@ -756,7 +760,7 @@ class MLOperatorSelector:
         try:
             params = self.param_tuner.get_operator_params(op_name)
             return dict(params) if isinstance(params, dict) else {}
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return {}
 
     def _default_operator(

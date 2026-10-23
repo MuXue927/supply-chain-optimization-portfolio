@@ -53,6 +53,30 @@ def _vehicle_with_load(
     return vehicle
 
 
+def test_opjson_log_enabled_honours_the_sampling_rate(monkeypatch) -> None:
+    monkeypatch.setattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 1)
+    assert destroy_utils._opjson_log_enabled() is True
+
+    # Rate 0 would divide by zero; it means "always log", not "never log".
+    monkeypatch.setattr(ALNSConfig, "OPJSON_SAMPLING_RATE", 0)
+    assert destroy_utils._opjson_log_enabled() is True
+
+    # A malformed rate must favour diagnostics over silence.
+    monkeypatch.setattr(ALNSConfig, "OPJSON_SAMPLING_RATE", "not-a-number")
+    assert destroy_utils._opjson_log_enabled() is True
+
+
+def test_summarize_removed_cargo_skips_a_record_with_broken_cargo() -> None:
+    state = _load_state()
+    good = _vehicle_with_load(state)
+    broken = _vehicle_with_load(state)
+    broken.cargo = None  # type: ignore[assignment]
+
+    summary = summarize_removed_cargo([good, broken])
+
+    assert summary
+
+
 def test_destroy_repair_round_trip_matches_fresh_inventory() -> None:
     state = _load_state()
     vehicle = _vehicle_with_load(state)

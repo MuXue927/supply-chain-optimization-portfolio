@@ -44,9 +44,11 @@ values or touch attributes, and made the post-repair fill/consolidation
 failures observable, taking 336 -> 321. The operator pass narrowed 31 more
 (``rng.choice``/``np.atleast_1d``/``int``/``float`` conversions,
 ``is_empty``/``is_full`` probes, dict copies, and cache invalidation), taking
-321 -> 290.
+321 -> 290. The destroy-utils/tracker/ML pass extracted the repeated
+``OPJSON`` sampling block into one helper and narrowed a further 22 handlers,
+taking 290 -> 268.
 
-The remaining 290 are left deliberately: most wrap a try body containing a
+The remaining 268 are left deliberately: most wrap a try body containing a
 method call, whose internal exceptions cannot be inferred mechanically, so
 narrowing them would risk letting real errors escape. They are recorded debt, not
 an oversight.
@@ -63,9 +65,9 @@ import pytest
 #: Lowered from 410 to 394 when ``post_repair``'s ~70-line try was extracted into
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
-#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, then 290.
+#: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290, then 268.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 290
+BLIND_EXCEPT_BASELINE = 268
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 
