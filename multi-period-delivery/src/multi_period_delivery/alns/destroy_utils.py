@@ -89,7 +89,7 @@ def to_native(v: Any):
         if isinstance(v, np.ndarray):
             return v.tolist()
         return v
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         # Fall back progressively to guarantee a native or stringifiable value.
         try:
             return int(v)
@@ -208,7 +208,7 @@ def partial_updates_overlap_removed_cargo(
 
     try:
         horizons = int(state.data.horizons)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return False
 
     for (plant, sku_id, shipped_day), raw_qty in summarize_removed_cargo(
@@ -263,12 +263,12 @@ def apply_partial_inventory_updates(state, partial_updates: dict | None):
     if applied:
         try:
             state.mark_objective_dirty()
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         try:
             if hasattr(state, "_inventory_cache"):
                 state._inventory_cache = None
-        except Exception:
+        except (AttributeError, TypeError):
             pass
 
     return applied
@@ -743,7 +743,7 @@ def post_destroy(
     if t0 is not None:
         try:
             elapsed = time.time() - t0
-        except Exception:
+        except (TypeError, ValueError):
             elapsed = None
 
     # 4) Early-exit path: record the phase and log the result.

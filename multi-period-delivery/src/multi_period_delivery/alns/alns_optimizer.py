@@ -1189,6 +1189,98 @@ class ALNSOptimizer:
             self.log_printer.print(f"Optimization failed: {e}", color="bold red")
             return False
 
+    def _apply_final_light_consolidation(self) -> None:
+        """
+        Merge small vehicles in the final incumbent, rolling back on failure.
+
+        ``consolidate_route_vehicles`` edits the incumbent in place, so every
+        failure mode here has to restore ``snapshot_before`` rather than assume
+        the later final validation will clean up:
+
+        * the merge itself raising mid-way;
+        * the merged state failing validation;
+        * the merged state costing more than before.
+
+        The last case is a normal "no improvement" rollback; the first two are
+        degradations and are recorded through ``record_swallowed``.
+        """
+        if self.best_solution is None or not getattr(
+            ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True
+        ):
+            return
+
+        before_cnt = len(self.best_solution.vehicles)
+        try:
+            max_pairs = int(
+                getattr(ALNSConfig, "FINAL_BEST_CONSOLIDATION_MAX_PAIRS", 800)
+            )
+        except (TypeError, ValueError):
+            max_pairs = 800
+
+        snapshot_before = safe_state_snapshot(self.best_solution)
+        merged_cnt = 0
+        try:
+            merged_cnt = consolidate_route_vehicles(
+                self.best_solution, max_pairs_per_group=max(1, max_pairs)
+            )
+        except Exception as exc:
+            # The merge edits the incumbent in place, so a mid-way failure can
+            # leave a half-consolidated state that never passed the feasibility
+            # check below. Restore the snapshot instead of silently delivering
+            # (or later discarding) it.
+            record_swallowed("alns_optimizer.final_light_consolidation", exc)
+            self.best_solution = snapshot_before
+            self.log_printer.print(
+                "Warning: final light consolidation failed "
+                f"({type(exc).__name__}: {exc}); "
+                "restored the pre-consolidation solution.",
+                color="bold red",
+            )
+            return
+
+        if merged_cnt <= 0:
+            return
+
+        try:
+            feasible_after, _ = self.best_solution.validate()
+        except Exception as exc:
+            record_swallowed(
+                "alns_optimizer.final_light_consolidation_validate", exc
+            )
+            feasible_after = False
+
+        cost_after = None
+        cost_before = None
+        try:
+            cost_after = float(self.best_solution.calculate_cost())
+            if snapshot_before is not None:
+                cost_before = float(snapshot_before.calculate_cost())
+        except Exception as exc:
+            record_swallowed(
+                "alns_optimizer.final_light_consolidation_cost", exc
+            )
+
+        regressed = (
+            not feasible_after
+            or (
+                cost_after is not None
+                and cost_before is not None
+                and cost_after > cost_before + 1e-9
+            )
+        )
+        if regressed and snapshot_before is not None:
+            self.best_solution = snapshot_before
+            self.log_printer.print(
+                "Final consolidation did not improve the actual objective; rolled back.",
+                color="yellow",
+            )
+            return
+
+        after_cnt = len(self.best_solution.vehicles)
+        self.log_printer.print(
+            f"Final consolidation merged {merged_cnt} vehicles ({before_cnt} -> {after_cnt})."
+        )
+
     def _process_results(self):
         """Process optimization results."""
         if self.result is None:
@@ -1228,76 +1320,7 @@ class ALNSOptimizer:
                     self.best_solution = callback_snapshot
 
         # Run one light consolidation before output and roll back if infeasible.
-        if self.best_solution is not None and getattr(
-            ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True
-        ):
-            before_cnt = len(self.best_solution.vehicles)
-            try:
-                max_pairs = int(
-                    getattr(ALNSConfig, "FINAL_BEST_CONSOLIDATION_MAX_PAIRS", 800)
-                )
-            except (TypeError, ValueError):
-                max_pairs = 800
-
-            snapshot_before = safe_state_snapshot(self.best_solution)
-            merged_cnt = 0
-            try:
-                merged_cnt = consolidate_route_vehicles(
-                    self.best_solution, max_pairs_per_group=max(1, max_pairs)
-                )
-            except Exception as exc:
-                # The merge edits the incumbent in place, so a mid-way failure
-                # can leave a half-consolidated state that never passed the
-                # feasibility check below. Restore the snapshot instead of
-                # silently delivering (or later discarding) it.
-                record_swallowed(
-                    "alns_optimizer.final_light_consolidation", exc
-                )
-                self.best_solution = snapshot_before
-                merged_cnt = 0
-                self.log_printer.print(
-                    "Warning: final light consolidation failed "
-                    f"({type(exc).__name__}: {exc}); "
-                    "restored the pre-consolidation solution.",
-                    color="bold red",
-                )
-
-            if merged_cnt > 0:
-                try:
-                    feasible_after, _ = self.best_solution.validate()
-                except Exception as exc:
-                    record_swallowed(
-                        "alns_optimizer.final_light_consolidation_validate", exc
-                    )
-                    feasible_after = False
-                cost_after = None
-                cost_before = None
-                try:
-                    cost_after = float(self.best_solution.calculate_cost())
-                    if snapshot_before is not None:
-                        cost_before = float(snapshot_before.calculate_cost())
-                except Exception as exc:
-                    record_swallowed(
-                        "alns_optimizer.final_light_consolidation_cost", exc
-                    )
-                if (
-                    not feasible_after
-                    or (
-                        cost_after is not None
-                        and cost_before is not None
-                        and cost_after > cost_before + 1e-9
-                    )
-                ) and snapshot_before is not None:
-                    self.best_solution = snapshot_before
-                    self.log_printer.print(
-                        "Final consolidation did not improve the actual objective; rolled back.",
-                        color="yellow",
-                    )
-                else:
-                    after_cnt = len(self.best_solution.vehicles)
-                    self.log_printer.print(
-                        f"Final consolidation merged {merged_cnt} vehicles ({before_cnt} -> {after_cnt})."
-                    )
+        self._apply_final_light_consolidation()
 
         # Run a final cross-period consolidation pass. It only keeps moves
         # that remain feasible and reduce the actual objective.

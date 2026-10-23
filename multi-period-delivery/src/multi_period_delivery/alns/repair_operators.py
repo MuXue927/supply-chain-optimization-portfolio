@@ -327,7 +327,7 @@ def greedy_repair(
             demand_weight = float(
                 params.get("demand_weight", defaults.get("demand_weight", 0.8))
             )
-        except Exception:
+        except (TypeError, ValueError):
             demand_weight = float(defaults.get("demand_weight", 0.8))
     else:
         demand_weight = float(demand_weight)
@@ -336,7 +336,7 @@ def greedy_repair(
             stock_weight = float(
                 params.get("stock_weight", defaults.get("stock_weight", 0.2))
             )
-        except Exception:
+        except (TypeError, ValueError):
             stock_weight = float(defaults.get("stock_weight", 0.2))
     else:
         stock_weight = float(stock_weight)
@@ -591,7 +591,7 @@ def fill_minimum_load_repair(
         try:
             if veh.is_empty():
                 continue
-        except Exception as exc:
+        except (AttributeError, TypeError) as exc:
             record_swallowed("repair_operators.fill_minimum_load_repair", exc)
             continue
 
@@ -655,7 +655,7 @@ def fill_minimum_load_repair(
 
     try:
         state.mark_objective_dirty()
-    except Exception as exc:
+    except (AttributeError, TypeError) as exc:
         record_swallowed("repair_operators.fill_minimum_load_repair", exc)
         pass
     return state
@@ -1437,7 +1437,7 @@ def regret_based_repair(
         veh_types_sorted_global = sorted(
             veh_types_list, key=lambda x: data.veh_type_cap[x], reverse=True
         )
-    except Exception:
+    except (KeyError, TypeError):
         veh_types_sorted_global = veh_types_list
     resource_pool_get = None
 
@@ -1924,7 +1924,7 @@ def regret_based_repair(
                 # state has been changed by a committed load -> invalidate caches.
                 try:
                     state.mark_objective_dirty()
-                except Exception as exc:
+                except (AttributeError, TypeError) as exc:
                     # Cache invalidation is best-effort, but a systematically
                     # failing call would mean stale objectives feed every later
                     # comparison, so record it instead of ignoring it silently.
@@ -1938,7 +1938,7 @@ def regret_based_repair(
                 # state has been changed by a committed load -> invalidate caches.
                 try:
                     state.mark_objective_dirty()
-                except Exception as exc:
+                except (AttributeError, TypeError) as exc:
                     record_swallowed("repair_operators.greedy_repair.invalidate", exc)
         except Exception:
             # Commit failed; skip and continue. The next loop reevaluates unmet

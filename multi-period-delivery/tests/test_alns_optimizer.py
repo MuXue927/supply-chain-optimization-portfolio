@@ -408,9 +408,108 @@ def test_process_results_restores_pre_light_consolidation_state_when_merge_raise
     )
 
 
+class _LightConsolidationState:
+    """Minimal incumbent for the final light-consolidation helper."""
+
+    def __init__(self, vehicles: list[str], feasible: bool = True, cost: float = 10.0):
+        self.vehicles = list(vehicles)
+        self._feasible = feasible
+        self._cost = cost
+
+    def copy(self):
+        return _LightConsolidationState(self.vehicles, self._feasible, self._cost)
+
+    def validate(self):
+        return self._feasible, {}
+
+    def calculate_cost(self) -> float:
+        return self._cost
+
+
+def _light_consolidation_optimizer(state, messages: list[str]):
+    class _Printer:
+        def print(self, message="", **_kwargs):
+            messages.append(str(message))
+
+    optimizer = object.__new__(ALNSOptimizer)
+    optimizer.best_solution = state
+    optimizer.log_printer = _Printer()
+    return optimizer
+
+
+def test_final_light_consolidation_rolls_back_when_merged_state_is_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    state = _LightConsolidationState(["a", "b"])
+    optimizer = _light_consolidation_optimizer(state, messages)
+    monkeypatch.setattr(ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True)
+
+    def _merge_then_break(current_state, max_pairs_per_group=800):
+        current_state.vehicles = ["merged"]
+        current_state._feasible = False
+        return 1
+
+    monkeypatch.setattr(
+        optimizer_module, "consolidate_route_vehicles", _merge_then_break
+    )
+
+    optimizer._apply_final_light_consolidation()
+
+    assert optimizer.best_solution.vehicles == ["a", "b"]
+    assert any("did not improve" in message for message in messages)
+
+
+def test_final_light_consolidation_rolls_back_a_cost_regression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    state = _LightConsolidationState(["a", "b"], cost=10.0)
+    optimizer = _light_consolidation_optimizer(state, messages)
+    monkeypatch.setattr(ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", True)
+
+    def _merge_and_get_expensive(current_state, max_pairs_per_group=800):
+        current_state.vehicles = ["merged"]
+        current_state._cost = 25.0
+        return 1
+
+    monkeypatch.setattr(
+        optimizer_module, "consolidate_route_vehicles", _merge_and_get_expensive
+    )
+
+    optimizer._apply_final_light_consolidation()
+
+    assert optimizer.best_solution.vehicles == ["a", "b"]
+    assert optimizer.best_solution._cost == 10.0
+
+
+def test_final_light_consolidation_is_skipped_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    state = _LightConsolidationState(["a", "b"])
+    optimizer = _light_consolidation_optimizer(state, messages)
+    monkeypatch.setattr(ALNSConfig, "FINAL_BEST_ENABLE_CONSOLIDATION", False)
+
+    called = {"merge": False}
+
+    def _merge(current_state, max_pairs_per_group=800):
+        called["merge"] = True
+        return 1
+
+    monkeypatch.setattr(optimizer_module, "consolidate_route_vehicles", _merge)
+
+    optimizer._apply_final_light_consolidation()
+
+    assert called["merge"] is False
+    assert optimizer.best_solution.vehicles == ["a", "b"]
+
+
 # ---------------------------------------------------------------------------
 # The shared short run
 # ---------------------------------------------------------------------------
+
+
 def test_short_run_completes_the_whole_pipeline(short_run: ALNSOptimizer) -> None:
     assert short_run.result is not None
     assert short_run.data is not None

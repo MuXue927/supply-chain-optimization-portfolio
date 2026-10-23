@@ -283,7 +283,7 @@ def random_removal(
         sel = rng.choice(range(len(state.vehicles)), size=num_remove, replace=False)
         sel = np.atleast_1d(sel)
         remove_indices = [int(x) for x in sel]
-    except Exception:
+    except (TypeError, ValueError):
         # Fallback: take the first num_remove indices in order.
         remove_indices = list(range(min(num_remove, len(state.vehicles))))
 
@@ -343,7 +343,7 @@ def worst_removal(
             value_bias = float(
                 params.get("value_bias", defaults.get("value_bias", 2.0))
             )
-        except Exception:
+        except (TypeError, ValueError):
             value_bias = defaults.get("value_bias", 2.0)
     value_bias = _coerce_float(value_bias, float(defaults.get("value_bias", 2.0)))
 
@@ -405,7 +405,7 @@ def worst_removal(
             replace=False,
             p=probabilities,
         )
-    except Exception:
+    except (TypeError, ValueError):
         selected_indices = rng.choice(
             [idx for idx, _ in selection_pool],
             size=min(num_remove, len(selection_pool)),
@@ -417,7 +417,7 @@ def worst_removal(
     try:
         selected_indices = np.atleast_1d(selected_indices)
         selected_indices = [int(x) for x in selected_indices]
-    except Exception:
+    except (TypeError, ValueError):
         if isinstance(selected_indices, (list, tuple)):
             selected_indices = [int(x) for x in selected_indices]
         else:
@@ -505,7 +505,7 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
                 # before comparison to avoid subtle np.int64/np.generic issues.
                 try:
                     total_cargo_qty = int(np.sum(list(veh.cargo.values())))
-                except Exception:
+                except (TypeError, ValueError):
                     total_cargo_qty = sum(veh.cargo.values()) if veh.cargo else 0
                 if total_cargo_qty == int(
                     shipped_qty
@@ -562,7 +562,7 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
         extra_payload = (
             {"partial_updates": dict(partial_updates)} if partial_updates else None
         )
-    except Exception:
+    except (TypeError, ValueError):
         extra_payload = None
     post_destroy(
         state,
@@ -757,7 +757,7 @@ def shaw_removal(
             # Use ensure_pyint to convert possible numpy return values to Python int.
             sel = rng.choice(len(seed_candidates), p=probabilities)
             pos = ensure_pyint(sel)
-        except Exception:
+        except (TypeError, ValueError):
             pos = ensure_pyint(rng.integers(0, len(seed_candidates)))
         # pos is returned as a Python int by ensure_pyint.
         seed_idx = int(seed_candidates[pos][0])
@@ -833,7 +833,7 @@ def shaw_removal(
             "params": {"degree": float(degree) if degree is not None else None},
             "degree": float(degree) if degree is not None else None,
         }
-    except Exception:
+    except (TypeError, ValueError):
         extra_payload = None
 
     post_destroy(
@@ -1075,14 +1075,14 @@ def periodic_shaw_removal(
         selected_cluster = ensure_pyint(
             rng.choice([label for label, _ in eligible_clusters])
         )
-    except Exception:
+    except (TypeError, ValueError):
         try:
             selected_cluster = ensure_pyint(rng.integers(0, len(eligible_clusters)))
-        except Exception:
+        except (TypeError, ValueError):
             # Final fallback: use the first eligible cluster label as Python int.
             try:
                 selected_cluster = int(eligible_clusters[0][0])
-            except Exception:
+            except (TypeError, ValueError, IndexError):
                 selected_cluster = ensure_pyint([eligible_clusters[0][0]])
     # Convert numpy index arrays to Python int lists to avoid type
     # inconsistencies in later indexing and serialization.
@@ -1133,7 +1133,7 @@ def periodic_shaw_removal(
         except (TypeError, ValueError):
             try:
                 reduce_qty = int(np.array(qty).flat[0])
-            except Exception:
+            except (TypeError, ValueError, IndexError):
                 reduce_qty = 0
         if reduce_qty <= 0:
             continue
@@ -1166,7 +1166,7 @@ def periodic_shaw_removal(
         extra_payload = (
             {"partial_updates": dict(partial_updates)} if partial_updates else None
         )
-    except Exception:
+    except (TypeError, ValueError):
         extra_payload = None
     post_destroy(
         state,
@@ -1308,7 +1308,7 @@ def cross_period_dealer_removal(
 
     try:
         sel = int(np.atleast_1d(rng.choice(len(pool), p=weights))[0])
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         sel = int(np.atleast_1d(rng.integers(0, len(pool)))[0])
 
     _dealer, _score, selected_items = pool[sel]
@@ -1443,7 +1443,7 @@ def period_range_removal(
 
     try:
         widx = ensure_pyint(rng.choice(len(windows), p=weights))
-    except Exception:
+    except (TypeError, ValueError):
         widx = ensure_pyint(rng.integers(0, len(windows)))
 
     start_day, end_day, _veh_cnt, _score = windows[int(widx)]
@@ -1611,7 +1611,7 @@ def path_removal(
                     # ndarray -> tuple of native elements.
                     try:
                         candidate = tuple(candidate.tolist())
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         candidate = tuple(candidate)
                 elif isinstance(
                     candidate, (np.generic, np.integer, np.floating, np.bool_)
@@ -1619,7 +1619,7 @@ def path_removal(
                     # numpy scalar -> Python scalar via item().
                     try:
                         candidate = candidate.item()
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         try:
                             candidate = int(candidate)
                         except (TypeError, ValueError):
@@ -1634,7 +1634,7 @@ def path_removal(
                 if isinstance(candidate, (bytes,)):
                     try:
                         candidate = candidate.decode()
-                    except Exception:
+                    except (AttributeError, UnicodeDecodeError):
                         candidate = str(candidate)
             except Exception:
                 # Final fallback to guarantee a serializable native Python
@@ -1834,7 +1834,7 @@ def inventory_level_removal(
             len(anomaly_pairs), size=num_targets, replace=False, p=anomaly_scores
         )
         target_pairs = [anomaly_pairs[int(i)] for i in target_indices]
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         target_pairs = anomaly_pairs[:num_targets]
 
     # Remove related vehicles.
