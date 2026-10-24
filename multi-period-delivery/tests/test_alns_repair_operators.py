@@ -696,13 +696,19 @@ def test_cross_period_applies_moves_in_place_on_its_private_copy(
     assert result.validate()[0]
 
 
+@pytest.mark.parametrize("direction", (-1, 1))
 def test_in_place_move_matches_the_full_candidate_builder(
-    feasible_solution: SolutionState,
+    feasible_solution: SolutionState, direction: int
 ) -> None:
     """The in-place mutation must produce exactly the builder's candidate."""
     base = feasible_solution.copy()
-    source = next(veh for veh in base.vehicles if veh.cargo)
-    other_day = 2 if source.day == 1 else 1
+    source = next(
+        veh
+        for veh in base.vehicles
+        if veh.cargo
+        and 1 <= int(veh.day) + direction <= base.data.horizons
+    )
+    other_day = int(source.day) + direction
     target = Vehicle(
         source.fact_id,
         source.dealer_id,
@@ -726,10 +732,14 @@ def test_in_place_move_matches_the_full_candidate_builder(
     assert repair._cross_period_apply_move(
         private, actual_source, actual_target, source.type
     )
-    private.compute_inventory()
 
     assert _fleet_layout(private) == _fleet_layout(expected)
-    assert private.s_ikt == expected.s_ikt
+    assert private.s_ikt == expected.s_ikt, (
+        "the in-place interval inventory update disagrees with a full recompute"
+    )
+    assert getattr(private, "_inventory_cache", None) is None, (
+        "the stale shipments cache must be invalidated"
+    )
     assert _fleet_layout(base) == before_layout, "the source state was mutated"
 
 

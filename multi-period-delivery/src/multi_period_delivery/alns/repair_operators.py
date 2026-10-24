@@ -930,15 +930,42 @@ def _cross_period_apply_move(
         ]
         target_obj = upgraded_target
 
+    source_cargo = dict(source_obj.cargo)
     merged_cargo = dict(target_obj.cargo)
-    for (sku_id, _source_day), qty in source_obj.cargo.items():
+    for (sku_id, _source_day), qty in source_cargo.items():
         key = (sku_id, target_obj.day)
         merged_cargo[key] = merged_cargo.get(key, 0) + int(qty)
     target_obj.cargo = merged_cargo
     state.vehicles = [
         veh for veh in state.vehicles if veh.id != source_obj.id
     ]
+
+    # A shipment moved from day d to day e changes balances only between the
+    # two days: the source-day shipment disappears and the target-day shipment
+    # appears, so balances at max(d,e) and later are unchanged.
+    for (sku_id, cargo_day), qty in source_cargo.items():
+        qty = int(qty)
+        cargo_day = int(cargo_day)
+        target_day = int(target_obj.day)
+        if qty == 0 or cargo_day == target_day:
+            continue
+        if target_day > cargo_day:
+            days = range(cargo_day, target_day)
+            sign = 1
+        else:
+            days = range(target_day, cargo_day)
+            sign = -1
+        for day in days:
+            key = (source_obj.fact_id, sku_id, day)
+            state.s_ikt[key] = int(state.s_ikt.get(key, 0)) + sign * qty
+
     state.mark_objective_dirty()
+    # The cached shipments array predates this manual interval update. A later
+    # validate() must rebuild rather than trust a stale cache.
+    try:
+        state._inventory_cache = None
+    except (AttributeError, TypeError):
+        pass
     return True
 
 
@@ -1084,20 +1111,20 @@ def cross_period_consolidation_repair(
         source, target, target_type, predicted_cost = selected
         if not _cross_period_apply_move(state, source, target, target_type):
             break
-        try:
-            # The quantity and feasibility prediction above is exact for the
-            # affected route; the inventory table still has to be refreshed for
-            # the next candidate scan. If this fails, discard the private state
-            # and return the untouched input rather than an uncertified result.
-            state.compute_inventory()
-        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
-            record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
-            return partial
         current_cost = predicted_cost
         improved_any = True
         moves += 1
 
-    return state if improved_any else partial
+    if not improved_any:
+        return partial
+    try:
+        # One full rebuild certifies the cumulative interval updates and restores
+        # the shipment cache for the caller.
+        state.compute_inventory()
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+        record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
+        return partial
+    return state
 
 
 def local_search_repair(
