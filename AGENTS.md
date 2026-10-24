@@ -76,7 +76,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-24 15:30   HEAD = （M29 待推送）   598 passed / 42 deselected
+2026-10-24 15:36   HEAD = 8a771a3   598 passed / 42 deselected
 覆盖率 65.62%（门禁 56%）   ruff 干净   盲 except Exception 249
 下一优先级：重新量 150 秒预算去向（搜索 vs post_repair vs 最终 Step 9）。
 搜索内部调度已连续四次"机制生效、质量无信号"（M21/M24/M27/M28），
