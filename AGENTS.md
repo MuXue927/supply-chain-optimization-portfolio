@@ -78,6 +78,7 @@
 ```text
 2026-10-25 00:39   HEAD = f0b74f6   621 passed / 42 deselected
 覆盖率 65.45%（门禁 56%）   ruff 干净   盲 except Exception 249
+CI 40113055401 success（文档基线 2f0248d）
 M40 将跨期移动的库存更新收敛到源日/目标日区间，末尾一次完整重建认证：
 medium/large 逐步 0 差异；large 150 步 2.13→0.65s，17s 端到端 25.53→22.19s，
 终解与轮数不变。
