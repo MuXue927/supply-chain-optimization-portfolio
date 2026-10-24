@@ -78,6 +78,7 @@
 ```text
 2026-10-25 02:55   HEAD = 1d9ad41   629 passed / 42 deselected
 覆盖率 65.57%（门禁 56%）   ruff 干净   盲 except Exception 249
+CI 40123047700 success（文档基线 7049d5d）
 M42 逐轮实测：large 单轮破坏移除 25–45% 车队，修复占搜索 88.9%，49 轮 BEST=0。
 修复两个真缺陷：SEED 曾在 import 时冻结（resolve_run_seed 读活配置）；
 SA 50 轮内不降温导致 incumbent 漂移到 3114–3785（ProgressCooledAnnealing
