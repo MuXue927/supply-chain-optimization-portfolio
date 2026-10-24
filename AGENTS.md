@@ -76,16 +76,15 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 02:55   HEAD = 1d9ad41   629 passed / 42 deselected
-覆盖率 65.57%（门禁 56%）   ruff 干净   盲 except Exception 249
-CI 40123047700 success（文档基线 7049d5d）
-M42 逐轮实测：large 单轮破坏移除 25–45% 车队，修复占搜索 88.9%，49 轮 BEST=0。
-修复两个真缺陷：SEED 曾在 import 时冻结（resolve_run_seed 读活配置）；
-SA 50 轮内不降温导致 incumbent 漂移到 3114–3785（ProgressCooledAnnealing
-按 elapsed/MAX_RUNTIME 降温，峰值 2075.8–2078.1；150s 三种子 2049.25→2043.43）。
-破坏规模证伪：×0.5 迭代 +70%、质量 2040.26→2043.16。
-下一优先级：结构性邻域（跨期合并独立移动、单路线类型降级），
-并剔除恒 no-op 算子；预检缓存与 ML 选择器排队尾。
+2026-10-25 03:55   HEAD = a4c62da   632 passed / 42 deselected
+覆盖率 65.48%（门禁 56%）   ruff 干净   盲 except Exception 249
+M43 结论：search 内部调参已收口。收尾跨期整合可改进移动 0（cap 不绑定）；
+1464 辆 vs 最大车型下界 1345（+119，8.1%），罚款仅 39.72，多目标拆分上界
+1/1161（0.09%）⇒ 车队已到逐日约束下的打包极限。
+真缺陷：ROULETTE_SEG_LENGTH=80 大于整场轮数（49–80），算子权重从不更新；
+已加 ROULETTE_PROGRESS_SEGMENTS（按 elapsed/MAX_RUNTIME，默认 0）。
+下一优先级：模型决策面（工厂指派、发货日自由度）需作者定夺；
+其次 249 个盲 handler、恒 no-op 算子、预检缓存与 ML 选择器。
 
 本地跑 pytest 时不要并发：pytest.ini 固定 --basetemp=.pytest_tmp，
 第二个会话会删掉第一个的目录树并在 Windows 上留下 WinError 5 的残留。
