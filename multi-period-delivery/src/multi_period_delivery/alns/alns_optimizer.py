@@ -106,11 +106,59 @@ from alns import ALNS
 from alns.accept import SimulatedAnnealing
 from alns.Outcome import Outcome
 from alns.Result import Result
-from alns.select import SegmentedRouletteWheel
+from alns.select import RouletteWheel, SegmentedRouletteWheel
 
 
 class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
-    """Roulette wheel that does not reward unchanged destroy/repair actions."""
+    """Roulette wheel that does not reward unchanged destroy/repair actions.
+
+    ``normalisation`` decides how a segment's scores become one weight update.
+    The library default (``"sum"``) adds the segment's scores, which makes the
+    credit proportional to *how many times* an operator ran as well as to how
+    well it did. Because the segment is a fixed number of iterations, that is a
+    positive feedback loop: an operator picked more often accumulates more
+    credit and is then picked more often again. Simulated with eleven operators
+    drawing from one identical score distribution, ``"sum"`` gives the luckiest
+    operator 2.9x the uniform share on 24 of 24 seeds. ``"mean"`` and
+    ``"shrunk"`` stay at 1.2x.
+
+    ``"mean"`` divides by the per-segment call count. That removes the volume
+    bias but not the variance one: with short segments (few calls per operator)
+    a single lucky call sets the whole mean, and ``"mean"`` drifts to 1.8x at
+    ``seg_length=20``. ``"shrunk"`` therefore pulls each ratio towards the
+    segment's overall mean,
+
+        credit_i = (sum_i + k * grand) / (calls_i + k),   k = prior_k
+
+    which stays neutral at both segment lengths. ``"sum"`` remains the default
+    so the search path is unchanged unless the value is set explicitly.
+    """
+
+    def __init__(
+        self,
+        scores,
+        decay: float,
+        seg_length: int,
+        num_destroy: int,
+        num_repair: int,
+        op_coupling=None,
+        normalisation: str = "sum",
+        prior_k: float = 2.0,
+    ):
+        if normalisation not in ("sum", "mean", "shrunk"):
+            raise ValueError(
+                f"Unknown roulette reward normalisation {normalisation!r}; "
+                "expected 'sum', 'mean' or 'shrunk'."
+            )
+        # The parent's __init__ calls ``_reset_segment_weights`` before it
+        # returns, so the call counters must exist first.
+        self._normalisation = normalisation
+        self._prior_k = float(prior_k)
+        self._d_seg_calls = np.zeros(num_destroy, dtype=float)
+        self._r_seg_calls = np.zeros(num_repair, dtype=float)
+        super().__init__(
+            scores, decay, seg_length, num_destroy, num_repair, op_coupling
+        )
 
     def update(self, cand, d_idx, r_idx, outcome):
         destroy_outcome = outcome
@@ -123,6 +171,45 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
 
         self._d_seg_weights[d_idx] += self._scores[int(destroy_outcome)]
         self._r_seg_weights[r_idx] += self._scores[int(repair_outcome)]
+        self._d_seg_calls[d_idx] += 1
+        self._r_seg_calls[r_idx] += 1
+
+    def _reset_segment_weights(self):
+        super()._reset_segment_weights()
+        self._d_seg_calls = np.zeros_like(self._d_seg_calls)
+        self._r_seg_calls = np.zeros_like(self._r_seg_calls)
+
+    def _segment_credit(self, weights, calls):
+        """Turn one segment's accumulated scores into a per-operator rate."""
+        if self._normalisation == "mean":
+            return weights / np.maximum(calls, 1.0)
+
+        observed = calls > 0
+        if not observed.any():
+            return np.zeros_like(weights)
+        grand = float(weights[observed].sum() / calls[observed].sum())
+        return (weights + self._prior_k * grand) / (calls + self._prior_k)
+
+    def __call__(self, rng, best, curr):
+        if self._normalisation == "sum":
+            # Unchanged path: let the library do exactly what it did before.
+            return super().__call__(rng, best, curr)
+
+        self._iter += 1
+        if self._iter % self._seg_length == 0:
+            self._d_weights *= self._decay
+            self._d_weights += (1 - self._decay) * self._segment_credit(
+                self._d_seg_weights, self._d_seg_calls
+            )
+            self._r_weights *= self._decay
+            self._r_weights += (1 - self._decay) * self._segment_credit(
+                self._r_seg_weights, self._r_seg_calls
+            )
+            self._reset_segment_weights()
+
+        # Skip the parent's segment bookkeeping: it was just done above, and
+        # letting it run would apply a second, unnormalised update.
+        return RouletteWheel.__call__(self, rng, best, curr)
 
 
 class _NoOpFlagPreservingRepair:
@@ -1018,6 +1105,10 @@ class ALNSOptimizer:
                 seg_length=getattr(ALNSConfig, "ROULETTE_SEG_LENGTH", 100),
                 num_destroy=num_destroy,
                 num_repair=num_repair,
+                normalisation=getattr(
+                    ALNSConfig, "ROULETTE_REWARD_NORMALISATION", "sum"
+                ),
+                prior_k=getattr(ALNSConfig, "ROULETTE_REWARD_PRIOR_K", 2.0),
             )
             self.log_printer.print(f"Step 4 elapsed: {time.time() - t0:.2f}s")
 

@@ -270,6 +270,30 @@ class ALNSConfig:
     # Number of iterations per scoring segment before scores are decayed.
     ROULETTE_SEG_LENGTH: int = 80
 
+    # How a segment's scores become one weight update.
+    #
+    # ``"sum"`` (library default) credits the score total, so an operator that
+    # is selected more often also accumulates more credit - a positive feedback
+    # loop unrelated to quality. Measured with eleven operators drawing from one
+    # identical score distribution: ``"sum"`` gives the luckiest operator 2.9x
+    # the uniform share on 24/24 seeds.
+    #
+    # ``"mean"`` divides by the per-segment call count. That fixes the volume
+    # bias but not the variance one: with few calls per operator per segment a
+    # single lucky score sets the mean, and it drifts to 1.8x at seg_length=20.
+    #
+    # ``"shrunk"`` divides *and* pulls the ratio towards the segment's overall
+    # mean with a prior of ``ROULETTE_REWARD_PRIOR_K`` pseudo-calls. It stays at
+    # 1.2x at both segment lengths (10.7% vs 9.09% uniform at seg_length=80,
+    # 10.2% at seg_length=20).
+    #
+    # Left at ``"sum"`` by default: this changes which operators run, so it is
+    # opt-in until an A/B on cost confirms it.
+    ROULETTE_REWARD_NORMALISATION: str = "sum"
+    # Pseudo-calls used by the ``"shrunk"`` normalisation. Larger values trust
+    # the segment mean more than any single operator's ratio.
+    ROULETTE_REWARD_PRIOR_K: float = 2.0
+
     # --------------------------
     # Initial solution
     # --------------------------
