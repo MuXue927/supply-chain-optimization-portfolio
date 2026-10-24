@@ -78,7 +78,7 @@
 ```text
 2026-10-24 22:41   HEAD = 1068fea   618 passed / 42 deselected
 覆盖率 65.42%（门禁 56%）   ruff 干净   盲 except Exception 249
-CI 40104207592 success（文档基线 15f5b3e）
+CI 40104353826 success（文档基线 c5574cd；代码 run 40104207592 也 success）
 下一优先级：**跨期整合的原地应用**——M37 已证明逐对增量评分，
 150 步同进程 A/B 7.044→5.341s（−24.2%）；剩余 copy 仍占约 40%。
 先证明操作符返回的 state 没有外部别名，再将选中移动原地应用到 state；
