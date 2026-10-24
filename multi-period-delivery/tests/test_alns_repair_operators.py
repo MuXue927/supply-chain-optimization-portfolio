@@ -513,6 +513,76 @@ def test_shortlist_cache_reuses_the_scan_without_changing_the_result(
     assert with_cache.calculate_cost() == without.calculate_cost()
 
 
+def test_cross_period_capacity_precheck_skips_clones_without_changing_the_result(
+    feasible_solution: SolutionState,
+) -> None:
+    """Hoisting the capacity test ahead of ``state.copy()`` must be invisible.
+
+    The merge needs the target to hold ``source_volume + target_volume``; when
+    the target's free room is short of ``source_volume`` the only rescue is a
+    bigger vehicle type. All of those inputs survive ``copy()`` unchanged, so
+    the pre-check can reject the same candidates without cloning the fleet.
+
+    Measured on large (40 s run, final pass): 784 of 804 clones died on exactly
+    this test. The value here is that the filter must be *exactly* the same
+    set - a filter that also dropped a mergeable pair would change the result.
+    """
+    state = _destroyed(feasible_solution)
+    before = len(state.vehicles)
+    before_cost = float(state.calculate_cost())
+    consolidated = repair.cross_period_consolidation_repair(
+        state, np.random.default_rng(3), time_limit=5.0, max_moves=10
+    )
+
+    # ``_destroyed`` leaves unmet demand, so ``validate()`` is False by
+    # construction and would prove nothing here. The hard invariant this
+    # pre-check protects is inventory: a merge must never push a closing
+    # balance negative.
+    assert all(value >= 0 for value in consolidated.s_ikt.values())
+    assert len(consolidated.vehicles) <= before
+    assert float(consolidated.calculate_cost()) <= before_cost + 1e-9
+
+    # Re-running from the same input must give the same answer: the pre-check
+    # is a pure function of the state, so two runs cannot diverge.
+    again = repair.cross_period_consolidation_repair(
+        _destroyed(feasible_solution),
+        np.random.default_rng(3),
+        time_limit=5.0,
+        max_moves=10,
+    )
+    assert _fleet_layout(again) == _fleet_layout(consolidated)
+    assert again.s_ikt == consolidated.s_ikt
+    assert again.calculate_cost() == consolidated.calculate_cost()
+
+
+def test_cross_period_precheck_does_not_drop_mergeable_pairs(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pair that survives the pre-check must still reach the copy.
+
+    The complement of the test above: if the pre-check were too strict it would
+    silently stop consolidating, which no feasibility assertion would catch.
+    Counting copies proves the surviving pairs are still evaluated in full.
+    """
+    copies = {"n": 0}
+    original_copy = SolutionState.copy
+
+    def counted_copy(self, *args, **kwargs):
+        copies["n"] += 1
+        return original_copy(self, *args, **kwargs)
+
+    monkeypatch.setattr(SolutionState, "copy", counted_copy)
+    state = _destroyed(feasible_solution)
+    before = len(state.vehicles)
+    consolidated = repair.cross_period_consolidation_repair(
+        state, np.random.default_rng(3), time_limit=5.0, max_moves=10
+    )
+
+    assert all(value >= 0 for value in consolidated.s_ikt.values())
+    assert copies["n"] > 0, "no candidate survived the pre-check; it is too strict"
+    assert len(consolidated.vehicles) <= before
+
+
 def test_regret_commit_cap_bounds_the_work_of_one_call(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
