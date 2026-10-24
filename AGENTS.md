@@ -78,6 +78,7 @@
 ```text
 2026-10-24 23:46   HEAD = 3b83756   620 passed / 42 deselected
 覆盖率 65.49%（门禁 56%）   ruff 干净   盲 except Exception 249
+CI 40108626455 success（文档基线 1d2cd96）
 下一优先级：**跨期整合的增量库存更新**——M39 将选中移动原地应用，
 large 150 步 6.46→2.50s，17s 端到端 32.19→24.46s，结果逐位相同。
 剩余成本主要是每步整表 compute_inventory；先只读证明源日到目标日的
