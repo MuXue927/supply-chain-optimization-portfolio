@@ -882,11 +882,11 @@ def _cross_period_consolidate_initial(sol, rng, stats):
             getattr(
                 ALNSConfig,
                 "INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES",
-                150,
+                300,
             )
         )
     except (TypeError, ValueError):
-        time_limit, max_moves = 0.0, 150
+        time_limit, max_moves = 0.0, 300
 
     before_cost = None
     before_vehicles = len(sol.vehicles)

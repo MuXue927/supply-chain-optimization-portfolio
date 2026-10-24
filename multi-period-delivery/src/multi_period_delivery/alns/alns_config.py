@@ -326,17 +326,19 @@ class ALNSConfig:
     # the same (plant, dealer) route on a different day when the resulting
     # inventory remains feasible, removing vehicles the same-day repack cannot.
     #
-    # Measured on large dataset_3: 2791.68 -> 2449.42 after 100 moves and
-    # -> 2347.06 after 150 moves. The default is a fixed move cap with no
-    # wall-clock deadline: a time cutoff made the initial solution, and hence
-    # the whole search, depend on machine load.
+    # Measured on large dataset_3: the pass runs out of improving merges at
+    # 295 moves, taking 2791.68 -> 2075.80 (1759 -> 1464 vehicles, ~2s).
+    # medium dataset_13 stops at 103 moves and dataset_26 at 138, so the cap
+    # only binds on large. The default is a fixed move cap with no wall-clock
+    # deadline: a time cutoff made the initial solution, and hence the whole
+    # search, depend on machine load.
     #
-    # Re-allocating the saved search time (150 moves, then 17s search vs 30s
-    # search alone) improved seed 42 from 2329.26 to 2150.46 at the same wall.
+    # End-to-end at a fixed 150s search budget: 2148.46 -> 2062.26 (seed 42)
+    # and 2143.44 -> 2039.14 (seed 7) versus the old 150-move cap.
     INITIAL_CROSS_PERIOD_CONSOLIDATION: bool = True
     # Zero means "no wall-clock deadline"; the move cap below is the budget.
     INITIAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT: float = 0.0
-    INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES: int = 150
+    INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES: int = 300
     # Enforce the cumulative (plant, SKU, day) availability constraint while
     # allocating, which prevents later allocations from over-committing stock.
     INITIAL_ENABLE_CUMULATIVE_CONSTRAINT: bool = True
