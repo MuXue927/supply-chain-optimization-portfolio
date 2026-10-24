@@ -76,10 +76,12 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-24 13:30   HEAD = 29ef95d   588 passed / 42 deselected
-覆盖率 65.56%（门禁 56%）   ruff 干净   盲 except Exception 249
-下一优先级：按耗时归一算子回报（M27 证明"快算子被选得更频繁"
-才是瓶颈；REGRET_SHORTLIST_CACHE / REGRET_MAX_COMMITS_PER_CALL 均已实现但默认关闭）
+2026-10-24 15:30   HEAD = （M29 待推送）   598 passed / 42 deselected
+覆盖率 65.62%（门禁 56%）   ruff 干净   盲 except Exception 249
+下一优先级：重新量 150 秒预算去向（搜索 vs post_repair vs 最终 Step 9）。
+搜索内部调度已连续四次"机制生效、质量无信号"（M21/M24/M27/M28），
+REGRET_SHORTLIST_CACHE / REGRET_MAX_COMMITS_PER_CALL / ROULETTE_REWARD_NORMALISATION
+三个开关均已实现、默认关闭或保持原值。
 
 本地跑 pytest 时不要并发：pytest.ini 固定 --basetemp=.pytest_tmp，
 第二个会话会删掉第一个的目录树并在 Windows 上留下 WinError 5 的残留。
