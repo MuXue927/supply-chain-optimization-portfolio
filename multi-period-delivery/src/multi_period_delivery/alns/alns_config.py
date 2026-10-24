@@ -713,6 +713,21 @@ class ALNSConfig:
     # normalise the operator reward by time - before this is enabled.
     REGRET_SHORTLIST_CACHE: bool = False
 
+    # Hard cap on how many vehicles one ``regret_based_repair`` call may commit
+    # before returning control to the ALNS loop. ``0`` means "no bound: run
+    # until ``time_limit``", which is the historical behaviour.
+    #
+    # Why this exists: the shortlist cache makes a pass ~1.6x cheaper, and at a
+    # fixed wall-clock budget the operator simply did more work per call -
+    # measured median commits per call 124.5 -> 341 (2.7x), p90 274 -> 437, at
+    # 27.7 -> 43.7 commits/s. That is not a quality improvement: one "repair"
+    # turns into an exhaustive greedy fill and the destroy/repair alternation
+    # that the search relies on disappears.
+    #
+    # Bound the work instead of the clock so a call does the same amount of
+    # repair whether or not the cache is warm.
+    REGRET_MAX_COMMITS_PER_CALL: int = 0
+
     # --------------------------
     # Logging / persistence
     # --------------------------

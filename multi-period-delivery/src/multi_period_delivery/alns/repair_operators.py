@@ -1504,6 +1504,12 @@ def regret_based_repair(
     avail_gen: dict[str, int] = {}
     _prev_avail: dict[tuple[str, str, int], float] = {}
     _cache_on = bool(getattr(ALNSConfig, "REGRET_SHORTLIST_CACHE", True))
+    # Work bound, not a time bound. A cheaper pass would otherwise let one
+    # call commit far more vehicles before its wall-clock budget runs out,
+    # which changes how much of the search this operator consumes. Zero keeps
+    # the historical "run until time_limit" behaviour.
+    _max_commits = int(getattr(ALNSConfig, "REGRET_MAX_COMMITS_PER_CALL", 0) or 0)
+    _commits = 0
     while (
         time.time() - t0 < time_limit
         and (deadline is None or time.monotonic() < deadline)
@@ -2083,6 +2089,11 @@ def regret_based_repair(
                     resource_pool[pool_key] = max(
                         0, resource_pool.get(pool_key, 0) - shipped
                     )
+
+        # Count only passes that actually created a vehicle in this call.
+        _commits += 1
+        if _max_commits > 0 and _commits >= _max_commits:
+            break
 
     repair_baseline_value: float = float(
         repair_baseline_obj if repair_baseline_obj is not None else 0.0

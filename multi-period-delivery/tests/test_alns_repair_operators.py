@@ -513,6 +513,45 @@ def test_shortlist_cache_reuses_the_scan_without_changing_the_result(
     assert with_cache.calculate_cost() == without.calculate_cost()
 
 
+def test_regret_commit_cap_bounds_the_work_of_one_call(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``REGRET_MAX_COMMITS_PER_CALL`` must actually bind.
+
+    The cap exists because the shortlist cache lowered the cost of a pass
+    without lowering the number of passes the operator runs; a call then
+    committed 341 vehicles where it used to commit 124 (median, measured). The
+    bound is on work rather than time so a call does the same amount of repair
+    whether or not the cache is warm.
+
+    ``post_repair`` may merge vehicles afterwards, so the assertion is on the
+    net fleet growth: it must never exceed the cap, and it must be strictly
+    smaller than the uncapped run (otherwise the cap was not exercised).
+    """
+
+    def run(cap: int) -> int:
+        monkeypatch.setattr(ALNSConfig, "REGRET_MAX_COMMITS_PER_CALL", cap)
+        state = _destroyed(feasible_solution)
+        before = len(state.vehicles)
+        repaired = repair.regret_based_repair(
+            state,
+            np.random.default_rng(13),
+            k=2,
+            topN=6,
+            time_limit=3.0,
+        )
+        return len(repaired.vehicles) - before
+
+    uncapped = run(0)
+    capped = run(3)
+
+    assert uncapped > 3, (
+        f"the uncapped run inserted only {uncapped} vehicles; the cap was not exercised"
+    )
+    assert 0 <= capped <= 3
+    assert capped < uncapped
+
+
 def test_regret_repair_does_not_copy_when_fast_estimates_reject_all_candidates(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
