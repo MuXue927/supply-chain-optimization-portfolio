@@ -58,7 +58,9 @@ tmp/
 # temp directory is not writable).
 pytest-of-*/
 # pytest's configured basetemp (see pytest.ini / the subproject pyprojects).
-.pytest_tmp/
+# The trailing wildcard covers the ``.pytest_tmp.locked.<pid>`` leftovers that
+# appear on Windows when a session cannot delete the previous scratch tree.
+.pytest_tmp*/
 
 # Secrets and private data
 .env
