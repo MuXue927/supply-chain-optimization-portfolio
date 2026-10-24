@@ -76,10 +76,14 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-23 21:52   HEAD = 27c19d7   587 passed / 42 deselected
+2026-10-24 13:30   HEAD = 29ef95d   588 passed / 42 deselected
 覆盖率 65.56%（门禁 56%）   ruff 干净   盲 except Exception 249
-下一优先级：让 regret 单次调用的工作量恒定（提交数上界 / 按耗时归一回报），
-再讨论是否开启 REGRET_SHORTLIST_CACHE（M26 已实现，算子级等价，默认关闭）
+下一优先级：按耗时归一算子回报（M27 证明"快算子被选得更频繁"
+才是瓶颈；REGRET_SHORTLIST_CACHE / REGRET_MAX_COMMITS_PER_CALL 均已实现但默认关闭）
+
+本地跑 pytest 时不要并发：pytest.ini 固定 --basetemp=.pytest_tmp，
+第二个会话会删掉第一个的目录树并在 Windows 上留下 WinError 5 的残留。
+需要并跑就传唯一的 --basetemp=tmp\pytest-<task>。
 ```
 
 ## 9. 失败也要记录
