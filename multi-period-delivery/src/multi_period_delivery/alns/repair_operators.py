@@ -18,9 +18,9 @@ Registered repair operators, in ALNSOptimizer._register_repair_operators order:
 - greedy_repair(partial, rng, demand_weight=None, stock_weight=None)
 - cross_period_consolidation_repair(partial, rng, time_limit=None,
   max_moves=None): move a full vehicle load onto an existing same-route vehicle
-  in a different period, removing an underutilized vehicle-period. Each
-  candidate needs a state copy, so the operator carries its own time / move
-  budget.
+  in a different period, removing an underutilized vehicle-period. Candidates
+  are scored incrementally and only the selected move is applied to the
+  operator's private state.
 - local_search_repair(partial, rng, max_iter=None): correct vehicle types and
   local loadings after an initial repair.
 - inventory_balance_repair(partial, rng): spread allocation across plants by
@@ -896,6 +896,52 @@ def _cross_period_build_candidate(
     return candidate
 
 
+def _cross_period_apply_move(
+    state: SolutionState,
+    source: Vehicle,
+    target: Vehicle,
+    target_type: str,
+) -> bool:
+    """Apply one selected cross-period move to the operator's private state.
+
+    ``cross_period_consolidation_repair`` owns ``state`` as a full clone of its
+    input, and all vehicle objects in it are private shallow clones. Applying a
+    selected move in place therefore cannot change the caller's solution, and
+    avoids cloning the whole fleet once per accepted move.
+    """
+    by_id = {veh.id: veh for veh in state.vehicles}
+    source_obj = by_id.get(source.id)
+    target_obj = by_id.get(target.id)
+    if source_obj is None or target_obj is None:
+        return False
+
+    if target_obj.type != target_type:
+        upgraded_target = Vehicle(
+            target_obj.fact_id,
+            target_obj.dealer_id,
+            target_type,
+            target_obj.day,
+            target_obj.data,
+        )
+        upgraded_target.cargo = dict(target_obj.cargo)
+        state.vehicles = [
+            upgraded_target if veh.id == target_obj.id else veh
+            for veh in state.vehicles
+        ]
+        target_obj = upgraded_target
+
+    merged_cargo = dict(target_obj.cargo)
+    for (sku_id, _source_day), qty in source_obj.cargo.items():
+        key = (sku_id, target_obj.day)
+        merged_cargo[key] = merged_cargo.get(key, 0) + int(qty)
+    target_obj.cargo = merged_cargo
+    state.vehicles = [
+        veh for veh in state.vehicles if veh.id != source_obj.id
+    ]
+    state.mark_objective_dirty()
+    return True
+
+
 def _cross_period_plant_day_totals(state: SolutionState) -> dict[tuple[str, int], float]:
     totals: dict[tuple[str, int], float] = {}
     for (plant, _sku, day), value in state.s_ikt.items():
@@ -1036,18 +1082,17 @@ def cross_period_consolidation_repair(
         if selected is None:
             break
         source, target, target_type, predicted_cost = selected
-        candidate = _cross_period_build_candidate(state, source, target, target_type)
-        if candidate is None:
+        if not _cross_period_apply_move(state, source, target, target_type):
             break
         try:
             # The quantity and feasibility prediction above is exact for the
             # affected route; the inventory table still has to be refreshed for
-            # the next candidate scan.
-            candidate.compute_inventory()
+            # the next candidate scan. If this fails, discard the private state
+            # and return the untouched input rather than an uncertified result.
+            state.compute_inventory()
         except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
-            break
-        state = candidate
+            return partial
         current_cost = predicted_cost
         improved_any = True
         moves += 1

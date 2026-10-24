@@ -590,10 +590,10 @@ class ALNSConfig:
     # which bounds the cost of that pass.
     REPAIR_POST_CONSOLIDATION_MAX_PAIRS: int = 300
 
-    # Work budget for one cross-period consolidation call. Each candidate move
-    # requires a full state copy, so an unbounded call is expensive on medium
-    # and large instances. These bounds apply to every in-search invocation;
-    # the final pre-output pass may spend slightly longer (see below).
+    # Work budget for one cross-period consolidation call. Candidates are
+    # scored incrementally; only the selected move is applied to the operator's
+    # private state. These bounds apply to every in-search invocation; the final
+    # pre-output pass may spend slightly longer (see below).
     # Seconds one in-search consolidation call may spend.
     CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT: float = 5.0
     # Maximum accepted consolidation moves per in-search call.

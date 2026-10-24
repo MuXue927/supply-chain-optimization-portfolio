@@ -669,6 +669,70 @@ def test_incremental_cross_period_cost_matches_a_full_candidate(
         state.data.plant_inv_limit = old_limits
 
 
+def test_cross_period_applies_moves_in_place_on_its_private_copy(
+    feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator must not clone the fleet once per accepted move.
+
+    ``partial.copy()`` is the only required copy: the working state owns cloned
+    vehicles and therefore can be mutated. The input must remain unchanged.
+    """
+    state = feasible_solution.copy()
+    before_layout = _fleet_layout(state)
+    copies = {"n": 0}
+    original_copy = SolutionState.copy
+
+    def counted_copy(self, *args, **kwargs):
+        copies["n"] += 1
+        return original_copy(self, *args, **kwargs)
+
+    monkeypatch.setattr(SolutionState, "copy", counted_copy)
+    result = repair.cross_period_consolidation_repair(
+        state, np.random.default_rng(3), time_limit=5.0, max_moves=10
+    )
+
+    assert copies["n"] == 1, "a move re-copied the whole fleet"
+    assert _fleet_layout(state) == before_layout, "the input was mutated"
+    assert result.validate()[0]
+
+
+def test_in_place_move_matches_the_full_candidate_builder(
+    feasible_solution: SolutionState,
+) -> None:
+    """The in-place mutation must produce exactly the builder's candidate."""
+    base = feasible_solution.copy()
+    source = next(veh for veh in base.vehicles if veh.cargo)
+    other_day = 2 if source.day == 1 else 1
+    target = Vehicle(
+        source.fact_id,
+        source.dealer_id,
+        source.type,
+        other_day,
+        base.data,
+    )
+    base.vehicles.append(target)
+    base.mark_objective_dirty()
+    base.compute_inventory()
+    before_layout = _fleet_layout(base)
+
+    expected = repair._cross_period_build_candidate(
+        base, source, target, source.type
+    )
+    assert expected is not None
+    expected.compute_inventory()
+    private = base.copy()
+    actual_source = next(veh for veh in private.vehicles if veh.id == source.id)
+    actual_target = next(veh for veh in private.vehicles if veh.id == target.id)
+    assert repair._cross_period_apply_move(
+        private, actual_source, actual_target, source.type
+    )
+    private.compute_inventory()
+
+    assert _fleet_layout(private) == _fleet_layout(expected)
+    assert private.s_ikt == expected.s_ikt
+    assert _fleet_layout(base) == before_layout, "the source state was mutated"
+
+
 def test_cross_period_precheck_does_not_drop_mergeable_pairs(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
