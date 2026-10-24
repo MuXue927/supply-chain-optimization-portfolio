@@ -36,6 +36,65 @@ def _seed() -> np.random.Generator:
     return np.random.default_rng(7)
 
 
+def test_allocation_does_not_rebuild_shipments_per_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The allocator must not call ``compute_shipped`` around every load.
+
+    It used to bracket each load with two ``compute_shipped()`` calls to learn
+    how much the load moved. That rebuilds the shipment table for the whole
+    fleet, and ``veh_loading`` invalidates the cache in between, so both calls
+    missed: 11,777 calls and 10.3 s of a 15 s initial solution on large.
+
+    The loaded amount is already visible on the vehicles the call touched. The
+    two definitions were compared at every allocation site
+    (``_init_alloc_equivalence.py``: 5,887 allocations, 0 disagreements) and
+    the finished solution matches on all 3,606 (dealer, sku) pairs.
+
+    A small call count is the regression signal; it must stay bounded by the
+    number of *stages* rather than by the number of loads.
+    """
+    calls = {"n": 0}
+    original = SolutionState.compute_shipped
+
+    def counted(self, *args, **kwargs):
+        calls["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SolutionState, "compute_shipped", counted)
+    state = SolutionState(_load_data())
+    solution = isu.improved_initial_solution(state, _seed())
+
+    # The constructor legitimately needs a few full rebuilds (final inventory,
+    # feasibility finalisation); it must not need one per allocated vehicle.
+    # The small dataset builds ~80 vehicles; the guard only rules out an empty
+    # fleet making the ratio below trivially true.
+    assert len(solution.vehicles) > 40, "no fleet built; the check is vacuous"
+    assert calls["n"] < len(solution.vehicles) / 4, (
+        f"{calls['n']} compute_shipped calls for {len(solution.vehicles)} "
+        "vehicles - the per-load rebuild is back"
+    )
+
+
+def test_allocation_keeps_the_plant_day_index_current() -> None:
+    """The loader is handed a per-(plant, day) index instead of the whole fleet.
+
+    ``veh_loading`` builds ``used_inv`` from the vehicles it is given, so a
+    stale index would silently under-count already-loaded quantity for that
+    plant and day, and the allocator would over-allocate inventory.
+
+    Asserting feasibility catches that: every closing balance must stay
+    non-negative, which is exactly what over-allocation breaks.
+    """
+    state = SolutionState(_load_data())
+    solution = isu.improved_initial_solution(state, _seed())
+
+    assert solution.s_ikt, "inventory was never computed"
+    negative = {k: v for k, v in solution.s_ikt.items() if v < 0}
+    assert not negative, f"{len(negative)} negative balances, e.g. {list(negative)[:3]}"
+    assert solution.validate()[0], "initial solution is not hard-feasible"
+
+
 def test_improved_initial_solution_is_feasible_and_integer() -> None:
     data = _load_data()
     state = SolutionState(data)

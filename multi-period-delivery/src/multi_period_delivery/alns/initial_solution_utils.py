@@ -256,6 +256,18 @@ def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeo
     sol = state.copy()
     t_start = time.time()
 
+    # ``veh_loading`` rebuilds ``used_inv`` by scanning every vehicle unless it
+    # is handed the vehicles for the (plant, day) it is loading. Here that scan
+    # ran once per allocation over the whole fleet: 5,887 allocations x 2,958
+    # vehicles on large, measured at 2.5 s of a 5.6 s stage. The index below is
+    # the same one ``greedy_repair`` already keeps (A8b), and it is kept current
+    # at the load site.
+    plant_day_vehicles: dict[tuple[str, int], list] = {}
+    for existing in sol.vehicles:
+        plant_day_vehicles.setdefault((existing.fact_id, existing.day), []).append(
+            existing
+        )
+
     supply_chain = data.construct_supply_chain()
     demand_map = {
         (dealer, sku): int(demand)
@@ -288,6 +300,7 @@ def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeo
             timeout=timeout,
             t_start=t_start,
             veh_loading=veh_loading,
+            plant_day_vehicles=plant_day_vehicles,
         )
 
     # Supplemental allocation relaxes cumulative constraints to fill unmet demand.
@@ -317,6 +330,7 @@ def _sequential_allocation(state, prioritized_demands, resource_pool, rng, timeo
                 timeout=timeout,
                 t_start=t_start,
                 veh_loading=veh_loading,
+                plant_day_vehicles=plant_day_vehicles,
             )
 
     return sol
@@ -492,6 +506,7 @@ def _allocate_dealer_demands(
     timeout,
     t_start,
     veh_loading,
+    plant_day_vehicles=None,
 ):
     """Allocate one dealer's demands in sku-priority order with optional cumulative checks."""
     data = sol.data
@@ -549,14 +564,45 @@ def _allocate_dealer_demands(
 
                 veh_type = _select_best_vehicle(assign_qty, sku, data)
                 vehicle = Vehicle(plant, dealer, veh_type, day, data)
-                shipped_before = int(sol.compute_shipped().get((dealer, sku), 0))
 
-                success = veh_loading(sol, vehicle, {sku: assign_qty})
+                # ``veh_loading`` invalidates the shipment cache, so bracketing
+                # it with two ``compute_shipped()`` calls cost two full fleet
+                # rebuilds per allocation - measured on large: 11,777 calls,
+                # 10.26 s of a 15 s initial solution. The loaded amount is
+                # already visible on the vehicles the call touched, and
+                # ``_init_alloc_equivalence.py`` confirmed the two definitions
+                # agree on all 5,887 allocations (the finished solution matches
+                # on all 3,606 (dealer, sku) pairs as well).
+                vehicles_before = len(sol.vehicles)
+                day_index = (
+                    plant_day_vehicles.setdefault((plant, day), [])
+                    if plant_day_vehicles is not None
+                    else None
+                )
+                success = veh_loading(
+                    sol,
+                    vehicle,
+                    {sku: assign_qty},
+                    plant_day_vehicles=day_index,
+                )
+                # Keep the index current before any early exit: the loader may
+                # have appended vehicles (and split a load) before returning.
+                if plant_day_vehicles is not None:
+                    for added in sol.vehicles[vehicles_before:]:
+                        day_index.append(added)
                 if not success:
                     continue
 
-                shipped_after = int(sol.compute_shipped().get((dealer, sku), 0))
-                actual_loaded = max(0, shipped_after - shipped_before)
+                # Sum over everything this call appended: a load normally fits
+                # one vehicle, but summing keeps the count exact if a split
+                # ever happens.
+                appended = sol.vehicles[vehicles_before:]
+                if appended:
+                    actual_loaded = sum(
+                        int(veh.cargo.get((sku, day), 0)) for veh in appended
+                    )
+                else:
+                    actual_loaded = int(vehicle.cargo.get((sku, day), 0))
                 if actual_loaded <= 0:
                     continue
 
