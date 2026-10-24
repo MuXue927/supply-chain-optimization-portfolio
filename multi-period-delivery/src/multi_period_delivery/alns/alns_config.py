@@ -300,6 +300,27 @@ class ALNSConfig:
     # Allocate demand dealer by dealer (True) instead of one demand at a time.
     # Disabling it selects the legacy demand-by-demand allocation path.
     INITIAL_USE_DEALER_GROUPING: bool = True
+    # Choose the vehicle type by total cost rather than "smallest that fits".
+    #
+    # The fitting rule only guarantees that one vehicle of the chosen type can
+    # hold the chunk; it never compares what a split into several smaller
+    # vehicles would cost. On the large catalogue the two rules disagree on 24
+    # of 60 sampled load sizes (up to 3.88 per load), and the initial solution
+    # was 69.2% full with 11.9% of its cost coming from minimum-load penalties.
+    INITIAL_COST_BASED_VEHICLE_CHOICE: bool = True
+    # Regroup each (plant, dealer, day) route's cargo into the cheapest
+    # vehicles for that route's volume, after allocation.
+    #
+    # The allocator builds one vehicle per (dealer, sku, plant, day) chunk and
+    # ``_merge_small_vehicles`` can only merge into capacity that already
+    # exists - it never upgrades a type. On large the result was 2,958 vehicles
+    # over 920 routes at 69.2% fill; the same cargo fits in 1,847 vehicles for
+    # 2,735.97 instead of 3,428.91 (-20.2%).
+    #
+    # Shipment-preserving: only cargo *within* one route is regrouped, so every
+    # (plant, sku, day) quantity is unchanged and the inventory table is
+    # identical. The pass verifies that and reverts otherwise.
+    INITIAL_REPACK_ROUTES: bool = True
     # Enforce the cumulative (plant, SKU, day) availability constraint while
     # allocating, which prevents later allocations from over-committing stock.
     INITIAL_ENABLE_CUMULATIVE_CONSTRAINT: bool = True

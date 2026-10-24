@@ -76,6 +76,63 @@ def test_allocation_does_not_rebuild_shipments_per_load(
     )
 
 
+def test_route_repack_preserves_shipments_and_cuts_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regrouping a route's cargo must not change a single shipment.
+
+    The repack only moves cargo *between vehicles of the same
+    (plant, dealer, day) route*, so every (plant, sku, day) quantity - and
+    therefore the whole inventory table - has to come out identical. That is
+    the invariant the pass itself verifies before committing; this test pins it
+    from the outside.
+
+    It also asserts the direction of the effect. Without that half, a repack
+    that silently did nothing would still pass the equality check.
+    """
+
+    def build(repack: bool):
+        monkeypatch.setattr(ALNSConfig, "INITIAL_REPACK_ROUTES", repack)
+        state = SolutionState(_load_data())
+        return isu.improved_initial_solution(state, _seed())
+
+    without = build(False)
+    with_repack = build(True)
+
+    assert dict(with_repack.s_ikt) == dict(without.s_ikt), (
+        "the repack changed the inventory table - it must only regroup cargo "
+        "inside one route"
+    )
+    assert sum(without.compute_shipped().values()) == sum(
+        with_repack.compute_shipped().values()
+    )
+    assert len(with_repack.vehicles) < len(without.vehicles), (
+        f"repack did not reduce the fleet ({len(without.vehicles)} -> "
+        f"{len(with_repack.vehicles)})"
+    )
+    assert with_repack.calculate_cost() <= without.calculate_cost()
+    assert with_repack.validate()[0], "repacked initial solution is not feasible"
+
+
+def test_repacked_vehicles_respect_capacity_and_route() -> None:
+    """Each repacked vehicle must stay on its route and inside its capacity."""
+    state = SolutionState(_load_data())
+    solution = isu.improved_initial_solution(state, _seed())
+    data = solution.data
+
+    for veh in solution.vehicles:
+        assert veh.cargo, "repack produced an empty vehicle"
+        volume = sum(
+            qty * float(data.sku_sizes[sku]) for (sku, _day), qty in veh.cargo.items()
+        )
+        assert volume <= float(data.veh_type_cap[veh.type]) + 1e-9, (
+            f"vehicle {veh.id} carries {volume} > capacity {data.veh_type_cap[veh.type]}"
+        )
+        assert all(day == veh.day for (_sku, day) in veh.cargo), (
+            f"vehicle {veh.id} carries cargo for another day"
+        )
+
+
 def test_allocation_keeps_the_plant_day_index_current() -> None:
     """The loader is handed a per-(plant, day) index instead of the whole fleet.
 
