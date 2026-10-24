@@ -1,16 +1,9 @@
 """The incremental resource-pool adjustment must equal a full rebuild.
 
-``regret_based_repair`` used to rebuild the whole ``ResourcePool`` at the top of
-every while iteration (~14 ms on the medium instance). It now applies the exact
-delta of the shipment it just committed:
-
-    a shipment of ``q`` on (plant, sku, day)
-        lowers availability by q for that day (through `used`) and
-        for every later day (through ``s_ikt``).
-
-Clipping is idempotent under subtraction, so ``max(0, old - q)`` matches the
-rebuild. A full-run probe checks this on every cache hit; this pins the algebra
-on one concrete commit.
+A shipment of ``q`` on ``(plant, sku, day)`` lowers every later closing balance
+by ``q``. Because earlier days' suffix minima also include those balances, the
+refresh rescans the affected (plant, SKU) backwards rather than subtracting
+from only ``day`` and later.
 """
 
 from __future__ import annotations
@@ -18,7 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
-from multi_period_delivery.alns.repair_utils import build_resource_pool, veh_loading
+from multi_period_delivery.alns.repair_utils import (
+    build_resource_pool,
+    refresh_suffix_resource_pool,
+    veh_loading,
+)
 from multi_period_delivery.alns.vehicle import Vehicle
 
 BASE = Path(__file__).resolve().parents[1]
@@ -44,6 +41,28 @@ def _flatten(pool) -> dict:
     }
 
 
+def test_resource_pool_uses_the_suffix_minimum_balance() -> None:
+    """Day availability must be bounded by every later closing balance."""
+    state = _state()
+    state.compute_inventory()
+    pool = build_resource_pool(state, state.data)
+
+    checked = 0
+    for plant in state.data.plants:
+        for sku in state.data.skus_plant.get(plant, []):
+            for day in range(1, state.data.horizons + 1):
+                expected = max(
+                    0.0,
+                    min(
+                        float(state.s_ikt.get((plant, sku, d), 0.0))
+                        for d in range(day, state.data.horizons + 1)
+                    ),
+                )
+                assert pool[(plant, sku, day)] == expected
+                checked += 1
+    assert checked > 0
+
+
 def test_incremental_pool_matches_a_rebuild_after_one_commit() -> None:
     state = _state()
     state.compute_inventory()
@@ -63,9 +82,7 @@ def test_incremental_pool_matches_a_rebuild_after_one_commit() -> None:
     shipped = before - state.s_ikt.get((plant, sku, day), 0)
     assert shipped > 0, "the commit must actually have shipped something"
 
-    for d in range(day, state.data.horizons + 1):
-        key = (plant, sku, d)
-        pool[key] = max(0, pool.get(key, 0) - shipped)
+    refresh_suffix_resource_pool(state, pool, plant, sku)
 
     fresh = build_resource_pool(state, state.data)
     assert _flatten(pool) == _flatten(fresh)

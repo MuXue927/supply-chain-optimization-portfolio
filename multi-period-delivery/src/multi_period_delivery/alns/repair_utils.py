@@ -565,31 +565,48 @@ class ResourcePool:
         return f"<ResourcePool plants={len(self._data)}>"
 
 
+def refresh_suffix_resource_pool(
+    state: SolutionState,
+    pool: ResourcePool,
+    plant: str,
+    sku_id: str,
+) -> None:
+    """Refresh one (plant, SKU) availability map from the current inventory.
+
+    A shipment on day ``d`` reduces every closing balance from ``d`` through
+    the horizon, so the amount that can still be added on ``d`` is the minimum
+    balance over that suffix. Reporting only day ``d``'s balance let repair
+    operators request stock that a later day had already consumed. The error
+    stayed invisible while starts had slack; the tighter cross-period initial
+    solution exposed it as negative inventory.
+
+    One backwards scan is O(H), and callers invoke it only after a successful
+    load for the affected (plant, SKU).
+    """
+    horizons = int(getattr(state.data, "horizons", 0))
+    if horizons <= 0:
+        return
+    suffix_min: float | None = None
+    for day in range(horizons, 0, -1):
+        balance = float(state.s_ikt.get((plant, sku_id, day), 0.0))
+        suffix_min = balance if suffix_min is None else min(suffix_min, balance)
+        pool[(plant, sku_id, day)] = max(0.0, suffix_min)
+
+
 def build_resource_pool(state: SolutionState, data: DataALNS):
     """
-    Build and return a ResourcePool object.
-    Preserve compatibility with the legacy tuple-key get/set interface while
-    using a nested structure internally to reduce tuple-key hash overhead.
+    Build and return a suffix-safe ResourcePool object.
+
+    Day ``d`` stores the smallest closing balance from ``d`` to the horizon,
+    i.e. the largest additional shipment on ``d`` that keeps every later
+    balance non-negative.
     """
     pool = ResourcePool()
-    # Aggregate current vehicle usage into a local map to avoid repeatedly
-    # scanning state.vehicles inside the loop.
-    vehicles_by_plant_day = {}
-    for veh in state.vehicles:
-        key = (veh.fact_id, veh.day)
-        vehicles_by_plant_day.setdefault(key, []).append(veh)
-
     # Sorted: ``plants`` and ``skus_plant[*]`` are sets, so iterating them in
     # place makes the pool's construction order vary with PYTHONHASHSEED.
     for plant in sorted(data.plants):
         for sku_id in sorted(data.skus_plant.get(plant, [])):
-            for day in range(1, data.horizons + 1):
-                prev_inv = state.s_ikt.get((plant, sku_id, day - 1), 0)
-                prod = data.sku_prod_each_day.get((plant, sku_id, day), 0)
-                used = 0
-                for veh in vehicles_by_plant_day.get((plant, day), []):
-                    used += veh.cargo.get((sku_id, day), 0)
-                pool[(plant, sku_id, day)] = max(0, prev_inv + prod - used)
+            refresh_suffix_resource_pool(state, pool, plant, sku_id)
     return pool
 
 
@@ -1236,9 +1253,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                 continue
 
         if loaded_total > 0:
-            resource_pool[(plant, sku_id, day)] = max(
-                0, resource_pool.get((plant, sku_id, day), 0) - loaded_total
-            )
+            refresh_suffix_resource_pool(state, resource_pool, plant, sku_id)
     return batch_progress, inserted_vehicles
 
 

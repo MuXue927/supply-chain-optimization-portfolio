@@ -9,7 +9,6 @@ basic resource-pool snapshot generation.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -57,11 +56,11 @@ class UnifiedInventoryManager:
         """
         Return the available inventory pool for periods 1..H.
 
-        This mirrors the repair-path ``build_resource_pool`` semantics:
-        available(plant, sku, day) =
-            max(0, ending_inventory(day-1) + production(day) - same-day usage).
-        Day 0 is an opening balance used only for the recursion, not an
-        allocatable period in the pool.
+        This mirrors the repair-path ``build_resource_pool`` semantics. A
+        shipment on day ``d`` lowers every closing balance from ``d`` onwards,
+        so availability on ``d`` is the smallest balance over that suffix.
+        Using only ``d``'s balance lets a repair consume stock already reserved
+        for a later period.
         """
         pool: dict[tuple[str, str, int], int] = {}
         try:
@@ -69,26 +68,17 @@ class UnifiedInventoryManager:
             if not getattr(state, "s_initialized", False):
                 state.compute_inventory()
 
-            usage: dict[tuple[str, int, str], int] = defaultdict(int)
-            for veh in getattr(state, "vehicles", []):
-                for (sku, cargo_day), qty in veh.cargo.items():
-                    if cargo_day != veh.day:
-                        continue
-                    usage[(veh.fact_id, veh.day, sku)] += int(qty)
-
             for plant in data.plants:
                 for sku in data.skus_plant.get(plant, ()):
-                    for day in range(1, data.horizons + 1):
-                        prev_inv = int(
-                            state.s_ikt.get((plant, sku, day - 1), 0)
+                    suffix_min: int | None = None
+                    for day in range(data.horizons, 0, -1):
+                        balance = int(state.s_ikt.get((plant, sku, day), 0))
+                        suffix_min = (
+                            balance
+                            if suffix_min is None
+                            else min(suffix_min, balance)
                         )
-                        production = int(
-                            data.sku_prod_each_day.get((plant, sku, day), 0)
-                        )
-                        used = int(usage.get((plant, day, sku), 0))
-                        pool[(plant, sku, day)] = max(
-                            0, prev_inv + production - used
-                        )
+                        pool[(plant, sku, day)] = max(0, suffix_min)
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             # Returning an empty pool here meant "no inventory anywhere", which
             # the allocation operators read as a legitimate state and then

@@ -885,15 +885,8 @@ def _cross_period_consolidate_initial(sol, rng, stats):
                 150,
             )
         )
-        min_vehicles = int(
-            getattr(
-                ALNSConfig,
-                "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES",
-                200,
-            )
-        )
     except (TypeError, ValueError):
-        time_limit, max_moves, min_vehicles = 0.0, 150, 200
+        time_limit, max_moves = 0.0, 150
 
     before_cost = None
     before_vehicles = len(sol.vehicles)
@@ -905,7 +898,7 @@ def _cross_period_consolidate_initial(sol, rng, stats):
     enabled = bool(
         getattr(ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", True)
     )
-    if not enabled or max_moves <= 0 or before_vehicles < min_vehicles:
+    if not enabled or max_moves <= 0:
         stats.update(
             {
                 "cross_period_time": 0.0,

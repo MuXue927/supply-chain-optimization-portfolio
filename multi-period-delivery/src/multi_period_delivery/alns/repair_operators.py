@@ -92,6 +92,7 @@ from .repair_utils import (
     get_unmet_demand,
     post_repair,
     precompute_total_available,
+    refresh_suffix_resource_pool,
     select_vehicle_type_for_volume,
     veh_loading,
 )
@@ -404,6 +405,7 @@ def greedy_repair(
                             request_qty,
                             day,
                             skip_compute_inventory=True,
+                            suffix_safe=True,
                             route_vehicles=route_vehicles.get(route_key),
                             plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                         )
@@ -419,8 +421,10 @@ def greedy_repair(
                             plant_day_vehicles.setdefault((plant, day), []).append(
                                 new_vehicle
                             )
-                    available = max(0, available - actual_loaded)
-                    resource_pool[(plant, sku_id, day)] = available
+                    refresh_suffix_resource_pool(
+                        state, resource_pool, plant, sku_id
+                    )
+                    available = resource_pool.get((plant, sku_id, day), 0)
                     remain_demand -= actual_loaded
 
                 if available <= 0 or remain_demand <= 0:
@@ -444,6 +448,7 @@ def greedy_repair(
                         request_qty,
                         day,
                         skip_compute_inventory=True,
+                        suffix_safe=True,
                         route_vehicles=route_vehicles.get(route_key),
                         plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                     )
@@ -462,6 +467,7 @@ def greedy_repair(
                             request_qty,
                             day,
                             skip_compute_inventory=False,
+                            suffix_safe=True,
                             route_vehicles=route_vehicles.get(route_key),
                             plant_day_vehicles=plant_day_vehicles.get((plant, day)),
                         )
@@ -479,9 +485,8 @@ def greedy_repair(
                             )
                     else:
                         inserted_vehicles.append(vehicle)
-                    resource_pool[(plant, sku_id, day)] = max(
-                        0,
-                        resource_pool.get((plant, sku_id, day), 0) - actual_loaded,
+                    refresh_suffix_resource_pool(
+                        state, resource_pool, plant, sku_id
                     )
                     remain_demand -= actual_loaded
                 if remain_demand <= 0:
@@ -2361,7 +2366,9 @@ def sequential_repair(
                 for plant in plants:
                     for cand_day in candidate_days:
                         try:
-                            available = state.s_ikt.get((plant, sku_id, cand_day), 0)
+                            available = _suffix_available(
+                                state, plant, sku_id, cand_day, True
+                            )
                             if available <= 0:
                                 continue
 
@@ -2467,6 +2474,7 @@ def sequential_repair(
                         {sku_id: int(load_qty)},
                         commit=True,
                         skip_compute_inventory=True,
+                        suffix_safe=True,
                     )
                 except Exception as exc:
                     # This candidate cannot be applied; move on to the next one, but leave

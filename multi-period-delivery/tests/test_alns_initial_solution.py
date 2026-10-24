@@ -211,9 +211,7 @@ def test_initial_cross_period_consolidation_preserves_a_feasible_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The extra pass may only keep a feasible, non-worsening fleet."""
-    monkeypatch.setattr(
-        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES", 0
-    )
+    monkeypatch.setattr(ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", True)
     with_cross = isu.improved_initial_solution(SolutionState(_load_data()), _seed())
 
     assert with_cross.validate()[0]
@@ -236,9 +234,7 @@ def test_initial_cross_period_failure_keeps_the_repacked_start(
     def fail(*_args, **_kwargs):
         raise RuntimeError("forced cross-period failure")
 
-    monkeypatch.setattr(
-        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES", 0
-    )
+    monkeypatch.setattr(ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", True)
     monkeypatch.setattr(
         repair, "cross_period_consolidation_repair", fail
     )

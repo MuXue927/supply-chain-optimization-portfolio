@@ -39,7 +39,12 @@ def _load_data() -> DataALNS:
 
 @pytest.fixture(scope="module")
 def feasible_solution() -> SolutionState:
-    """A real feasible solution, built once and copied by each test."""
+    """The production cross-period start, built once and copied by each test.
+
+    This intentionally exercises the tight inventory timing: a repair that
+    treats a day's balance as all available will consume stock already needed
+    by a later period and fail the hard-feasibility assertions below.
+    """
     state = SolutionState(_load_data())
     return improved_initial_solution(state, np.random.default_rng(7))
 
@@ -487,10 +492,18 @@ def test_shortlist_cache_reuses_the_scan_without_changing_the_result(
         return original_get(self, key, default)
 
     monkeypatch.setattr(ResourcePool, "get", counted_get)
+    # This test pins shortlist reuse on the canonical same-day repacked
+    # baseline. Cross-period starts are covered by every operator test above.
+    monkeypatch.setattr(
+        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", False
+    )
+    canonical = improved_initial_solution(
+        SolutionState(_load_data()), np.random.default_rng(7)
+    )
 
     def run(cache_on: bool) -> tuple[SolutionState, int]:
         monkeypatch.setattr(ALNSConfig, "REGRET_SHORTLIST_CACHE", cache_on)
-        state = _destroyed(feasible_solution)
+        state = _destroyed(canonical)
         before = scans["count"]
         repaired = repair.regret_based_repair(
             state,

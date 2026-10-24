@@ -337,10 +337,6 @@ class ALNSConfig:
     # Zero means "no wall-clock deadline"; the move cap below is the budget.
     INITIAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT: float = 0.0
     INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES: int = 150
-    # Only run the pass when the same-day fleet is large enough for cross-period
-    # moves to matter. Small instances keep the repacked start that the existing
-    # destroy/repair operator contract was built and tested against.
-    INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES: int = 200
     # Enforce the cumulative (plant, SKU, day) availability constraint while
     # allocating, which prevents later allocations from over-committing stock.
     INITIAL_ENABLE_CUMULATIVE_CONSTRAINT: bool = True
