@@ -45,7 +45,7 @@ import numpy as np
 import numpy.random as rnd
 import pandas as pd
 
-from .accept import DemandConstraintAccept
+from .accept import DemandConstraintAccept, ProgressCooledAnnealing
 from .alns_config import default_config as ALNSConfig
 
 # Package-internal imports used by the optimizer
@@ -344,12 +344,25 @@ def suppress_noisy_operator_stdout(enabled: bool = True):
         builtins.print = original_print
 
 
-# Config constants referenced by optimizer (use getattr for defensive access)
+# Import-time snapshots, kept for backwards compatibility. Anything that
+# decides behaviour must read the live config instead: a caller that imports
+# this module before updating the shared config would otherwise silently keep
+# the default seed (moving the *whole search* onto one fixed RNG stream).
 SEED = ALNSConfig.SEED
 DATASET_TYPE = ALNSConfig.DATASET_TYPE
 DATASET_IDX = ALNSConfig.DATASET_IDX
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_run_seed() -> int:
+    """Return the seed to use for this run, reading the live configuration.
+
+    ``ALNSConfig.SEED`` is the single source of truth for reproducibility. The
+    module-level ``SEED`` constant is only a fallback for configs that do not
+    define the field.
+    """
+    return int(getattr(ALNSConfig, "SEED", SEED))
 
 
 def compute_dynamic_iteration_cap(config: Any = None) -> int:
@@ -458,7 +471,7 @@ class ALNSOptimizer:
         self.ml_selector: MLOperatorSelector | None = None
 
         # Random number generator.
-        self.rng = rnd.default_rng(seed=SEED)
+        self.rng = rnd.default_rng(seed=resolve_run_seed())
         # Track registered operator counts for selector configuration.
         self._num_registered_destroy_ops: int = 0
         self._num_registered_repair_ops: int = 0
@@ -683,7 +696,7 @@ class ALNSOptimizer:
             self._num_registered_destroy_ops = 0
             self._num_registered_repair_ops = 0
             # Create the ALNS instance.
-            alns = ALNS(rng=rnd.default_rng(seed=SEED))
+            alns = ALNS(rng=rnd.default_rng(seed=resolve_run_seed()))
 
             # Register destroy operators.
             self._register_destroy_operators(alns)
@@ -1115,12 +1128,33 @@ class ALNSOptimizer:
             # 5. Configure acceptance rules.
             t0 = time.time()
             self.log_printer.print("Step 5: Configuring acceptance policy...")
-            sa_accept = SimulatedAnnealing(
-                start_temperature=getattr(ALNSConfig, "SA_START_TEMP", 1.0),
-                end_temperature=getattr(ALNSConfig, "SA_END_TEMP", 1e-3),
-                step=getattr(ALNSConfig, "SA_STEP", 0.99),
-                method="exponential",
+            end_temperature = float(
+                getattr(ALNSConfig, "SA_END_TEMP", 1e-3)
             )
+            start_relative = float(
+                getattr(ALNSConfig, "SA_START_REL_TEMP", 0.0)
+            )
+            if start_relative > 0.0:
+                reference = float(init_sol.objective())
+                start_temperature = max(
+                    end_temperature, start_relative * max(reference, 0.0)
+                )
+                sa_accept = ProgressCooledAnnealing(
+                    start_temperature, end_temperature
+                )
+                self.log_printer.print(
+                    "Acceptance: progress-cooled annealing "
+                    f"{start_temperature:.1f} -> {end_temperature:.1f}"
+                )
+            else:
+                sa_accept = SimulatedAnnealing(
+                    start_temperature=getattr(
+                        ALNSConfig, "SA_START_TEMP", 1.0
+                    ),
+                    end_temperature=end_temperature,
+                    step=getattr(ALNSConfig, "SA_STEP", 0.99),
+                    method="exponential",
+                )
             self.acceptance = DemandConstraintAccept(sa_accept, self.data)
             self.log_printer.print(f"Step 5 elapsed: {time.time() - t0:.2f}s")
 

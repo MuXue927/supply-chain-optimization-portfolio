@@ -257,6 +257,17 @@ class ALNSConfig:
     # Multiplicative decay applied to the temperature after every iteration.
     # 1.0 - 5e-4 is a very slow cooling schedule suited to long runs.
     SA_STEP: float = 1.0 - 5e-4
+    # Start temperature as a fraction of the initial search objective. When
+    # positive, cooling follows elapsed/MAX_RUNTIME instead of a per-iteration
+    # step, so the schedule does not depend on throughput. Set to 0 to keep the
+    # legacy SA_START_TEMP / SA_STEP schedule.
+    #
+    # Measured on large at a 150s budget: the legacy schedule kept T near 1000
+    # for the whole run, the incumbent drifted from 2075.80 to 3134-3785 and
+    # never returned; repair then worked on a much worse state. With 0.02 the
+    # incumbent stayed within 2075.80-2078 and delivered 2043.43 on average
+    # (seeds 42/7/123) versus 2049.25 for the legacy schedule.
+    SA_START_REL_TEMP: float = 0.02
 
     # --------------------------
     # Selection / roulette wheel

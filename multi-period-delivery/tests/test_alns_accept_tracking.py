@@ -18,6 +18,7 @@ from multi_period_delivery.alns import accept as accept_module
 from multi_period_delivery.alns import snapshot as snapshot_module
 from multi_period_delivery.alns.accept import (
     DemandConstraintAccept,
+    ProgressCooledAnnealing,
     _CandidateProxy,
     _safe_float,
 )
@@ -108,6 +109,16 @@ class _RecordingAcceptor:
         return self.decision
 
 
+class _ElapsedTracker:
+    """Minimal tracker exposing the measure ``resolve_progress`` reads."""
+
+    def __init__(self, elapsed: float):
+        self._elapsed = float(elapsed)
+
+    def elapsed_seconds(self) -> float:
+        return self._elapsed
+
+
 # ---------------------------------------------------------------------------
 # _safe_float / _CandidateProxy
 # ---------------------------------------------------------------------------
@@ -128,6 +139,69 @@ def test_candidate_proxy_adds_penalty_and_delegates() -> None:
     assert proxy.validate() == state.validate()
     # compute_shipped is absent on the fake, so the proxy returns {}.
     assert proxy.compute_shipped() == {}
+
+
+# ---------------------------------------------------------------------------
+# ProgressCooledAnnealing
+# ---------------------------------------------------------------------------
+def test_progress_cooled_annealing_temperature_follows_elapsed_fraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    criterion = ProgressCooledAnnealing(100.0, 1.0)
+
+    assert criterion.temperature(0.0) == pytest.approx(100.0)
+    assert criterion.temperature(1.0) == pytest.approx(1.0)
+    # Geometric interpolation: halfway is the geometric mean of the endpoints.
+    assert criterion.temperature(0.5) == pytest.approx(10.0)
+    # Out-of-range fractions are clamped, not extrapolated.
+    assert criterion.temperature(-1.0) == pytest.approx(100.0)
+    assert criterion.temperature(2.0) == pytest.approx(1.0)
+
+    current = _FakeState(objective=100.0)
+    current.tracker = _ElapsedTracker(75.0)
+    assert criterion.temperature(0.75) > criterion.temperature(1.0)
+
+
+def test_progress_cooled_annealing_accepts_improvements_and_rejects_far_worse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    criterion = ProgressCooledAnnealing(100.0, 1.0)
+    rng = np.random.default_rng(0)
+    current = _FakeState(objective=100.0)
+    current.tracker = _ElapsedTracker(0.0)
+
+    better = _FakeState(objective=90.0)
+    assert criterion(rng, current, current, better) is True
+
+    # Near the end of the budget the temperature is ~1, so +50 is rejected.
+    current.tracker = _ElapsedTracker(100.0)
+    worse = _FakeState(objective=150.0)
+    assert criterion(rng, current, current, worse) is False
+
+
+def test_progress_cooled_annealing_rejects_non_finite_delta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    criterion = ProgressCooledAnnealing(100.0, 1.0)
+    current = _FakeState(objective=float("inf"))
+    current.tracker = _ElapsedTracker(0.0)
+    candidate = _FakeState(objective=10.0)
+
+    assert criterion(np.random.default_rng(0), current, current, candidate) is False
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [(0.0, 1.0), (10.0, 0.0), (1.0, 10.0)],
+)
+def test_progress_cooled_annealing_rejects_invalid_temperatures(
+    start: float, end: float
+) -> None:
+    with pytest.raises(ValueError):
+        ProgressCooledAnnealing(start, end)
 
 
 def test_candidate_proxy_keeps_non_finite_objective() -> None:

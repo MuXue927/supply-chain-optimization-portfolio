@@ -19,6 +19,7 @@ from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alns_optimizer import (
     ALNSOptimizer,
     is_file_in_use,
+    resolve_run_seed,
     safe_state_snapshot,
     suppress_noisy_operator_stdout,
 )
@@ -39,6 +40,32 @@ def _optimizer(tmp_path: Path) -> ALNSOptimizer:
         input_file_loc=str(_small_dataset_dir()),
         output_file_loc=str(tmp_path / "out"),
     )
+
+
+def test_run_seed_is_read_from_the_live_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Import order must not freeze the seed of the whole search.
+
+    The module used to snapshot ``SEED`` at import time, so an embedding that
+    imported this module before updating the shared config silently ran every
+    "seed" on the same RNG stream.
+    """
+    monkeypatch.setattr(ALNSConfig, "SEED", 42)
+    assert resolve_run_seed() == 42
+    monkeypatch.setattr(ALNSConfig, "SEED", 7)
+    assert resolve_run_seed() == 7
+
+
+def test_optimizers_created_after_a_seed_change_use_the_new_seed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "SEED", 42)
+    first = _optimizer(tmp_path / "a").rng.integers(0, 1_000_000, 4)
+    monkeypatch.setattr(ALNSConfig, "SEED", 7)
+    second = _optimizer(tmp_path / "b").rng.integers(0, 1_000_000, 4)
+
+    assert list(first) != list(second)
 
 
 @pytest.fixture(scope="module")

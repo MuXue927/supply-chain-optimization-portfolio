@@ -130,6 +130,64 @@ class _CandidateProxy:
         return getattr(self.__orig, name)
 
 
+class ProgressCooledAnnealing:
+    """Simulated annealing cooled on the run's elapsed fraction.
+
+    ``alns.accept.SimulatedAnnealing`` multiplies the temperature by a fixed
+    step after every iteration. Throughput here spans roughly 0.1-40
+    iterations per second across scales and hosts, so a single step cannot
+    describe "cool down over this run". On large (about 50 iterations per
+    150 s) a step of ``1 - 5e-4`` leaves the temperature at its starting value
+    and every worsening candidate is accepted; the incumbent then drifts far
+    above the starting solution and never returns.
+
+    This criterion cools on ``elapsed / MAX_RUNTIME`` instead, the same
+    progress measure the phase policies use. The schedule is therefore the
+    same on a fast and a slow machine, and it reaches ``end_temperature``
+    exactly when the budget is exhausted, independent of the iteration count.
+    """
+
+    def __init__(self, start_temperature: float, end_temperature: float):
+        start = float(start_temperature)
+        end = float(end_temperature)
+        if start <= 0 or end <= 0:
+            raise ValueError("Temperatures must be strictly positive.")
+        if start < end:
+            raise ValueError(
+                "start_temperature < end_temperature not understood."
+            )
+        self._start = start
+        self._end = end
+
+    @property
+    def start_temperature(self) -> float:
+        return self._start
+
+    @property
+    def end_temperature(self) -> float:
+        return self._end
+
+    def temperature(self, progress: float) -> float:
+        """Geometric interpolation from the start to the end temperature."""
+        fraction = min(1.0, max(0.0, float(progress)))
+        return self._start * (self._end / self._start) ** fraction
+
+    def __call__(self, rng, best, current, candidate) -> bool:
+        progress = resolve_progress((current, candidate, best))
+        try:
+            delta = float(current.objective()) - float(candidate.objective())
+        except (AttributeError, TypeError, ValueError):
+            return False
+        if not np.isfinite(delta):
+            return False
+        if delta >= 0.0:
+            # exp(delta / T) >= 1 >= U[0, 1); returning early avoids the
+            # overflow that a very good candidate could otherwise cause.
+            return True
+        probability = np.exp(delta / self.temperature(progress))
+        return bool(probability >= rng.random())
+
+
 class DemandConstraintAccept:
     """
     Wrapper acceptor that adds unmet-demand penalties.
