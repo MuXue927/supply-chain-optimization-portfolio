@@ -78,6 +78,7 @@ from .optutility import LogPrinter
 # to reduce module import overhead (matplotlib/pandas are heavy). They will be imported
 # inside those functions when actually needed.
 from .param_tuner import ParamAutoTuner
+from .progress import resolve_progress
 from .repair_operators import (
     FleetConsolidationRepairOperator,
     create_cross_period_consolidation_repair,
@@ -144,6 +145,7 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         op_coupling=None,
         normalisation: str = "sum",
         prior_k: float = 2.0,
+        progress_segments: int = 0,
     ):
         if normalisation not in ("sum", "mean", "shrunk"):
             raise ValueError(
@@ -154,6 +156,11 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         # returns, so the call counters must exist first.
         self._normalisation = normalisation
         self._prior_k = float(prior_k)
+        self._progress_segments = int(progress_segments)
+        self._segments_done = 0
+        self._next_boundary = (
+            1.0 / self._progress_segments if self._progress_segments > 0 else 1.0
+        )
         self._d_seg_calls = np.zeros(num_destroy, dtype=float)
         self._r_seg_calls = np.zeros(num_repair, dtype=float)
         super().__init__(
@@ -191,6 +198,33 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         return (weights + self._prior_k * grand) / (calls + self._prior_k)
 
     def __call__(self, rng, best, curr):
+        if self._progress_segments > 0:
+            self._iter += 1
+            progress = resolve_progress((best, curr))
+            # Segment boundaries are fractions of the runtime budget, so the
+            # search adapts even when it completes fewer iterations than one
+            # iteration-defined segment (measured: 49-80 iterations on large
+            # against seg_length=80, i.e. the weights never updated at all).
+            reached = min(
+                self._progress_segments - 1,
+                int(progress * self._progress_segments),
+            )
+            if reached > self._segments_done:
+                self._segments_done = reached
+                self._next_boundary = (
+                    reached + 1
+                ) / self._progress_segments
+                self._d_weights *= self._decay
+                self._d_weights += (1 - self._decay) * self._segment_credit(
+                    self._d_seg_weights, self._d_seg_calls
+                )
+                self._r_weights *= self._decay
+                self._r_weights += (1 - self._decay) * self._segment_credit(
+                    self._r_seg_weights, self._r_seg_calls
+                )
+                self._reset_segment_weights()
+            return RouletteWheel.__call__(self, rng, best, curr)
+
         if self._normalisation == "sum":
             # Unchanged path: let the library do exactly what it did before.
             return super().__call__(rng, best, curr)
@@ -1122,6 +1156,9 @@ class ALNSOptimizer:
                     ALNSConfig, "ROULETTE_REWARD_NORMALISATION", "sum"
                 ),
                 prior_k=getattr(ALNSConfig, "ROULETTE_REWARD_PRIOR_K", 2.0),
+                progress_segments=int(
+                    getattr(ALNSConfig, "ROULETTE_PROGRESS_SEGMENTS", 0)
+                ),
             )
             self.log_printer.print(f"Step 4 elapsed: {time.time() - t0:.2f}s")
 

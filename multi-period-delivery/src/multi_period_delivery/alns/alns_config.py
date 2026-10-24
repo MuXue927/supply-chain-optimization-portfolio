@@ -280,6 +280,14 @@ class ALNSConfig:
     ROULETTE_DECAY: float = 0.65
     # Number of iterations per scoring segment before scores are decayed.
     ROULETTE_SEG_LENGTH: int = 80
+    # Divide the run into this many scoring segments by *progress* instead of
+    # by iteration count. Zero keeps the iteration-based behaviour above.
+    #
+    # Rationale: ``ROULETTE_SEG_LENGTH = 80`` never completes on large, where a
+    # 150 s run finishes 49-80 iterations, so the operator weights never update
+    # and selection stays effectively uniform. Progress is elapsed/MAX_RUNTIME,
+    # the same measure the phase policies and the cooling schedule use.
+    ROULETTE_PROGRESS_SEGMENTS: int = 0
 
     # How a segment's scores become one weight update.
     #

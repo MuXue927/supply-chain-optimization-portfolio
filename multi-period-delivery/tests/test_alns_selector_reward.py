@@ -24,11 +24,86 @@ import numpy as np
 import pytest
 from alns.Outcome import Outcome
 
+from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alns_optimizer import NoOpAwareSegmentedRouletteWheel
 
 SCORES = [8.0, 3.0, 1.0, 0.2]
 OUTCOME_P = [0.04, 0.10, 0.26, 0.60]
 OUTCOMES = [Outcome.BEST, Outcome.BETTER, Outcome.ACCEPT, Outcome.REJECT]
+
+
+class _Tracker:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+
+    def elapsed_seconds(self) -> float:
+        return self.elapsed
+
+
+class _State:
+    """Carries only what ``resolve_progress`` reads."""
+
+    def __init__(self, tracker: _Tracker) -> None:
+        self.tracker = tracker
+
+
+def _progress_wheel(segments: int, n: int = 3) -> NoOpAwareSegmentedRouletteWheel:
+    return NoOpAwareSegmentedRouletteWheel(
+        scores=SCORES,
+        decay=0.65,
+        seg_length=80,
+        num_destroy=n,
+        num_repair=n,
+        progress_segments=segments,
+    )
+
+
+def test_iteration_segments_never_update_when_the_run_is_shorter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Documents the defect: 49-80 iterations against seg_length=80."""
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    tracker = _Tracker()
+    wheel = _progress_wheel(segments=0)
+    for i in range(60):
+        tracker.elapsed = i  # only 60% of the budget, 60 iterations
+        d_idx, r_idx = wheel(np.random.default_rng(i), _State(tracker), _State(tracker))
+        wheel.update(_State(tracker), d_idx, r_idx, Outcome.REJECT)
+
+    assert np.allclose(wheel._d_weights, 1.0)
+    assert np.allclose(wheel._r_weights, 1.0)
+
+
+def test_progress_segments_update_weights_within_the_same_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    tracker = _Tracker()
+    wheel = _progress_wheel(segments=4)
+    for i in range(60):
+        tracker.elapsed = i
+        d_idx, r_idx = wheel(np.random.default_rng(i), _State(tracker), _State(tracker))
+        # One operator always scores BEST, the others always REJECT.
+        outcome = Outcome.BEST if d_idx == 0 else Outcome.REJECT
+        wheel.update(_State(tracker), d_idx, r_idx, outcome)
+
+    # 60% of the budget crosses two boundaries (0.25, 0.50).
+    assert wheel._segments_done == 2
+    assert wheel._d_weights[0] > wheel._d_weights[1]
+
+
+def test_progress_segments_apply_at_most_one_update_per_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single slow iteration must not replay several segment updates."""
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100.0)
+    tracker = _Tracker()
+    wheel = _progress_wheel(segments=4)
+    wheel(np.random.default_rng(0), _State(tracker), _State(tracker))
+    tracker.elapsed = 99.0  # jumps past every boundary at once
+    wheel(np.random.default_rng(1), _State(tracker), _State(tracker))
+
+    assert wheel._segments_done == 3
 
 
 def _max_share(normalisation: str, iters: int, n: int, seed: int, seg: int) -> float:
