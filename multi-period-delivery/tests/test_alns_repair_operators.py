@@ -568,6 +568,35 @@ def test_cross_period_capacity_precheck_skips_clones_without_changing_the_result
     assert again.calculate_cost() == consolidated.calculate_cost()
 
 
+def test_cross_period_route_index_matches_the_full_fleet_scan(
+    feasible_solution: SolutionState,
+) -> None:
+    """Indexing by (plant, dealer) must preserve the exact target list.
+
+    The optimizer visits targets in fleet order and takes the first improving
+    move, so a different order would change which move wins. This checks every
+    source on the same production initial solution, not one sampled route.
+    """
+    state = feasible_solution
+    by_route = repair._cross_period_route_index(state)
+
+    for source in state.vehicles:
+        expected = [
+            veh
+            for veh in state.vehicles
+            if veh is not source
+            and veh.fact_id == source.fact_id
+            and veh.dealer_id == source.dealer_id
+            and veh.day != source.day
+        ]
+        actual = [
+            veh
+            for veh in by_route.get((source.fact_id, source.dealer_id), ())
+            if veh is not source and veh.day != source.day
+        ]
+        assert [veh.id for veh in actual] == [veh.id for veh in expected]
+
+
 def test_cross_period_precheck_does_not_drop_mergeable_pairs(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:

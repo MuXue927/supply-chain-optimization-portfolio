@@ -727,6 +727,22 @@ def _cross_period_merge_keeps_inventory_non_negative(state, source, target, hori
     return True
 
 
+def _cross_period_route_index(
+    state: SolutionState,
+) -> dict[tuple[str, str], list[Vehicle]]:
+    """Group non-empty candidates by route, preserving fleet order.
+
+    A cross-period move keeps ``(plant, dealer)`` fixed, so scanning every
+    vehicle for each source repeated the same equality checks 8.5 million
+    times on large. The index is rebuilt after each accepted move because
+    vehicles are removed; within one candidate scan it is stable.
+    """
+    index: dict[tuple[str, str], list[Vehicle]] = {}
+    for veh in state.vehicles:
+        index.setdefault((veh.fact_id, veh.dealer_id), []).append(veh)
+    return index
+
+
 def cross_period_consolidation_repair(
     partial: SolutionState,
     rng: rnd.Generator,
@@ -796,6 +812,11 @@ def cross_period_consolidation_repair(
             break
         best_candidate = None
         best_cost = current_cost
+        # ``state.vehicles`` is unchanged until a move is accepted, so both
+        # indexes stay valid for the whole candidate scan. The route index keeps
+        # the original order inside each (plant, dealer) route.
+        vehicles_by_id = {veh.id: veh for veh in state.vehicles}
+        vehicles_by_route = _cross_period_route_index(state)
         source_vehicles = sorted(
             list(state.vehicles),
             key=lambda veh: float(state.compute_veh_load(veh)),
@@ -803,7 +824,7 @@ def cross_period_consolidation_repair(
         for source in source_vehicles:
             if _out_of_time():
                 break
-            if source not in state.vehicles:
+            if source.id not in vehicles_by_id:
                 continue
             source_volume = float(state.compute_veh_load(source))
             if source_volume <= 0:
@@ -811,10 +832,10 @@ def cross_period_consolidation_repair(
 
             targets = [
                 veh
-                for veh in state.vehicles
+                for veh in vehicles_by_route.get(
+                    (source.fact_id, source.dealer_id), ()
+                )
                 if veh is not source
-                and veh.fact_id == source.fact_id
-                and veh.dealer_id == source.dealer_id
                 and veh.day != source.day
             ]
             targets.sort(
@@ -852,14 +873,9 @@ def cross_period_consolidation_repair(
                     ):
                         continue
                 candidate = state.copy()
-                candidate_source = next(
-                    (veh for veh in candidate.vehicles if veh.id == source.id),
-                    None,
-                )
-                candidate_target = next(
-                    (veh for veh in candidate.vehicles if veh.id == target.id),
-                    None,
-                )
+                candidate_by_id = {veh.id: veh for veh in candidate.vehicles}
+                candidate_source = candidate_by_id.get(source.id)
+                candidate_target = candidate_by_id.get(target.id)
                 if candidate_source is None or candidate_target is None:
                     continue
 
