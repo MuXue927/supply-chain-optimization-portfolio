@@ -743,6 +743,167 @@ def _cross_period_route_index(
     return index
 
 
+def _cross_period_merge_keeps_plant_limit(
+    state: SolutionState,
+    source: Vehicle,
+    target: Vehicle,
+    plant_day_totals: dict[tuple[str, int], float] | None = None,
+) -> bool:
+    """Check the storage upper bound affected by a cross-period move.
+
+    Moving a shipment later raises the closing balances before the target day;
+    those balances must not exceed the plant capacity. Moving earlier only
+    lowers them, so only positive deltas can violate this bound.
+    """
+    limits = getattr(state.data, "plant_inv_limit", {}) or {}
+    if not limits:
+        return True
+    per_plant_day: dict[tuple[str, int], int] = {}
+    for (sku, _source_day), qty in source.cargo.items():
+        qty = int(qty)
+        if qty <= 0:
+            continue
+        if target.day > source.day:
+            days = range(int(source.day), int(target.day))
+            sign = 1
+        else:
+            days = range(int(target.day), int(source.day))
+            sign = -1
+        for day in days:
+            key = (source.fact_id, int(day))
+            per_plant_day[key] = per_plant_day.get(key, 0) + sign * qty
+    for (plant, day), delta in per_plant_day.items():
+        if delta <= 0:
+            continue
+        limit = limits.get(plant)
+        if limit is None:
+            continue
+        if plant_day_totals is None:
+            current = sum(
+                float(value)
+                for (plant_key, _sku, day_key), value in state.s_ikt.items()
+                if plant_key == plant and day_key == day
+            )
+        else:
+            current = float(plant_day_totals.get((plant, day), 0.0))
+        if current + delta > float(limit) + 1e-9:
+            return False
+    return True
+
+
+def _cross_period_target_plan(
+    state: SolutionState,
+    source: Vehicle,
+    target: Vehicle,
+) -> tuple[str, float, float, float] | None:
+    """Return ``(target_type, source_vol, target_vol, combined_vol)``."""
+    source_volume = float(state.compute_veh_load(source))
+    target_volume = float(state.compute_veh_load(target))
+    combined = source_volume + target_volume
+    target_type = target.type
+    if float(target.capacity) + 1e-9 < source_volume:
+        suitable = sorted(
+            (
+                (vehicle_type, float(capacity))
+                for vehicle_type, capacity in state.data.veh_type_cap.items()
+                if float(capacity) + 1e-9 >= combined
+            ),
+            key=lambda item: item[1],
+        )
+        if not suitable:
+            return None
+        target_type = suitable[0][0]
+    if float(state.data.veh_type_cap.get(target_type, 0.0)) + 1e-9 < combined:
+        return None
+    return target_type, source_volume, target_volume, combined
+
+
+def _cross_period_vehicle_contribution(
+    data, vehicle_type: str, loaded: float
+) -> float:
+    cost = float(data.veh_type_cost.get(vehicle_type, 0.0))
+    if loaded < float(data.veh_type_min_load.get(vehicle_type, 0.0)):
+        if float(getattr(data, "param_pun_objective", 0.0)) > 0.0:
+            cost += float(data.param_pun_objective)
+        else:
+            cost += float(data.param_alpha) * cost
+    return cost
+
+
+def _cross_period_candidate_cost(
+    state: SolutionState,
+    current_cost: float,
+    source: Vehicle,
+    target: Vehicle,
+    target_type: str,
+    source_volume: float,
+    target_volume: float,
+    combined_volume: float,
+) -> float:
+    """Exact actual-objective delta for one source -> target merge."""
+    old = _cross_period_vehicle_contribution(
+        state.data, source.type, source_volume
+    )
+    # Empty vehicles are not part of iter_used_vehicles(), so they contribute
+    # no fixed cost or underload penalty to the current objective.
+    if target_volume > 0:
+        old += _cross_period_vehicle_contribution(
+            state.data, target.type, target_volume
+        )
+    new = _cross_period_vehicle_contribution(
+        state.data, target_type, combined_volume
+    )
+    return current_cost - old + new
+
+
+def _cross_period_build_candidate(
+    state: SolutionState,
+    source: Vehicle,
+    target: Vehicle,
+    target_type: str,
+) -> SolutionState | None:
+    """Build the one selected candidate without paying for rejected copies."""
+    candidate = state.copy()
+    by_id = {veh.id: veh for veh in candidate.vehicles}
+    candidate_source = by_id.get(source.id)
+    candidate_target = by_id.get(target.id)
+    if candidate_source is None or candidate_target is None:
+        return None
+    if candidate_target.type != target_type:
+        upgraded_target = Vehicle(
+            candidate_target.fact_id,
+            candidate_target.dealer_id,
+            target_type,
+            candidate_target.day,
+            candidate.data,
+        )
+        upgraded_target.cargo = dict(candidate_target.cargo)
+        candidate.vehicles = [
+            upgraded_target if veh.id == candidate_target.id else veh
+            for veh in candidate.vehicles
+        ]
+        candidate_target = upgraded_target
+
+    merged_cargo = dict(candidate_target.cargo)
+    for (sku_id, _source_day), qty in candidate_source.cargo.items():
+        key = (sku_id, candidate_target.day)
+        merged_cargo[key] = merged_cargo.get(key, 0) + int(qty)
+    candidate_target.cargo = merged_cargo
+    candidate.vehicles = [
+        veh for veh in candidate.vehicles if veh.id != candidate_source.id
+    ]
+    candidate.mark_objective_dirty()
+    return candidate
+
+
+def _cross_period_plant_day_totals(state: SolutionState) -> dict[tuple[str, int], float]:
+    totals: dict[tuple[str, int], float] = {}
+    for (plant, _sku, day), value in state.s_ikt.items():
+        key = (plant, int(day))
+        totals[key] = totals.get(key, 0.0) + float(value)
+    return totals
+
+
 def cross_period_consolidation_repair(
     partial: SolutionState,
     rng: rnd.Generator,
@@ -757,10 +918,10 @@ def cross_period_consolidation_repair(
     different period. A move is kept only when the resulting state remains
     feasible and the actual objective strictly improves.
 
-    Evaluating a candidate requires a full state copy, so a single invocation
-    is bounded by ``time_limit`` seconds and ``max_moves`` accepted moves.
-    Both defaults come from :class:`ALNSConfig` and keep one repair call from
-    consuming the whole ALNS time budget on medium and large instances.
+    Candidate feasibility and cost are scored from the two affected vehicles
+    and the inventory suffix; only the selected move is materialized. The
+    accepted-move count still bounds the returned fleet change, while the
+    optional wall-clock limit protects a caller from pathological inputs.
     """
     state = partial.copy()
     try:
@@ -803,20 +964,16 @@ def cross_period_consolidation_repair(
     def _out_of_time() -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
-    # Read once: the capacity pre-check below needs the type catalogue for every
-    # candidate pair, and it never changes during a call.
-    veh_type_cap = getattr(state.data, "veh_type_cap", {}) or {}
-
     while True:
         if _out_of_time() or (move_cap is not None and moves >= move_cap):
             break
-        best_candidate = None
-        best_cost = current_cost
+        selected = None
         # ``state.vehicles`` is unchanged until a move is accepted, so both
         # indexes stay valid for the whole candidate scan. The route index keeps
         # the original order inside each (plant, dealer) route.
         vehicles_by_id = {veh.id: veh for veh in state.vehicles}
         vehicles_by_route = _cross_period_route_index(state)
+        plant_day_totals = _cross_period_plant_day_totals(state)
         source_vehicles = sorted(
             list(state.vehicles),
             key=lambda veh: float(state.compute_veh_load(veh)),
@@ -848,101 +1005,50 @@ def cross_period_consolidation_repair(
             for target in targets:
                 if _out_of_time():
                     break
-                # Decide the dominant rejection reason before paying for the clone.
-                # ~89% of candidates are rejected, ~98% of those for
-                # negative_inventory, and the check above proves this test is exact
-                # (0 disagreements over all 5,570 reachable merges).
                 if not _cross_period_merge_keeps_inventory_non_negative(
                     state, source, target, horizons
                 ):
                     continue
-                # Capacity is decidable *before* the clone: the merge needs the
-                # target to hold ``source_volume + target_volume``, and when the
-                # target's remaining room is short of ``source_volume`` the only
-                # rescue is a bigger vehicle type. All three inputs survive
-                # ``copy()`` unchanged, so this filter removes exactly the
-                # candidates the post-copy block would reject - and nothing else.
-                # Measured on large (40 s run, final pass): 784 of 804 clones
-                # (97.5%) died here, each one a full-fleet clone.
-                _pre_target_volume = float(state.compute_veh_load(target))
-                _pre_combined = source_volume + _pre_target_volume
-                if float(target.capacity) + 1e-9 < source_volume:
-                    if not any(
-                        float(capacity) + 1e-9 >= _pre_combined
-                        for capacity in veh_type_cap.values()
-                    ):
-                        continue
-                candidate = state.copy()
-                candidate_by_id = {veh.id: veh for veh in candidate.vehicles}
-                candidate_source = candidate_by_id.get(source.id)
-                candidate_target = candidate_by_id.get(target.id)
-                if candidate_source is None or candidate_target is None:
+                if not _cross_period_merge_keeps_plant_limit(
+                    state, source, target, plant_day_totals
+                ):
                     continue
-
-                target_volume = float(candidate.compute_veh_load(candidate_target))
-                combined_volume = source_volume + target_volume
-                if float(candidate_target.capacity) + 1e-9 < source_volume:
-                    suitable_types = sorted(
-                        (
-                            (vehicle_type, float(capacity))
-                            for vehicle_type, capacity in candidate.data.veh_type_cap.items()
-                            if float(capacity) + 1e-9 >= combined_volume
-                        ),
-                        key=lambda item: item[1],
-                    )
-                    if not suitable_types:
-                        continue
-                    upgraded_type = suitable_types[0][0]
-                    upgraded_target = Vehicle(
-                        candidate_target.fact_id,
-                        candidate_target.dealer_id,
-                        upgraded_type,
-                        candidate_target.day,
-                        candidate.data,
-                    )
-                    upgraded_target.cargo = dict(candidate_target.cargo)
-                    candidate.vehicles = [
-                        upgraded_target
-                        if veh.id == candidate_target.id
-                        else veh
-                        for veh in candidate.vehicles
-                    ]
-                    candidate_target = upgraded_target
-
-                merged_cargo = dict(candidate_target.cargo)
-                for (sku_id, _source_day), qty in candidate_source.cargo.items():
-                    key = (sku_id, candidate_target.day)
-                    merged_cargo[key] = merged_cargo.get(key, 0) + int(qty)
-                candidate_target.cargo = merged_cargo
-                candidate.vehicles = [
-                    veh
-                    for veh in candidate.vehicles
-                    if veh.id != candidate_source.id
-                ]
-                candidate.mark_objective_dirty()
-                try:
-                    # calculate_cost() validates again through actual_objective().
-                    # The candidate is unchanged between these calls, so reuse
-                    # the first proof within this explicit scope.
-                    with candidate.validation_memo_ctx():
-                        feasible, _ = candidate.validate()
-                        if not feasible:
-                            continue
-                        candidate_cost = float(candidate.calculate_cost())
-                except Exception as exc:
-                    record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
+                plan = _cross_period_target_plan(state, source, target)
+                if plan is None:
                     continue
-                if np.isfinite(candidate_cost) and candidate_cost < best_cost - 1e-9:
-                    best_candidate = candidate
-                    best_cost = candidate_cost
+                target_type, target_volume, combined_volume = plan[0], plan[2], plan[3]
+                candidate_cost = _cross_period_candidate_cost(
+                    state,
+                    current_cost,
+                    source,
+                    target,
+                    target_type,
+                    source_volume,
+                    target_volume,
+                    combined_volume,
+                )
+                if np.isfinite(candidate_cost) and candidate_cost < current_cost - 1e-9:
+                    selected = (source, target, target_type, candidate_cost)
                     break
-            if best_candidate is not None:
+            if selected is not None:
                 break
 
-        if best_candidate is None:
+        if selected is None:
             break
-        state = best_candidate
-        current_cost = best_cost
+        source, target, target_type, predicted_cost = selected
+        candidate = _cross_period_build_candidate(state, source, target, target_type)
+        if candidate is None:
+            break
+        try:
+            # The quantity and feasibility prediction above is exact for the
+            # affected route; the inventory table still has to be refreshed for
+            # the next candidate scan.
+            candidate.compute_inventory()
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            record_swallowed("repair_operators.cross_period_consolidation_repair", exc)
+            break
+        state = candidate
+        current_cost = predicted_cost
         improved_any = True
         moves += 1
 

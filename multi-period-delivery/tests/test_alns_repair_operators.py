@@ -597,6 +597,78 @@ def test_cross_period_route_index_matches_the_full_fleet_scan(
         assert [veh.id for veh in actual] == [veh.id for veh in expected]
 
 
+def test_incremental_cross_period_cost_matches_a_full_candidate(
+    feasible_solution: SolutionState,
+) -> None:
+    """The score used before materializing a move must equal the real cost.
+
+    M37 compared this prediction with every candidate reached by the production
+    pass on medium and large (103/150 copies, 0 differences). This small test
+    keeps the exact contract covered in the default suite.
+    """
+    state = feasible_solution.copy()
+    old_limits = state.data.plant_inv_limit
+    state.data.plant_inv_limit = {
+        plant: float("inf") for plant in state.data.plants
+    }
+    try:
+        state.compute_inventory()
+        current_cost = float(state.calculate_cost())
+        for source in list(state.vehicles):
+            candidate_days = [
+                day
+                for day in (source.day + 1, source.day - 1)
+                if 1 <= day <= state.data.horizons
+            ]
+            for day in candidate_days:
+                target = Vehicle(
+                    source.fact_id,
+                    source.dealer_id,
+                    source.type,
+                    day,
+                    state.data,
+                )
+                state.vehicles.append(target)
+                state.mark_objective_dirty()
+                state.compute_inventory()
+                try:
+                    if not repair._cross_period_merge_keeps_inventory_non_negative(
+                        state, source, target, state.data.horizons
+                    ):
+                        continue
+                    plan = repair._cross_period_target_plan(state, source, target)
+                    if plan is None:
+                        continue
+                    target_type, source_volume, target_volume, combined_volume = plan
+                    predicted = repair._cross_period_candidate_cost(
+                        state,
+                        current_cost,
+                        source,
+                        target,
+                        target_type,
+                        source_volume,
+                        target_volume,
+                        combined_volume,
+                    )
+                    candidate = repair._cross_period_build_candidate(
+                        state, source, target, target_type
+                    )
+                    assert candidate is not None
+                    candidate.compute_inventory()
+                    feasible, _ = candidate.validate()
+                    assert feasible
+                    assert predicted == pytest.approx(
+                        float(candidate.calculate_cost()), abs=1e-7
+                    )
+                    return
+                finally:
+                    state.vehicles.pop()
+                    state.mark_objective_dirty()
+        pytest.fail("no feasible cross-period pair was available for the comparison")
+    finally:
+        state.data.plant_inv_limit = old_limits
+
+
 def test_cross_period_precheck_does_not_drop_mergeable_pairs(
     feasible_solution: SolutionState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
