@@ -121,9 +121,21 @@ class CargoDict(dict):
       - This class is used only inside Vehicle instances to synchronize caches
         when cargo is modified in place.
     """
-    def __init__(self, vehicle, *args, **kwargs):
+    def __init__(self, vehicle, *args, sync: bool = True, **kwargs):
         super().__init__(*args, **kwargs)
         self._veh = vehicle
+        if sync:
+            self._sync_loaded_volume()
+
+    def _sync_loaded_volume(self) -> None:
+        loaded = 0.0
+        for (sku, _day), qty in self.items():
+            try:
+                loaded += float(qty) * self._sku_size(sku)
+            except (TypeError, ValueError):
+                continue
+        self._veh._loaded_volume = loaded
+        self._veh.capacity = max(0, self._veh.max_capacity - loaded)
 
     def _sku_size(self, sku):
         try:
@@ -176,9 +188,15 @@ class CargoDict(dict):
         for k, v in other.items():
             self.__setitem__(k, v)
 
-    def pop(self, key, default=None):
-        prev = self.get(key, default)
-        res = super().pop(key, default)
+    _MISSING = object()
+
+    def pop(self, key, default=_MISSING):
+        if key not in self:
+            if default is self._MISSING:
+                raise KeyError(key)
+            return default
+        prev = self[key]
+        res = super().pop(key)
         _note_cargo_mutation()
         try:
             sku, d = key
@@ -187,6 +205,15 @@ class CargoDict(dict):
         except (AttributeError, KeyError, TypeError, ValueError):
             pass
         return res
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
 
     def popitem(self):
         k, v = super().popitem()
@@ -232,6 +259,7 @@ class SiktDict(dict):
     """
 
     __slots__ = ("revision",)
+    _MISSING = object()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -255,9 +283,13 @@ class SiktDict(dict):
             self.revision += 1
         super().clear()
 
-    def pop(self, key, default=None):
+    def pop(self, key, default=_MISSING):
         existed = key in self
-        result = super().pop(key, default)
+        if not existed:
+            if default is self._MISSING:
+                raise KeyError(key)
+            return default
+        result = super().pop(key)
         if existed:
             self.revision += 1
         return result
@@ -270,6 +302,10 @@ class SiktDict(dict):
     def update(self, *args, **kwargs):
         for key, value in dict(*args, **kwargs).items():
             self[key] = value
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
 
     def setdefault(self, key, default=None):
         if key not in self:
@@ -350,7 +386,9 @@ class Vehicle:
         # mapping may be a plain dict or another mapping; wrap it in CargoDict
         # and synchronize the loaded volume. ``dict(None)`` would raise, so the
         # empty case is spelled out.
-        new_map = CargoDict(self, {} if mapping is None else dict(mapping))
+        new_map = CargoDict(
+            self, {} if mapping is None else dict(mapping), sync=False
+        )
         # Compute loaded volume. A non-numeric quantity is a data error worth
         # skipping rather than aborting the assignment; anything else is a bug
         # and propagates.

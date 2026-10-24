@@ -74,6 +74,16 @@ def test_construction_initialises_an_empty_cargo_dict() -> None:
     assert vehicle.capacity == vehicle.max_capacity == 100
 
 
+def test_direct_cargo_dict_construction_synchronises_volume() -> None:
+    vehicle = _vehicle()
+
+    cargo = CargoDict(vehicle, {("S1", 1): 4})
+
+    assert dict(cargo) == {("S1", 1): 4}
+    assert vehicle._loaded_volume == pytest.approx(8.0)
+    assert vehicle.capacity == pytest.approx(92.0)
+
+
 def test_assignment_wraps_and_synchronises_volume_and_capacity() -> None:
     vehicle = _vehicle()
 
@@ -124,3 +134,49 @@ def test_non_numeric_quantity_is_skipped_not_fatal() -> None:
     vehicle.cargo = {("S1", 1): "not-a-number", ("S2", 1): 2}
 
     assert vehicle._loaded_volume == pytest.approx(6.0)  # only the valid entry
+
+
+def test_setdefault_keeps_volume_and_cache_synchronised() -> None:
+    vehicle = _vehicle()
+    vehicle.cargo[("S1", 1)] = 2
+
+    assert vehicle.cargo.setdefault(("S2", 1), 4) == 4
+
+    assert dict(vehicle.cargo) == {("S1", 1): 2, ("S2", 1): 4}
+    assert vehicle._loaded_volume == pytest.approx(16.0)  # 2*2 + 4*3
+    assert vehicle.capacity == pytest.approx(84.0)
+
+
+def test_ior_keeps_volume_and_cache_synchronised() -> None:
+    vehicle = _vehicle()
+    vehicle.cargo[("S1", 1)] = 2
+
+    vehicle.cargo |= {("S2", 1): 4}
+
+    assert vehicle._loaded_volume == pytest.approx(16.0)
+    assert vehicle.capacity == pytest.approx(84.0)
+
+
+def test_pop_missing_key_with_a_valid_default_does_not_change_cargo_state() -> None:
+    """A missing key must not be treated as a removed load.
+
+    ``pop(missing, default)`` used to subtract ``default * sku_size`` from the
+    vehicle even though nothing was removed, silently corrupting both the
+    loaded-volume cache and the remaining capacity.
+    """
+    vehicle = _vehicle()
+    vehicle.cargo[("S1", 1)] = 3
+    before_loaded = vehicle._loaded_volume
+    before_capacity = vehicle.capacity
+
+    assert vehicle.cargo.pop(("S2", 1), 5) == 5
+
+    assert vehicle._loaded_volume == before_loaded
+    assert vehicle.capacity == before_capacity
+
+
+def test_pop_without_a_default_still_raises_key_error() -> None:
+    vehicle = _vehicle()
+
+    with pytest.raises(KeyError):
+        vehicle.cargo.pop(("S1", 1))

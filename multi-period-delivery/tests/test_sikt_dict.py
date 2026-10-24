@@ -16,6 +16,8 @@ The array cache itself is covered in ``test_inventory_cache_helpers.py``.
 
 from __future__ import annotations
 
+import pytest
+
 from multi_period_delivery.alns.vehicle import SiktDict
 
 
@@ -161,6 +163,23 @@ def test_popping_a_missing_key_does_not_bump() -> None:
     assert tracked.pop(("P", "S", 1), None) is None
 
     assert tracked.revision == before
+
+
+def test_pop_without_a_default_raises_key_error() -> None:
+    tracked = _tracked()
+
+    with pytest.raises(KeyError):
+        tracked.pop(("P", "S", 1))
+
+
+def test_in_place_union_bumps_the_revision() -> None:
+    tracked = _tracked({("P", "S", 1): 5})
+    before = tracked.revision
+
+    tracked |= {("P", "S", 2): 1}
+
+    assert tracked[("P", "S", 2)] == 1
+    assert tracked.revision == before + 1
 
 
 # ---------------------------------------------------------------------------

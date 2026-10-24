@@ -105,6 +105,32 @@ def test_not_fresh_after_cargo_changes() -> None:
     assert state._inventory_is_fresh() is False
 
 
+def test_setdefault_and_union_invalidate_freshness() -> None:
+    """Every CargoDict mutation path must move the inventory stamp."""
+    state = _state()
+    state.compute_inventory()
+    vehicle = next(v for v in state.vehicles if v.cargo)
+    day = int(vehicle.day)
+
+    vehicle.cargo.setdefault(("__freshness_audit__", day), 1)
+    assert state._inventory_is_fresh() is False
+
+    state.compute_inventory()
+    assert state._inventory_is_fresh() is True
+    vehicle.cargo |= {("__freshness_audit_2__", day): 1}
+    assert state._inventory_is_fresh() is False
+
+
+def test_pop_missing_key_does_not_invalidate_freshness() -> None:
+    state = _state()
+    state.compute_inventory()
+    vehicle = next(v for v in state.vehicles if v.cargo)
+
+    vehicle.cargo.pop(("__missing__", int(vehicle.day)), 5)
+
+    assert state._inventory_is_fresh() is True
+
+
 def test_fresh_again_after_a_cargo_change_is_recomputed() -> None:
     """The property must recover, or the fast path would never re-engage."""
     state = _state()
