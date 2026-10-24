@@ -28,6 +28,7 @@ import pytest
 
 from multi_period_delivery.alns import destroy_operators as destroy
 from multi_period_delivery.alns import repair_operators as repair
+from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.initial_solution_utils import improved_initial_solution
 from multi_period_delivery.alns.InputDataALNS import DataALNS
@@ -102,9 +103,18 @@ def _load(scale: str, dataset: str) -> DataALNS:
 @pytest.fixture(scope="module", params=SCALES, ids=[s[0] for s in SCALES])
 def base_solution(request) -> SolutionState:
     scale, dataset = request.param
-    return improved_initial_solution(
-        SolutionState(_load(scale, dataset)), np.random.default_rng(7)
-    )
+    # These tests isolate operator correctness on the canonical same-day
+    # repacked start. The production-only cross-period initial pass is covered
+    # by the constructor tests and end-to-end runs; its cross-day cargo moves
+    # deliberately change inventory timing and are not the operator baseline.
+    previous = ALNSConfig.INITIAL_CROSS_PERIOD_CONSOLIDATION
+    ALNSConfig.INITIAL_CROSS_PERIOD_CONSOLIDATION = False
+    try:
+        return improved_initial_solution(
+            SolutionState(_load(scale, dataset)), np.random.default_rng(7)
+        )
+    finally:
+        ALNSConfig.INITIAL_CROSS_PERIOD_CONSOLIDATION = previous
 
 
 def _measure(state: SolutionState) -> tuple[int, bool, bool]:

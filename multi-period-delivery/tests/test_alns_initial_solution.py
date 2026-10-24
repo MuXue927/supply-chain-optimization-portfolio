@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from multi_period_delivery.alns import initial_solution_utils as isu
+from multi_period_delivery.alns import repair_operators as repair
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.alnsopt import SolutionState
 from multi_period_delivery.alns.InputDataALNS import DataALNS
@@ -62,6 +63,9 @@ def test_allocation_does_not_rebuild_shipments_per_load(
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(SolutionState, "compute_shipped", counted)
+    monkeypatch.setattr(
+        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", False
+    )
     state = SolutionState(_load_data())
     solution = isu.improved_initial_solution(state, _seed())
 
@@ -93,6 +97,11 @@ def test_route_repack_preserves_shipments_and_cuts_cost(
 
     def build(repack: bool):
         monkeypatch.setattr(ALNSConfig, "INITIAL_REPACK_ROUTES", repack)
+        # Cross-period moves legitimately change the inventory timing, so they
+        # are excluded when isolating the same-day repack invariant.
+        monkeypatch.setattr(
+            ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", False
+        )
         state = SolutionState(_load_data())
         return isu.improved_initial_solution(state, _seed())
 
@@ -184,12 +193,60 @@ def test_improved_initial_solution_attaches_build_stats() -> None:
         "repair_time",
         "parallel_used",
         "repair_iterations",
+        "cross_period_time",
+        "cross_period_applied",
+        "cross_period_cost_before",
+        "cross_period_cost_after",
+        "cross_period_vehicles_before",
+        "cross_period_vehicles_after",
     ):
         assert key in stats
     assert stats["parallel_used"] is False
     assert isinstance(stats["repair_iterations"], int)
     assert stats["allocation_time"] is not None
     assert stats["allocation_time"] >= 0.0
+
+
+def test_initial_cross_period_consolidation_preserves_a_feasible_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The extra pass may only keep a feasible, non-worsening fleet."""
+    monkeypatch.setattr(
+        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES", 0
+    )
+    with_cross = isu.improved_initial_solution(SolutionState(_load_data()), _seed())
+
+    assert with_cross.validate()[0]
+    assert with_cross.vehicles
+    stats = with_cross.initial_build_stats
+    assert stats["cross_period_time"] >= 0.0
+    if stats["cross_period_applied"]:
+        assert stats["cross_period_cost_after"] < stats["cross_period_cost_before"]
+        assert (
+            stats["cross_period_vehicles_after"]
+            < stats["cross_period_vehicles_before"]
+        )
+
+
+def test_initial_cross_period_failure_keeps_the_repacked_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing consolidation must restore the verified same-day solution."""
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("forced cross-period failure")
+
+    monkeypatch.setattr(
+        ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES", 0
+    )
+    monkeypatch.setattr(
+        repair, "cross_period_consolidation_repair", fail
+    )
+    sol = isu.improved_initial_solution(SolutionState(_load_data()), _seed())
+
+    assert sol.validate()[0]
+    assert sol.vehicles
+    assert sol.initial_build_stats["cross_period_applied"] is False
 
 
 def test_improved_initial_solution_survives_a_tiny_timeout(

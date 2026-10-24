@@ -7,7 +7,8 @@ Overall approach in ``improved_initial_solution``:
     2. Prioritize demands by scarcity, supply-demand ratio, and demand size.
     3. Allocate demands sequentially to vehicles.
     4. Repair inventory, remove empty vehicles, and merge small vehicles.
-    5. Return a feasible solution after recomputing inventory.
+    5. Regroup same-day routes and consolidate feasible cross-period moves.
+    6. Return a feasible solution after recomputing inventory.
 
 Key performance characteristics:
     - Local variable caching reduces repeated attribute lookups.
@@ -142,6 +143,11 @@ def improved_initial_solution(state, rng):
 
     # Strict-feasibility finalization: apply a few deterministic repairs.
     _finalize_strict_initial_feasibility(sol, rng, timeout - (time.time() - t_start))
+
+    # 6. Cross-period consolidation. The same-day repack above cannot combine
+    # vehicles from different departure days; this pass can remove those
+    # vehicles when the resulting inventory stays feasible.
+    _cross_period_consolidate_initial(sol, rng, stats)
 
     # Aggregate stage statistics without changing the original logic.
     # Resource-pool and priority timings are intentionally left as None because
@@ -854,6 +860,122 @@ def _repack_routes(sol):
         sol.mark_objective_dirty()
         return 0
     return before_count - len(rebuilt)
+
+
+def _cross_period_consolidate_initial(sol, rng, stats):
+    """Apply a bounded, verified cross-period consolidation to the start state.
+
+    The repair operator copies the state, so a failed or non-improving pass
+    leaves ``sol`` untouched. When it does improve, copy the verified fleet
+    back and prove that the inventory table and final feasibility survived the
+    transfer before keeping it.
+    """
+    try:
+        time_limit = float(
+            getattr(
+                ALNSConfig,
+                "INITIAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT",
+                0.0,
+            )
+        )
+        max_moves = int(
+            getattr(
+                ALNSConfig,
+                "INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES",
+                150,
+            )
+        )
+        min_vehicles = int(
+            getattr(
+                ALNSConfig,
+                "INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES",
+                200,
+            )
+        )
+    except (TypeError, ValueError):
+        time_limit, max_moves, min_vehicles = 0.0, 150, 200
+
+    before_cost = None
+    before_vehicles = len(sol.vehicles)
+    before_inventory = dict(sol.s_ikt)
+    before_fleet = list(sol.vehicles)
+    started = time.time()
+    applied = False
+
+    enabled = bool(
+        getattr(ALNSConfig, "INITIAL_CROSS_PERIOD_CONSOLIDATION", True)
+    )
+    if not enabled or max_moves <= 0 or before_vehicles < min_vehicles:
+        stats.update(
+            {
+                "cross_period_time": 0.0,
+                "cross_period_applied": False,
+                "cross_period_cost_before": None,
+                "cross_period_cost_after": None,
+                "cross_period_vehicles_before": before_vehicles,
+                "cross_period_vehicles_after": before_vehicles,
+            }
+        )
+        return sol
+
+    try:
+        before_cost = float(sol.calculate_cost())
+        if time_limit < 0:
+            time_limit = 0.0
+
+        from .repair_operators import cross_period_consolidation_repair
+
+        candidate = cross_period_consolidation_repair(
+            sol,
+            rng,
+            time_limit=time_limit,
+            max_moves=max_moves,
+        )
+        candidate_cost = float(candidate.calculate_cost())
+        candidate_feasible, _ = candidate.validate()
+        if (
+            candidate is not sol
+            and candidate_feasible
+            and candidate_cost < before_cost - 1e-9
+            and len(candidate.vehicles) < before_vehicles
+        ):
+            candidate_inventory = dict(candidate.s_ikt)
+            candidate_fleet = list(candidate.vehicles)
+            sol.replace_vehicles(candidate_fleet)
+            sol.compute_inventory()
+            transfer_ok = (
+                dict(sol.s_ikt) == candidate_inventory
+                and bool(sol.validate()[0])
+                and float(sol.calculate_cost()) < before_cost - 1e-9
+            )
+            if transfer_ok:
+                applied = True
+            else:
+                sol.replace_vehicles(before_fleet)
+                sol.s_ikt.clear()
+                sol.s_ikt.update(before_inventory)
+                sol.mark_objective_dirty()
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+        print(
+            "Initial cross-period consolidation skipped: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        sol.replace_vehicles(before_fleet)
+        sol.s_ikt.clear()
+        sol.s_ikt.update(before_inventory)
+        sol.mark_objective_dirty()
+
+    try:
+        after_cost = float(sol.calculate_cost())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        after_cost = None
+    stats["cross_period_time"] = time.time() - started
+    stats["cross_period_applied"] = applied
+    stats["cross_period_cost_before"] = before_cost
+    stats["cross_period_cost_after"] = after_cost
+    stats["cross_period_vehicles_before"] = before_vehicles
+    stats["cross_period_vehicles_after"] = len(sol.vehicles)
+    return sol
 
 
 def _repair_solution(sol, timeout, stats=None):

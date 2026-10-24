@@ -321,6 +321,26 @@ class ALNSConfig:
     # (plant, sku, day) quantity is unchanged and the inventory table is
     # identical. The pass verifies that and reverts otherwise.
     INITIAL_REPACK_ROUTES: bool = True
+    # Run the existing cross-period consolidation operator as a final initial
+    # solution pass. It can move a whole vehicle's cargo to another vehicle of
+    # the same (plant, dealer) route on a different day when the resulting
+    # inventory remains feasible, removing vehicles the same-day repack cannot.
+    #
+    # Measured on large dataset_3: 2791.68 -> 2449.42 after 100 moves and
+    # -> 2347.06 after 150 moves. The default is a fixed move cap with no
+    # wall-clock deadline: a time cutoff made the initial solution, and hence
+    # the whole search, depend on machine load.
+    #
+    # Re-allocating the saved search time (150 moves, then 17s search vs 30s
+    # search alone) improved seed 42 from 2329.26 to 2150.46 at the same wall.
+    INITIAL_CROSS_PERIOD_CONSOLIDATION: bool = True
+    # Zero means "no wall-clock deadline"; the move cap below is the budget.
+    INITIAL_CROSS_PERIOD_CONSOLIDATION_TIME_LIMIT: float = 0.0
+    INITIAL_CROSS_PERIOD_CONSOLIDATION_MAX_MOVES: int = 150
+    # Only run the pass when the same-day fleet is large enough for cross-period
+    # moves to matter. Small instances keep the repacked start that the existing
+    # destroy/repair operator contract was built and tested against.
+    INITIAL_CROSS_PERIOD_CONSOLIDATION_MIN_VEHICLES: int = 200
     # Enforce the cumulative (plant, SKU, day) availability constraint while
     # allocating, which prevents later allocations from over-committing stock.
     INITIAL_ENABLE_CUMULATIVE_CONSTRAINT: bool = True
