@@ -76,15 +76,13 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-24 22:41   HEAD = 1068fea   618 passed / 42 deselected
-覆盖率 65.42%（门禁 56%）   ruff 干净   盲 except Exception 249
-CI 40104353826 success（文档基线 c5574cd；代码 run 40104207592 也 success）
-下一优先级：**跨期整合的原地应用**——M37 已证明逐对增量评分，
-150 步同进程 A/B 7.044→5.341s（−24.2%）；剩余 copy 仍占约 40%。
-先证明操作符返回的 state 没有外部别名，再将选中移动原地应用到 state；
-不要先加移动预算。
-M38 已核对库存快/慢路径与 CargoDict 契约：medium/large 差分 0，
-修复 setdefault/|= /缺失键 pop 等 4 类问题。
+2026-10-24 23:46   HEAD = 3b83756   620 passed / 42 deselected
+覆盖率 65.49%（门禁 56%）   ruff 干净   盲 except Exception 249
+下一优先级：**跨期整合的增量库存更新**——M39 将选中移动原地应用，
+large 150 步 6.46→2.50s，17s 端到端 32.19→24.46s，结果逐位相同。
+剩余成本主要是每步整表 compute_inventory；先只读证明源日到目标日的
+区间余额更新与整表重建逐项相同，再落生产代码。
+M38 已核对库存快/慢路径与 CargoDict 契约：medium/large 差分 0。
 ML 选择器默认关闭且轮盘基线有偏（M28），暂不动。
 
 本地跑 pytest 时不要并发：pytest.ini 固定 --basetemp=.pytest_tmp，
