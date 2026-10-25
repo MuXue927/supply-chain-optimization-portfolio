@@ -62,6 +62,8 @@ import os
 # =========================
 import numpy as np
 
+from .errors import STATE_OPERATION_ERRORS
+
 # =========================
 # Internal project modules
 # =========================
@@ -119,7 +121,7 @@ def _reconstruct_actual_objectives_from_tracker(tracker):
             return np.asarray([], dtype=float)
         # gap(%) = (current - initial) / |initial| * 100
         return np.asarray([base + (g / 100.0) * abs(base) for g in gaps], dtype=float)
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         return np.asarray([], dtype=float)
 
 

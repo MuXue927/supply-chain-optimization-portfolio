@@ -135,7 +135,7 @@ class OutPutData:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
                     elif dtype is str:
                         df[col] = df[col].astype(str)
-                except Exception as e:
+                except (TypeError, ValueError) as e:
                     logger.warning(f"Failed to convert column {col}: {str(e)}")
         
         return df

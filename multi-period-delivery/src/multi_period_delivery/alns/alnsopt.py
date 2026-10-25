@@ -72,6 +72,7 @@ from .alns_config import default_config as ALNSConfig
 # Internal project modules
 # =========================
 from .alnstrack import ALNSTracker
+from .errors import STATE_OPERATION_ERRORS
 from .initial_solution_utils import improved_initial_solution
 from .InputDataALNS import DataALNS
 from .inventory_manager import UnifiedInventoryManager
@@ -230,10 +231,10 @@ class SolutionState:
                 return self._state
 
             def __exit__(self, exc_type, exc, tb):
-                try:
-                    setattr(self._state, "_suppress_compute_inventory", False)
-                except Exception:
-                    pass
+                # ``setattr`` on this class cannot fail: it has no ``__slots__``
+                # and no custom ``__setattr__``. Restoring the flag unconditionally
+                # also keeps a poisoned suppression from leaking past the block.
+                setattr(self._state, "_suppress_compute_inventory", False)
 
         return _Ctx(self)
 
@@ -505,7 +506,7 @@ class SolutionState:
                     }
                     violations["veh_over_load"].append(info)
                     # Overload is a solution-feasibility issue, not a code-error signal.
-            except Exception as exc:
+            except STATE_OPERATION_ERRORS as exc:
                 # A failure while *measuring* the load is not an overload: the
                 # vehicle's load is unknown. Recording it under ``veh_over_load``
                 # (as before) meant a code defect triggered the rollback path with
@@ -661,7 +662,7 @@ class SolutionState:
                     max_it = int(self.tracker.get_max_iterations())
                     if max_it > 0:
                         progress = max(0.0, min(1.0, float(cur_it) / float(max_it)))
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 progress = 0.0
 
         phase1_end = float(getattr(ALNSConfig, "SEARCH_PHASE1_END_PROGRESS", 0.45))
@@ -946,7 +947,7 @@ class SolutionState:
                 except (TypeError, ValueError):
                     pass
                 return res
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 # If import or fast path fails, fall through to pure-Python baseline below
                 pass
 

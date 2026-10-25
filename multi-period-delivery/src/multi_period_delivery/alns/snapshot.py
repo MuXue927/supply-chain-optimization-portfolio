@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from .errors import STATE_OPERATION_ERRORS
 from .swallowed import record_swallowed
 
 
@@ -21,7 +22,7 @@ def safe_state_snapshot(state: Any) -> Any:
             snapshot = copy_method()
             if snapshot is not None and snapshot is not state:
                 return snapshot
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         copy_error = exc
 
     try:

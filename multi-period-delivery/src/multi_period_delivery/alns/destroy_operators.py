@@ -108,6 +108,7 @@ from .destroy_utils import (
     resolve_degree,
 )
 from .inventory_utils import precompute_dealer_shipments, precompute_plant_day_inventory
+from .repair_utils import STATE_OPERATION_ERRORS
 from .swallowed import record_swallowed
 
 # Short-lived cache for periodic_shaw_removal KMeans results keyed by
@@ -545,7 +546,7 @@ def infeasible_removal(current: SolutionState, rng: rnd.Generator):
 
             if veh.is_empty():
                 remove_set.add(idx)
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             # This block edits ``veh.cargo`` in place *before* it records the
             # matching inventory delta. Bailing out silently could therefore
             # leave a vehicle reduced without a compensating update, which
@@ -1811,7 +1812,7 @@ def inventory_level_removal(
                 if anomaly > 0.01:
                     anomaly_score_map[(plant, sku_id)] = anomaly
 
-    except Exception as e:
+    except STATE_OPERATION_ERRORS as e:
         print(f"[OPLOG] inventory_level_removal: failed to calculate anomaly scores: {e}")
         return state
 

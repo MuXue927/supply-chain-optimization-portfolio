@@ -40,6 +40,7 @@ import numpy.random as rnd
 
 from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
+from .errors import STATE_OPERATION_ERRORS
 from .ml_operator_selector import (
     PARAMETERLESS_OPERATOR_NAMES,
     REPAIR_OPERATOR_NAMES,
@@ -86,7 +87,7 @@ def _get_repair_params(state: SolutionState, op_name: str) -> dict[str, Any]:
     try:
         params = state.param_tuner.get_operator_params(op_name)
         return dict(params) if isinstance(params, dict) else {}
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         return {}
 
 

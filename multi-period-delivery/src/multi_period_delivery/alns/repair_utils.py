@@ -15,6 +15,7 @@ import numpy as np
 
 from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
+from .errors import STATE_OPERATION_ERRORS
 from .InputDataALNS import DataALNS
 from .param_tuner import ParamAutoTuner
 from .snapshot import restore_state_snapshot
@@ -105,19 +106,19 @@ def compute_mixed_operator_reward(
     if new_obj is None:
         try:
             new_obj = state.objective()
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             return None, 0.0, False
 
     if actual_obj is None:
         try:
             actual_obj = float(state.calculate_cost())
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             actual_obj = None
 
     try:
         if not np.isfinite(float(prev_obj)) or not np.isfinite(float(new_obj)):
             return new_obj, 0.0, False
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         return new_obj, 0.0, False
 
     try:
@@ -625,7 +626,7 @@ def get_adaptive_parameters(op_name: str, param_tuner: ParamAutoTuner):
     try:
         params = param_tuner.get_operator_params(op_name)
         return params if params else {}
-    except Exception as e:
+    except STATE_OPERATION_ERRORS as e:
         print(f"[WARNING] get_adaptive_parameters({op_name}) exception: {e}")
         return {}
 
@@ -781,7 +782,7 @@ def _check_inserted_feasibility(state, inserted):
     try:
         with state.suppress_inventory_ctx():
             return state.validate()
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         logger.debug(f"repair feasibility check inconclusive: {exc}")
         return False, {"validation_error": ["inconclusive"]}
 
@@ -794,7 +795,6 @@ _HARD_POST_REPAIR_VIOLATION_KEYS = (
     "check_error",
     "validation_error",
 )
-
 
 def _has_hard_post_repair_violation(violations) -> bool:
     """Return whether the supplied validation result contains a hard failure."""
@@ -855,7 +855,7 @@ def post_repair(
             merged_after_repair = consolidate_route_vehicles(
                 state, max_pairs_per_group=max(1, max_pairs)
             )
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         # ``consolidate_route_vehicles`` merges cargo in place before it commits
         # the new vehicle list. A mid-way failure therefore leaves *duplicated*
         # cargo on vehicles that are all still present - over-shipping, which
@@ -906,7 +906,7 @@ def post_repair(
     ):
         try:
             state.compute_inventory()
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             # Post-repair bookkeeping must not abort the search: the rollback
             # logic below re-validates and can still discard the insertion. Record
             # it so a systematically failing inventory rebuild stays visible.
@@ -932,16 +932,13 @@ def post_repair(
                             "cargo": dict(getattr(v, "cargo", {})),
                         }
                     )
-                except Exception:
+                except STATE_OPERATION_ERRORS:
                     inserted_summary.append({"veh": str(v)})
         # Print the total count and a sample summary of at most 20 entries.
-        try:
-            print(
-                f"[DIAG] post_repair op={op_name} inserted_cnt={total_inserted} merged_after={merged_after_repair} sample_cnt={len(inserted_summary)}"
-            )
-        except Exception:
-            pass
-    except Exception:
+        print(
+            f"[DIAG] post_repair op={op_name} inserted_cnt={total_inserted} merged_after={merged_after_repair} sample_cnt={len(inserted_summary)}"
+        )
+    except STATE_OPERATION_ERRORS:
         inserted_summary = []
 
     # Quickly validate the current state and roll back vehicles inserted by
@@ -1103,19 +1100,16 @@ def post_repair(
                     try:
                         state.objective()
                         improvement = 0.0
-                    except Exception:
+                    except STATE_OPERATION_ERRORS:
                         improvement = 0.0
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             improvement = 0.0
 
     # Emit a short JSON-style log entry.
     elapsed = time.time() - t0 if t0 is not None else None
-    try:
-        print(
-            f"[OPJSON] {{'tag':'repair','op':'{op_name}','inserted_cnt':{len(inserted) if inserted else 0},'rolled_back':{rolled_back},'improvement':{improvement},'elapsed_sec':{elapsed}}}"
-        )
-    except Exception:
-        pass
+    print(
+        f"[OPJSON] {{'tag':'repair','op':'{op_name}','inserted_cnt':{len(inserted) if inserted else 0},'rolled_back':{rolled_back},'improvement':{improvement},'elapsed_sec':{elapsed}}}"
+    )
 
     # Record repair-operator feasibility statistics for offline analysis of
     # success rates and failure types.
@@ -1132,7 +1126,7 @@ def post_repair(
                 improvement=float(improvement),
                 post_repair_certified=post_repair_certified,
             )
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         pass
 
 
@@ -1216,7 +1210,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                     skip_compute_inventory=True,
                     suffix_safe=True,
                 )
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 continue
             if actual_loaded <= 0:
                 continue
@@ -1249,7 +1243,7 @@ def _process_demand_batch(state, batch, resource_pool, data, rng):
                     else:
                         inserted_vehicles.append(vehicle)
                     batch_progress = True
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 continue
 
         if loaded_total > 0:
@@ -1331,7 +1325,7 @@ def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
                     skip_compute_inventory=True,
                     suffix_safe=True,
                 )
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 continue
             if actual_loaded <= 0:
                 continue
@@ -1356,7 +1350,7 @@ def _force_load_remaining_demands(state: SolutionState, data: DataALNS):
                         inserted_vehicles.extend(new_vs)
                     else:
                         inserted_vehicles.append(vehicle)
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 continue
 
     return inserted_vehicles
@@ -1402,7 +1396,7 @@ def compute_improvement_fast_add_vehicle(
     veh_cost = float(data.veh_type_cost.get(veh_type, 0.0))
     try:
         benefit = float(data.param_pun_factor1) * float(qty)
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         benefit = float(qty)
 
     # Estimate the minimum-load penalty when loaded volume is below the
@@ -1414,7 +1408,7 @@ def compute_improvement_fast_add_vehicle(
     if load_volume < min_load:
         try:
             min_load_penalty = float(data.param_pun_factor3) * (min_load - load_volume)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             min_load_penalty = 0.0
 
     # Estimate the unscaled improvement, where positive means improvement.
@@ -1522,7 +1516,7 @@ def compute_improvement_delta(
             return None, 0.0, False
         success = improvement > 0.0
         return new_obj, improvement, success
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         # The estimate itself is unusable, so the caller falls back to a full
         # simulation. Record it: without this, a systematically failing fast path
         # would be indistinguishable from "the fast path never applies".
@@ -1572,7 +1566,7 @@ def compute_improvement(state: SolutionState, prev_obj: float | None = None):
                 prev_obj,
                 new_obj=new_obj,
             )
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         new_obj = None
         improvement = 0.0
         success = False

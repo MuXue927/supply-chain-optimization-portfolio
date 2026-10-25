@@ -41,6 +41,7 @@ import numpy as np
 # Numeric coercion lives in one place so the three copies cannot drift apart; the
 # shared implementation also refuses to truncate a multi-element array.
 from .coercion import coerce_int as _coerce_int
+from .errors import STATE_OPERATION_ERRORS
 from .repair_utils import compute_mixed_operator_reward
 from .snapshot import restore_state_snapshot
 from .swallowed import record_swallowed
@@ -99,7 +100,7 @@ def to_native(v: Any):
             except (TypeError, ValueError):
                 try:
                     return str(v)
-                except Exception:
+                except STATE_OPERATION_ERRORS:
                     return None
 
 
@@ -354,7 +355,7 @@ def compute_improvement_and_report(
             prev_obj,
             actual_obj=None,
         )
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         record_swallowed("destroy_utils.compute_mixed_reward", exc)
         new_obj = None
         improvement = 0.0
@@ -365,14 +366,14 @@ def compute_improvement_and_report(
     if tuner and hasattr(tuner, "update_operator_performance"):
         try:
             tuner.update_operator_performance(op_name, improvement, success=success)
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("destroy_utils.tuner.update_performance", exc)
         try:
             if hasattr(tuner, "adjust_operator_params"):
                 tuner.adjust_operator_params(
                     op_name, improvement, success=success, skip_update=True
                 )
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("destroy_utils.tuner.adjust_params", exc)
 
     return new_obj, improvement, success
@@ -502,7 +503,7 @@ def adjust_exploration(state: SolutionState):
                 max_iter,
                 no_improve_iters=stats.get("no_improve_iters", 0),
             )
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         # Fail gracefully so the main flow is not affected, but keep the
         # degradation countable: a tuner that never receives iterations
         # silently loses its phase schedule.
@@ -521,14 +522,11 @@ def get_adaptive_parameters(op_name: str, param_tuner):
     try:
         params = param_tuner.get_operator_params(op_name)
         return params if params else {}
-    except Exception as e:
+    except STATE_OPERATION_ERRORS as e:
         # Use logger.debug instead of print and apply sampling to reduce
         # hot-path overhead.
-        try:
-            if _opjson_log_enabled():
-                logger.debug(f"get_adaptive_parameters({op_name}) exception: {e}")
-        except Exception:
-            pass
+        if _opjson_log_enabled():
+            logger.debug(f"get_adaptive_parameters({op_name}) exception: {e}")
         return {}
 
 
@@ -605,12 +603,9 @@ def resolve_degree(op_name: str, state, degree):
                 max_degree=adaptive_max_degree,
                 decay_rate=0.67,
             )
-        except Exception as e:
-            try:
-                if _opjson_log_enabled():
-                    logger.debug(f"adaptive_degree call failed for {op_name}: {e}")
-            except Exception:
-                pass
+        except STATE_OPERATION_ERRORS as e:
+            if _opjson_log_enabled():
+                logger.debug(f"adaptive_degree call failed for {op_name}: {e}")
 
     # clamp to [0,1] range
     if val < 0.0:
@@ -654,7 +649,7 @@ def post_destroy(
         inventory_updates, batch_conflict = apply_batch_update(
             state, removed, skip_batch_update
         )
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         inventory_updates = None
         batch_conflict = True
 
@@ -766,7 +761,7 @@ def post_destroy(
     if early:
         try:
             adjust_exploration(state)
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("destroy_utils.post_destroy.adjust_exploration", exc)
         log_entry = {
             "tag": "destroy",
@@ -783,11 +778,8 @@ def post_destroy(
             },
             "extra": extra,
         }
-        try:
-            if _opjson_log_enabled():
-                logger.debug(f"[OPJSON] {log_entry}")
-        except Exception:
-            pass
+        if _opjson_log_enabled():
+            logger.debug(f"[OPJSON] {log_entry}")
         return
 
     # 5) Normal path: compute improvement and report it to param_tuner through
@@ -799,7 +791,7 @@ def post_destroy(
             new_obj, improvement, _ = compute_improvement_and_report(
                 state, prev_obj, op_name
             )
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("destroy_utils.compute_improvement", exc)
             new_obj = None
             improvement = 0.0
@@ -807,7 +799,7 @@ def post_destroy(
     # 6) Record the phase and emit the final log.
     try:
         adjust_exploration(state)
-    except Exception as exc:
+    except STATE_OPERATION_ERRORS as exc:
         record_swallowed("destroy_utils.post_destroy.adjust_exploration", exc)
 
     try:
@@ -856,8 +848,5 @@ def post_destroy(
         except (AttributeError, KeyError, TypeError, ValueError):
             log_entry = {"tag": "destroy", "op": op_name, "error": "failed_build_log"}
 
-    try:
-        if _opjson_log_enabled():
-            logger.debug(f"[OPJSON] {log_entry}")
-    except Exception:
-        pass
+    if _opjson_log_enabled():
+        logger.debug(f"[OPJSON] {log_entry}")

@@ -52,6 +52,7 @@ import time
 from collections import defaultdict
 
 from .alns_config import default_config as ALNSConfig
+from .errors import STATE_OPERATION_ERRORS
 
 # =========================
 # Internal project modules
@@ -1187,7 +1188,7 @@ def _finalize_strict_initial_feasibility(sol, rng, remaining_timeout):
         if hard_bad:
             try:
                 _repair_solution(sol, max(5.0, (remaining_timeout or 5.0) * 0.3))
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 pass
             try:
                 from .repair_operators import infeasible_repair

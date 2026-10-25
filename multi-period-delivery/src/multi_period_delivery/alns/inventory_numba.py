@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .errors import STATE_OPERATION_ERRORS
 from .vehicle import inventory_stamp
 
 logger = logging.getLogger(__name__)
@@ -439,10 +440,9 @@ def compute_inventory_numba_safe(state):
         maps = getattr(state, "_inventory_maps", None)
         if maps is None:
             maps = index_maps(data)
-            try:
-                setattr(state, "_inventory_maps", maps)
-            except Exception:
-                pass
+            # ``setattr`` on ``SolutionState`` cannot fail: no ``__slots__`` and
+            # no custom ``__setattr__``.
+            setattr(state, "_inventory_maps", maps)
 
         P = maps.n_plants
         S = maps.n_skus
@@ -507,16 +507,13 @@ def compute_inventory_numba_safe(state):
 
         # write back s_ikt to state
         arrays_to_state_s_ikt(state, maps, s_ikt_arr)
-        try:
-            state.s_initialized = True
-        except (TypeError, ValueError):
-            pass
+        state.s_initialized = True
 
         # Best-effort: invalidate any derived caches that depend on s_ikt
         try:
             if hasattr(state, "mark_objective_dirty"):
                 state.mark_objective_dirty()
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             pass
 
         # Record the stamp *now*, after every write above. ``mark_objective_dirty``
@@ -524,10 +521,7 @@ def compute_inventory_numba_safe(state):
         # be stale the moment it was written, and the cache would never validate.
         if cache is not None:
             cache["stamp"] = inventory_stamp(getattr(state, "vehicles", ()))
-            try:
-                setattr(state, "_inventory_cache", cache)
-            except Exception:
-                pass
+            setattr(state, "_inventory_cache", cache)
 
         return True
     except Exception as exc:

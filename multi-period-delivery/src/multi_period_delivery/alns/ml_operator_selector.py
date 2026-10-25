@@ -107,10 +107,12 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
+from .alns_config import default_config as ALNSConfig
+
 # =========================
 # Internal project dependencies
 # =========================
-from .alns_config import default_config as ALNSConfig
+from .errors import STATE_OPERATION_ERRORS
 from .param_tuner import ParamAutoTuner
 from .progress import resolve_progress
 from .swallowed import record_swallowed
@@ -250,7 +252,7 @@ class MLOperatorSelector:
                 self.param_tuner.set_iteration(
                     int(current), int(maximum), no_improve_iters=int(no_improve_iters)
                 )
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             # The selector can run without the tuner staying in sync, but a
             # permanently failing sync would silently freeze the tuner's phase.
             record_swallowed("ml_operator_selector.set_iteration", exc)
@@ -471,7 +473,7 @@ class MLOperatorSelector:
         # 4. Demand fulfillment
         try:
             shipped = state.compute_shipped() or {}
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("ml_operator_selector.compute_shipped", exc)
             shipped = {}
         total_demand = (
@@ -835,7 +837,7 @@ class MLOperatorSelector:
 
         try:
             state_features = self.extract_state_features(state)
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             # Falling back to a random operator is the right behaviour, but doing
             # it silently means the run reports that ML operators were enabled
             # while this call site actually chose at random. Record it so a

@@ -262,7 +262,7 @@ class DataALNS:
                     )
                 elif dtype is float:
                     df_result[col] = pd.to_numeric(df_result[col], errors="coerce").fillna(0.0)
-            except Exception as e:
+            except (TypeError, ValueError) as e:
                 self.logger.warning(
                     f"Failed to convert column {col} to type {dtype}: {e}"
                 )

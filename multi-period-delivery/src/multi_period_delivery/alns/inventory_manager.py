@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .errors import STATE_OPERATION_ERRORS
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,7 +26,7 @@ class UnifiedInventoryManager:
         """Rebuild inventory baseline from vehicles and production."""
         try:
             return bool(state.compute_inventory())
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             return False
 
     def scan_negative_inventory(
@@ -36,7 +38,7 @@ class UnifiedInventoryManager:
             for k, v in state.s_ikt.items():
                 if float(v) < -self.eps:
                     negatives.append((k, float(v)))
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             return []
         return negatives
 

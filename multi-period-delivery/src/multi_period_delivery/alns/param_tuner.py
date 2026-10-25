@@ -60,6 +60,7 @@ import numpy as np
 import numpy.random as rnd
 
 from .alns_config import default_config as ALNSConfig
+from .errors import STATE_OPERATION_ERRORS
 
 # =========================
 # Internal project dependencies
@@ -223,7 +224,7 @@ class ParamAutoTuner:
             if isinstance(name, str) and "_deg_" in name:
                 return name.split("_deg_")[0]
             return name
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             return name
 
     def _extract_instance_features(self) -> dict[str, float]:
@@ -318,7 +319,7 @@ class ParamAutoTuner:
             # Import locally to avoid potential circular imports
             from .alns_config import default_config
             op_defaults = default_config.get_tuner_operator_defaults()
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             op_defaults = None
 
         if op_defaults:
@@ -328,7 +329,7 @@ class ParamAutoTuner:
                     params = struct.get("params", {}) or {}
                     ranges = struct.get("ranges", {}) or {}
                     self.register_operator(name, params, ranges)
-                except Exception:
+                except STATE_OPERATION_ERRORS:
                     # A failure for one operator does not affect the others
                     continue
             return
@@ -588,14 +589,11 @@ class ParamAutoTuner:
 
             op.params[param_name] = new_value
 
-            try:
-                if getattr(ALNSConfig, "TUNER_DEBUG", False):
-                    print(
-                        f"[TUNER] {name}.{param_name}: {value} -> {new_value} "
-                        f"(used={used_val}, imp={improvement:.4f}, avg={avg_perf:.4f}, conf={confidence:.2f})"
-                    )
-            except Exception:
-                pass
+            if getattr(ALNSConfig, "TUNER_DEBUG", False):
+                print(
+                    f"[TUNER] {name}.{param_name}: {value} -> {new_value} "
+                    f"(used={used_val}, imp={improvement:.4f}, avg={avg_perf:.4f}, conf={confidence:.2f})"
+                )
 
         # Save the current parameters for later reference
         if name not in self._prev_params:

@@ -23,14 +23,14 @@ __all__ = []
 try:
     from .alns.InputDataALNS import DataALNS as DataALNS
     __all__.append("DataALNS")
-except Exception:
+except ImportError:
     # Skip the export if an optional dependency is missing or the module fails.
     pass
 
 try:
     from .alns.OutputDataALNS import OutPutData as OutPutData
     __all__.append("OutPutData")
-except Exception:
+except ImportError:
     pass
 
 # Combined stopping criteria and AND/OR expression helpers.
@@ -42,14 +42,14 @@ try:
         create_standard_combined_criterion,
     )
     __all__ += ["CombinedStoppingCriterion", "AND", "OR", "create_standard_combined_criterion"]
-except Exception:
+except ImportError:
     pass
 
 # Solution consistency-check entry point.
 try:
     from .alns.check_solution import check_solution as check_solution
     __all__.append("check_solution")
-except Exception:
+except ImportError:
     pass
 
 # Configuration object.
@@ -60,7 +60,7 @@ try:
 
     ALNSConfig = default_config
     __all__.append("ALNSConfig")
-except Exception:
+except ImportError:
     pass
 
 

@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from .alns_config import default_config as ALNSConfig
+from .errors import STATE_OPERATION_ERRORS
 from .progress import resolve_progress
 from .swallowed import record_swallowed
 
@@ -92,7 +93,7 @@ class _CandidateProxy:
             return self.__penalized
         try:
             base = float(self.__orig.objective())
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("accept._CandidateProxy.objective", exc)
             base = float("inf")
         if not np.isfinite(base):
@@ -258,7 +259,7 @@ class DemandConstraintAccept:
                 getattr(state, "iter_used_vehicles")
             ):
                 return len(list(state.iter_used_vehicles()))
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed(
                 "accept.DemandConstraintAccept.count_vehicles_iter", exc
             )
@@ -298,7 +299,7 @@ class DemandConstraintAccept:
             return None
         try:
             return _safe_float(method())
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed(site, exc)
             return None
 
@@ -418,7 +419,7 @@ class DemandConstraintAccept:
         # systematic validator problem cannot silently disable the constraint.
         try:
             feasible, violations = candidate_state.validate()
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed("accept.DemandConstraintAccept.validate", exc)
             return False
 

@@ -66,6 +66,7 @@ import numpy as np
 import numpy.random as rnd
 
 from .alns_config import default_config as ALNSConfig
+from .errors import STATE_OPERATION_ERRORS
 
 # =========================
 # Internal project dependencies
@@ -375,7 +376,7 @@ class ALNSTracker:
                     max_iter,
                     no_improve_iters=self.no_improve_iters,
                 )
-        except Exception as e:
+        except STATE_OPERATION_ERRORS as e:
             # Protective fallback: log a warning without interrupting the main
             # workflow if the update fails.
             self.log_printer.print(

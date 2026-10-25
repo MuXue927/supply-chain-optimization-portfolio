@@ -68,6 +68,7 @@ from .destroy_operators import (
     state_structure_signature,
     wrap_operator_no_args,
 )
+from .errors import STATE_OPERATION_ERRORS
 from .InputDataALNS import DataALNS
 from .ml_destroy_selection import ml_based_destroy
 from .ml_operator_selector import MLOperatorSelector
@@ -365,7 +366,7 @@ def suppress_noisy_operator_stdout(enabled: bool = True):
     def filtered_print(*args, **kwargs):
         try:
             msg = " ".join(str(a) for a in args)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             msg = ""
         if any(tag in msg for tag in noisy_tags):
             return
@@ -1269,7 +1270,7 @@ class ALNSOptimizer:
                     initial_search_obj=float(init_sol.objective()),
                     initial_actual_obj=float(init_sol.calculate_cost()),
                 )
-            except Exception as exc:
+            except STATE_OPERATION_ERRORS as exc:
                 record_swallowed("alns_optimizer.tracker_initial_reference", exc)
 
             # Record a strictly feasible initial state as an early rollback baseline.
@@ -1278,7 +1279,7 @@ class ALNSOptimizer:
                 if init_feasible:
                     self.best_feasible_state = safe_state_snapshot(init_sol)
                     self.best_feasible_obj = float(init_sol.objective())
-            except Exception as exc:
+            except STATE_OPERATION_ERRORS as exc:
                 # Without this baseline the final feasibility fallback has
                 # nothing to recover, so the degradation must be visible.
                 record_swallowed("alns_optimizer.initial_feasible_baseline", exc)
@@ -1385,7 +1386,7 @@ class ALNSOptimizer:
             merged_cnt = consolidate_route_vehicles(
                 self.best_solution, max_pairs_per_group=max(1, max_pairs)
             )
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             # The merge edits the incumbent in place, so a mid-way failure can
             # leave a half-consolidated state that never passed the feasibility
             # check below. Restore the snapshot instead of silently delivering
@@ -1405,7 +1406,7 @@ class ALNSOptimizer:
 
         try:
             feasible_after, _ = self.best_solution.validate()
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed(
                 "alns_optimizer.final_light_consolidation_validate", exc
             )
@@ -1417,7 +1418,7 @@ class ALNSOptimizer:
             cost_after = float(self.best_solution.calculate_cost())
             if snapshot_before is not None:
                 cost_before = float(snapshot_before.calculate_cost())
-        except Exception as exc:
+        except STATE_OPERATION_ERRORS as exc:
             record_swallowed(
                 "alns_optimizer.final_light_consolidation_cost", exc
             )
@@ -1473,7 +1474,7 @@ class ALNSOptimizer:
                         < len(self.best_solution.vehicles)
                     ):
                         self.best_solution = callback_snapshot
-                except Exception as exc:
+                except STATE_OPERATION_ERRORS as exc:
                     # Keep the safer callback-maintained feasible state if
                     # objective comparison is unavailable.
                     record_swallowed(
@@ -1493,7 +1494,7 @@ class ALNSOptimizer:
                 before_cross_period_cost = float(
                     self.best_solution.calculate_cost()
                 )
-            except Exception as exc:
+            except STATE_OPERATION_ERRORS as exc:
                 record_swallowed(
                     "alns_optimizer.final_cross_period_cost_before", exc
                 )
@@ -1548,7 +1549,7 @@ class ALNSOptimizer:
                 after_cross_period_cost = float(
                     self.best_solution.calculate_cost()
                 )
-            except Exception as exc:
+            except STATE_OPERATION_ERRORS as exc:
                 record_swallowed(
                     "alns_optimizer.final_consolidation_summary", exc
                 )
@@ -1969,12 +1970,9 @@ class ALNSOptimizer:
         try:
             # Allow reports and plotting to be disabled for profiling and CI.
             if not getattr(ALNSConfig, "ENABLE_REPORTS", True):
-                try:
-                    self.log_printer.print(
-                        "Report generation disabled (ENABLE_REPORTS=False); skipping plots."
-                    )
-                except Exception:
-                    pass
+                self.log_printer.print(
+                    "Report generation disabled (ENABLE_REPORTS=False); skipping plots."
+                )
                 return
             if self.result is None or self.best_solution is None:
                 return

@@ -54,10 +54,32 @@ light-intensify, elite-relink, stagnation-escape, tracker and registration
 handlers countable, and fixed fleet consolidation returning an uncertified
 merge, taking 251 -> 249.
 
-The remaining 249 are left deliberately: most wrap a try body containing a
-method call, whose internal exceptions cannot be inferred mechanically, so
-narrowing them would risk letting real errors escape. They are recorded debt, not
-an oversight.
+The 2026-10-25 pass took 249 -> 113. It first established that the state and
+vehicle helpers have a *closed* explicit raise surface - ``ValueError``,
+``RuntimeError`` and ``KeyError`` in ``repair_utils``/``alnsopt``/``vehicle``,
+plus ``AttributeError`` from attribute access and ``TypeError`` from arithmetic -
+and recorded it once as ``alns.errors.STATE_OPERATION_ERRORS``. Every handler
+whose try body only calls those helpers now catches that tuple, including the
+two large operator bodies in ``regret_based_repair`` and the sequential/lookahead
+loops. The pass also deleted handlers that guarded work which cannot raise:
+``logger.debug(...)`` calls, ``print(...)`` diagnostics, and plain ``setattr``
+on ``SolutionState`` (no ``__slots__``, no custom ``__setattr__``).
+
+The 113 that remain are deliberate resilience boundaries with an
+*open* exception surface:
+
+- callback and operator isolation (``callbacks`` 21, ``alns_optimizer`` 18) -
+  one failing candidate, callback, feature block or operator must not abort the
+  whole search;
+- lazy imports that avoid an import cycle, or optional dependencies
+  (``numba``, ``sklearn``, ``matplotlib``) - those raise ``ImportError`` and
+  worse;
+- file/pandas I/O and CLI/report generation - ``OSError`` and pandas' own
+  hierarchy are expected there;
+- snapshot ``deepcopy`` and config-expression evaluation, where ``MemoryError``
+  or ``RecursionError`` must still be caught to keep the fallback reachable;
+- ``monolithic/``, ``cplex_api_*`` and ``single-period-delivery/`` (44 in
+  total), which are outside this maintenance scope.
 """
 
 from __future__ import annotations
@@ -72,9 +94,11 @@ import pytest
 #: ``_check_inserted_feasibility`` (the extraction also removed redundant inner
 #: handlers), to 381 in the follow-up narrowing pass, and to 368 on 2026-10-17.
 #: The 2026-10-22/23 passes lowered it to 348, 343, 342, 341, 336, 321, 290,
-#: 268, 251, then 249.
+#: 268, 251, then 249. The 2026-10-25 pass lowered it to 113 by catching
+#: ``STATE_OPERATION_ERRORS`` wherever the try body only calls state/vehicle
+#: helpers, and deleting guards around logging, ``print`` and plain ``setattr``.
 #: Keep this ratcheted down as handlers are narrowed.
-BLIND_EXCEPT_BASELINE = 249
+BLIND_EXCEPT_BASELINE = 113
 
 _PACKAGES = ("multi-period-delivery", "single-period-delivery")
 

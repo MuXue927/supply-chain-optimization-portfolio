@@ -22,6 +22,7 @@ import numpy.random as rnd
 
 from .alns_config import default_config as ALNSConfig
 from .alnsopt import SolutionState
+from .errors import STATE_OPERATION_ERRORS
 from .ml_destroy_selection import ml_based_destroy
 from .ml_repair_selection import ml_based_repair
 from .progress import resolve_progress
@@ -90,7 +91,7 @@ def dump_state_snapshot(optimizer: Any, state: SolutionState | None, label: str)
         return
     try:
         logger.debug("[SNAPSHOT] %s objective=%s", label, state.objective())
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         logger.debug("[SNAPSHOT] %s captured", label)
 
 
@@ -160,7 +161,7 @@ def build_state_profile(state: SolutionState) -> dict[str, float]:
         total_cap += cap
         try:
             total_load += float(state.compute_veh_load(veh))
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             pass
         total_fixed_cost += float(state.data.veh_type_cost.get(veh.type, 0.0))
         if cap >= threshold:
@@ -422,7 +423,7 @@ def _is_relink_candidate_acceptable(
 
         max_allow_obj = curr_obj * (1.0 + max(0.0, float(max_rel_worse)))
         return cand_obj <= max_allow_obj
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         return False
 
 
@@ -453,7 +454,7 @@ def _choose_elite_relink_target(
             target_sig = tuple(
                 item.get("signature", _profile_signature(target_profile))
             )
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             continue
 
         if require_signature_diff and target_sig == curr_sig:
@@ -506,7 +507,7 @@ def _is_best_feasible_solution(state: SolutionState) -> bool:
         ):
             # Force an inventory refresh so the state is internally consistent.
             state.compute_inventory()
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         pass
 
     # Validation includes demand-fulfillment constraints.
@@ -641,7 +642,7 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
             tracker = getattr(optimizer, "tracker", None)
             if tracker is not None and hasattr(tracker, "record_elite_candidate"):
                 tracker.record_elite_candidate(best)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             pass
 
         # write debug snapshot
@@ -649,7 +650,7 @@ def record_best_feasible(optimizer: ALNSOptimizer, state: SolutionState):
             dump_state_snapshot(
                 optimizer, optimizer.best_feasible_state, "best_feasible"
             )
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             pass
 
         if best_obj is not None:
@@ -677,7 +678,7 @@ def make_callback_on_best(optimizer: ALNSOptimizer) -> Callable[..., None]:
     def callback_on_best(state, rng, **kwargs):
         try:
             record_best_feasible(optimizer, state)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             optimizer.log_printer.print(
                 "Callback on best: helper failed.", color="yellow"
             )
@@ -955,7 +956,7 @@ def make_callback_on_iteration(
                                 "no_improve_iters", 0
                             )
                         )
-                    except Exception:
+                    except STATE_OPERATION_ERRORS:
                         no_improve_iters = 0
                 optimizer.ml_selector.set_iteration(
                     cur_it, max_it, no_improve_iters=no_improve_iters
@@ -977,7 +978,7 @@ def make_callback_on_iteration(
                                 "no_improve_iters", 0
                             )
                         )
-                    except Exception:
+                    except STATE_OPERATION_ERRORS:
                         no_improve_iters = 0
                 optimizer.param_tuner.set_iteration(
                     cur_it, max_it, no_improve_iters=no_improve_iters
@@ -1695,7 +1696,7 @@ def register_callbacks(
         else:
             try:
                 incumbent = safe_state_snapshot(incumbent)
-            except Exception:
+            except STATE_OPERATION_ERRORS:
                 pass
 
         try:

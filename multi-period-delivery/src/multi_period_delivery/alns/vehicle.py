@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 # =========================
 # Internal project dependencies
 # =========================
+from .errors import STATE_OPERATION_ERRORS
 from .InputDataALNS import DataALNS
 
 # -------------------------
@@ -490,7 +491,7 @@ class Vehicle:
                 self._cargo.clear()
             else:
                 self._cargo.clear()
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             pass
         self.capacity = self.max_capacity
         self._loaded_volume = 0
@@ -501,7 +502,7 @@ class Vehicle:
         """
         try:
             return not bool(self._cargo)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             return True
 
     def shallow_clone(self):
@@ -526,7 +527,7 @@ class Vehicle:
         # use the cargo property setter to wrap the dict into CargoDict and sync loaded_volume
         try:
             obj.cargo = self._cargo.copy() if isinstance(self._cargo, dict) else dict(self._cargo)
-        except Exception:
+        except STATE_OPERATION_ERRORS:
             obj._cargo = {}
             obj._loaded_volume = getattr(self, "_loaded_volume", 0)
         # preserve cached loaded volume if not set by setter

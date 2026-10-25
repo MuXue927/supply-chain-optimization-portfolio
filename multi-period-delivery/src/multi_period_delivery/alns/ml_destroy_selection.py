@@ -82,6 +82,7 @@ from .destroy_operators import (
     surplus_inventory_removal,
     worst_removal,
 )
+from .errors import STATE_OPERATION_ERRORS
 from .ml_operator_selector import (
     DESTROY_OPERATOR_NAMES,
     PARAMETERLESS_OPERATOR_NAMES,
@@ -153,7 +154,7 @@ def _get_destroy_params(state: SolutionState, op_name: str) -> dict[str, Any]:
     try:
         params = state.param_tuner.get_operator_params(op_name)
         return dict(params) if isinstance(params, dict) else {}
-    except Exception:
+    except STATE_OPERATION_ERRORS:
         return {}
 
 

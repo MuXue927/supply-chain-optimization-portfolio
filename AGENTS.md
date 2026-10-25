@@ -76,9 +76,12 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 03:55   HEAD = a4c62da   632 passed / 42 deselected
-覆盖率 65.48%（门禁 56%）   ruff 干净   盲 except Exception 249
-CI 40160446363 success（文档基线 5ddd407）
+2026-10-25 12:34   HEAD = M45 提交   632 passed / 42 deselected
+覆盖率 65.77%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+M45 收窄盲 except Exception：helper 的显式抛出面是闭合的五元组，落成
+alns/errors.STATE_OPERATION_ERRORS；另删除 15 处纯日志守卫与 7 处纯 setattr 守卫。
+保留的 113 个是回调/算子隔离、范围外模块、惰性 import/可选依赖、I/O、deepcopy。
+下一阶段：tuner / ML / full 三种模式的效果与正确性验证。
 M44（12:01，只读）建模口径已确认：工厂指派不可调；发货日自由且**已是现状**
 （订单文件无 day 列，demand=周期总量，cargo 日只等于车辆发车日）。
 装载下界：一车一店 1345 / 同厂同日混装 1176 / 同厂跨日混装 1164；
