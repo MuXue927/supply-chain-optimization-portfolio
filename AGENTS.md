@@ -76,9 +76,16 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 14:36   HEAD = 486bf10   637 passed / 42 deselected
-覆盖率 66.17%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
-CI 40169754813 success（文档基线 7d980d6）
+2026-10-25 15:36   HEAD = a7cf784   640 passed / 42 deselected
+覆盖率 66.18%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+M48 优化 ML 每次选择的开销：批预测（19 次 transform+predict → 1 次，11.7×）
++ 一次决策内特征复用（键 iteration/id/车辆数/revision）。固定开销
+12.1 ms → 约 4.6 ms（−62%）；medium/60s 成本 804.32 → 795.64。
+5 种子（medium/90s）消融：full 798.99 < basic 801.65 < tuner 802.68 < ml 803.93，
+方向符合"full 应优于单开"，但 t=0.33/1.15/−0.59 均不显著，交互项 −5.96。
+限制：ML 每场只接管 1–4 次，被样本门槛与冷却挡住；要得到可用的消融结论，
+需先按预算重标定 ML_TAKEOVER_MIN_SAMPLE_SIZE / ML_RETRAIN_INTERVAL /
+ML_FALLBACK_COOLDOWN_ITERS。
 M47 按作者定夺让 ML 模式独立：ENABLE_ML_OPERATORS 不再隐式构造 tuner，
 ML 与 full 是两种不同配置。同时修掉三个让 ML 从未生效的缺陷：
   (a) 四处把 tuner 当 ML 前置条件（含算子注册与 warmup）；
