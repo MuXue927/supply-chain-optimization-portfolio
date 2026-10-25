@@ -16,17 +16,10 @@ import os
 import sys
 from pathlib import Path
 
-from numpy import random as rnd
-
 # Use package-internal modules via relative imports. This file must be run
 # as a module (python -m multi_period_delivery.alns.main) or the package must
 # be installed.
 from .alns_config import default_config as ALNSConfig
-
-PARAM_TUNING_ENABLED = ALNSConfig.ENABLE_PARAM_TUNER
-
-SEED = ALNSConfig.SEED
-RNG = rnd.default_rng(SEED)
 
 DATASET_TYPE = ALNSConfig.DATASET_TYPE
 DATASET_IDX = ALNSConfig.DATASET_IDX
