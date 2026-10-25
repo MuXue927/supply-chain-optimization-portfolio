@@ -76,7 +76,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M55 代码提交   659 passed / 42 deselected
+2026-10-26   HEAD = 718e569   659 passed / 42 deselected
 覆盖率 66.70%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
 M55 修复侧目标改为二分类（是否改进）：质量门 = 五块连续时间块的 pooled AUC≥0.55。
 修复侧通过质量门 0/6 → 8/10；repair_model_selections == repair_selections（每轮模型决策）。
