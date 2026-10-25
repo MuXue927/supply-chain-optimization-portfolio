@@ -356,3 +356,76 @@ def test_training_filters_nonfinite_samples() -> None:
         list(_DESTROY_OPERATORS),
     )
     assert selected in _DESTROY_OPERATORS
+
+
+# ---------------------------------------------------------------------------
+# ML without a tuner: selection only, parameters from configured defaults
+# ---------------------------------------------------------------------------
+def test_selector_accepts_no_tuner_and_keeps_its_own_iteration_clock(
+    monkeypatch,
+) -> None:
+    """``ENABLE_ML_OPERATORS=True`` with ``ENABLE_PARAM_TUNER=False``.
+
+    The selector used to read the iteration from the tuner, so without one the
+    iteration stayed at 0 and interval-triggered retraining never fired.
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(1))
+    # Both knobs are read at construction time, so set them on the instance.
+    selector.retrain_interval = 5
+    selector.min_samples = 2
+
+    feature = np.zeros(3)
+    selector.destroy_features = [feature.copy() for _ in range(4)]
+    selector.destroy_performances = [0.1] * 4
+
+    # Force-less retraining must still be gated by the selector's own clock.
+    selector.set_iteration(3, 100)
+    selector.train_models()
+    assert selector.destroy_model is None
+
+    # Past the interval it must train, without any tuner present.
+    selector.set_iteration(6, 100)
+    selector.train_models()
+    assert selector.destroy_model is not None
+    assert selector.iteration == 6
+
+
+def test_selector_without_tuner_uses_configured_default_params() -> None:
+    selector = MLOperatorSelector(None, np.random.default_rng(2))
+
+    assert selector._safe_operator_params("random_removal") == {}
+    assert selector._safe_operator_params("greedy_repair") == {}
+    # set_iteration must not fail when there is no tuner to synchronise.
+    selector.set_iteration(10, 100, no_improve_iters=3)
+    assert selector.max_iterations == 100
+
+
+def test_ml_only_mode_builds_a_selector_without_a_tuner(
+    monkeypatch, tmp_path
+) -> None:
+    """The optimizer must build ML-only mode with no ``ParamAutoTuner``."""
+    monkeypatch.setattr(ALNSConfig, "ENABLE_PARAM_TUNER", False)
+    monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", True)
+    monkeypatch.setattr(ALNSConfig, "MAX_ITERATIONS", 1)
+    monkeypatch.setattr(ALNSConfig, "DYNAMIC_MAX_ITERATIONS_PER_SECOND", 0.0)
+    monkeypatch.setattr(ALNSConfig, "DYNAMIC_MAX_ITERATION_BUFFER", 0)
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 1.0)
+    monkeypatch.setattr(ALNSConfig, "SEED", 5)
+
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(
+            Path(__file__).resolve().parents[1]
+            / "datasets"
+            / "multiple-periods"
+            / "small"
+        ),
+        output_file_loc=str(tmp_path / "out"),
+    )
+    assert optimizer.load_data("dataset_1")
+    state = optimizer.create_initial_solution()
+
+    assert state is not None
+    assert optimizer.param_tuner is None
+    assert optimizer.ml_selector is not None
+    assert state.param_tuner is None
+    assert state.ml_selector is optimizer.ml_selector

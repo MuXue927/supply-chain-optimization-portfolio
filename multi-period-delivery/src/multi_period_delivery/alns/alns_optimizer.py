@@ -629,16 +629,22 @@ class ALNSOptimizer:
             state = SolutionState(self.data)
 
             # Initialize optional tuner and ML selector components.
+            #
+            # The two flags are independent: the tuner tunes operator
+            # parameters, the ML selector learns which operator to apply.
+            # "ML without tuner" is a supported configuration - the selector
+            # falls back to the configured parameter defaults - and is what
+            # makes an ablation of the two contributions possible.
             use_tuner = self.is_param_tuner_enabled()
             use_ml = self.is_ml_enabled()
-            if use_tuner or use_ml:
+            if use_tuner:
                 self.log_printer.print("Initializing parameter auto-tuner...")
                 self.param_tuner = ParamAutoTuner(self.data, self.rng)
 
                 # Attach the parameter tuner.
                 state.set_param_tuner(self.param_tuner)
 
-            if use_ml and self.param_tuner is not None:
+            if use_ml:
                 self.log_printer.print("Initializing ML selector...")
                 self.ml_selector = MLOperatorSelector(self.param_tuner, self.rng)
                 state.set_ml_selector(self.ml_selector)
@@ -759,8 +765,10 @@ class ALNSOptimizer:
             # Load base parameters.
             destroy_params = ALNSConfig.get_destroy_params()
 
-            # Add the ML destroy operator when tuner and selector are enabled.
-            if self.is_ml_enabled() and self.param_tuner and self.ml_selector:
+            # Add the ML destroy operator when the selector is enabled. The
+            # tuner is optional here: with ``ENABLE_PARAM_TUNER=False`` the
+            # selector still works and operators use configured defaults.
+            if self.is_ml_enabled() and self.ml_selector:
                 self.log_printer.print("Registering ML-enhanced destroy operator...")
                 ml_destroy_op = self._create_named_partial(
                     ml_based_destroy,
@@ -907,8 +915,8 @@ class ALNSOptimizer:
         self.log_printer.print("Registering repair operators...")
 
         try:
-            # Add the ML repair operator when tuner and selector are enabled.
-            if self.is_ml_enabled() and self.param_tuner and self.ml_selector:
+            # Add the ML repair operator when the selector is enabled.
+            if self.is_ml_enabled() and self.ml_selector:
                 self.log_printer.print("Registering ML-enhanced repair operator...")
                 ml_repair_op = self._create_named_partial(
                     ml_based_repair,

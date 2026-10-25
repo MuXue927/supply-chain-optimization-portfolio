@@ -695,7 +695,10 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
     trials are attempted per call. Work is performed only on copies, and all
     exceptions are caught to avoid disrupting the main ALNS loop.
     """
-    if not optimizer.ml_selector or not optimizer.param_tuner:
+    # The tuner is optional: parameters then come from the configured
+    # defaults. Requiring it here silently disabled ML warmup (and therefore
+    # the ML models) whenever ``ENABLE_PARAM_TUNER`` was off.
+    if not optimizer.ml_selector:
         return
     try:
         for _ in range(max(0, int(budget))):

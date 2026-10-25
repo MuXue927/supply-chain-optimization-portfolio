@@ -183,7 +183,9 @@ class MLOperatorSelector:
 
     Attributes:
         param_tuner: ParamAutoTuner that supplies current parameters for each
-            operator.
+            operator, or ``None`` when only operator *selection* is enabled.
+            With ``None`` the selector uses the configured parameter defaults;
+            that is what makes "ML without tuner" a separate configuration.
         rng: numpy.random.Generator used as the random source.
         destroy_features: Training features for destroy operators.
         destroy_performances: Improvement values for destroy operators.
@@ -208,7 +210,9 @@ class MLOperatorSelector:
         - Use epsilon-greedy prediction to avoid exploiting too early.
     """
 
-    def __init__(self, param_tuner: ParamAutoTuner, rng: rnd.Generator):
+    def __init__(
+        self, param_tuner: ParamAutoTuner | None, rng: rnd.Generator
+    ):
         # External dependencies
         self.param_tuner = param_tuner
         self.rng = rng
@@ -233,6 +237,11 @@ class MLOperatorSelector:
         self.min_samples: int = getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20)
         self.retrain_interval: int = getattr(ALNSConfig, "ML_RETRAIN_INTERVAL", 50)
         self.last_train_iter: int = 0
+        # The selector keeps its own iteration clock. Deriving it from the
+        # tuner meant that with ``ENABLE_PARAM_TUNER=False`` the iteration was
+        # permanently 0 and the interval-triggered retraining never fired.
+        self.iteration: int = 0
+        self.max_iterations: int = 0
         self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
         self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
@@ -247,6 +256,8 @@ class MLOperatorSelector:
         no_improve_iters: int = 0,
     ):
         """Synchronize the selector with the current ALNS progress."""
+        self.iteration = max(0, int(current))
+        self.max_iterations = max(0, int(maximum))
         try:
             if self.param_tuner is not None:
                 self.param_tuner.set_iteration(
@@ -631,9 +642,13 @@ class MLOperatorSelector:
             - This avoids delaying the first trainable point by the retrain
               interval.
         """
-        current_iter = 0
-        if self.param_tuner:
-            current_iter = self.param_tuner.iteration
+        current_iter = self.iteration
+        if self.param_tuner is not None:
+            # Keep whichever clock is further along, so the interval is honoured
+            # in both "tuner only", "selector only" and combined setups.
+            current_iter = max(
+                current_iter, int(getattr(self.param_tuner, "iteration", 0) or 0)
+            )
 
         need_train = force or (
             current_iter - self.last_train_iter >= self.retrain_interval
