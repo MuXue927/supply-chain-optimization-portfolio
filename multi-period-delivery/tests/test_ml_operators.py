@@ -359,6 +359,83 @@ def test_training_filters_nonfinite_samples() -> None:
     assert selected in _DESTROY_OPERATORS
 
 
+def test_operator_encoding_carries_normalised_parameters(monkeypatch) -> None:
+    """One-hot alone made the same row mean different things as the tuner moved.
+
+    The encoding must expose the parameter values so a linear model can learn a
+    per-operator slope, and slots owned by one operator must not overlap another.
+    """
+    tuner = _DummyTuner()
+    current: dict[str, dict[str, Any]] = {}
+    monkeypatch.setattr(
+        tuner, "get_operator_params", lambda name: dict(current.get(name, {}))
+    )
+    selector = MLOperatorSelector(tuner, np.random.default_rng(41))
+    op_map = selector.destroy_op_map
+    dim = selector._param_feature_dim["destroy"]
+    assert dim > 0
+
+    name = "periodic_shaw_removal"
+    current[name] = {
+        "degree": 0.3,
+        "alpha": 0.2,
+        "beta": 0.1,
+        "gamma": 0.1,
+        "k_clusters": 2,
+    }
+    low = selector.encode_operator(name, "destroy")
+    current[name] = {
+        "degree": 0.3,
+        "alpha": 0.6,
+        "beta": 0.5,
+        "gamma": 0.5,
+        "k_clusters": 10,
+    }
+    high = selector.encode_operator(name, "destroy")
+
+    assert len(low) == len(op_map) + dim
+    assert low[op_map[name]] == 1.0
+    own_slots = [
+        offset for offset, _key, _lo, _hi in selector._param_specs_by_op["destroy"][name]
+    ]
+    assert own_slots
+    assert all(low[len(op_map) + offset] == 0.0 for offset in own_slots)
+    assert all(high[len(op_map) + offset] == 1.0 for offset in own_slots)
+    assert not np.array_equal(low, high)
+
+    # Each operator owns its own parameter slots: no column is shared.
+    other = selector.encode_operator("period_range_removal", "destroy")
+    assert not np.any((low[len(op_map) :] != 0) & (other[len(op_map) :] != 0))
+
+    # The A/B switch restores the pure one-hot width.
+    monkeypatch.setattr(ALNSConfig, "ML_OPERATOR_PARAM_FEATURES", False)
+    flat = selector.encode_operator(name, "destroy")
+    assert len(flat) == len(op_map)
+    assert flat[op_map[name]] == 1.0
+
+
+def test_target_winsorising_protects_quality_from_extreme_labels(monkeypatch) -> None:
+    """A single inf-clamped row must not decide a model's holdout R2."""
+    selector = MLOperatorSelector(None, np.random.default_rng(51))
+    rng = np.random.default_rng(7)
+    X = rng.normal(size=(40, 6))
+    y = 3.0 * X[:, 0] + rng.normal(scale=0.2, size=40)
+    # The clamps land in the *training* half: without clipping they drag the
+    # fitted line so far that the clean holdout no longer matches it.
+    y[0] = 1e6
+    y[1] = -1e6
+
+    monkeypatch.setattr(ALNSConfig, "ML_TARGET_CLIP_MAD_FACTOR", 8.0)
+    _, _, clipped = selector._fit_operator_model(X, y, "destroy")
+    monkeypatch.setattr(ALNSConfig, "ML_TARGET_CLIP_MAD_FACTOR", 0.0)
+    _, _, raw = selector._fit_operator_model(X, y, "destroy")
+
+    assert clipped["clip"] is not None
+    assert raw["clip"] is None
+    assert clipped["r2"] is not None and clipped["r2"] > 0.0
+    assert raw["r2"] is not None and raw["r2"] < 0.0
+
+
 # ---------------------------------------------------------------------------
 # Model quality gate
 # ---------------------------------------------------------------------------

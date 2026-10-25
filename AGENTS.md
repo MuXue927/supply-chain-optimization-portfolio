@@ -76,8 +76,13 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M52 代码提交   651 passed / 42 deselected
-覆盖率 66.11%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-26   HEAD = M53 代码提交   653 passed / 42 deselected
+覆盖率 66.41%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M53 特征并入算子参数（仅 tuner 侧生效）+ 收益标签 MAD 裁剪（先排除 ±1e6 钳位行）：
+medium/45s、3 种子同会话：basic 803.69、ml 804.03、full 803.87；
+配对差 +0.34/+0.19/−0.16 —— ML 的边际贡献仍为 0，参数混叠不是 full 落后的主因。
+修复模型 R² 从 −431/−253.7 收敛到 −0.05~−26，但 6 次运行 0 次通过 R²≥0；
+质量门拒绝是正确行为，真正的问题是修复侧收益在现有特征下不可预测。
 M52 给 ML warm-up 加时间上限（ML_WARMUP_BUDGET_FRACTION=0.15）：
 medium/45s 只占 8-9%、上限不触发（cost 与改前逐位相同 803.86/804.60）；
 large/45s 无上限时 14 轮迭代全在 warm-up、正常搜索 0 轮，加上限后
@@ -88,8 +93,7 @@ tuner 的 ranges 全部移除 degree，预算转向 regret k/topN、lookahead_ho
 消融（medium/45s，3 种子，两轮交替）：basic 798.74、tuner 802.33、ml 794.88、
 full 803.23；配对差 +3.59/−3.86/+4.49。同种子比 M50：ml 804.84→794.88，
 相对 basic 由 +4.3 转为 −3.9，但 ±11.8 波动、不显著。
-待讨论两个缺陷：ML 特征不含算子参数（解释 full 差于 ml）、
-修复模型 R² 多为负（标签未尺度化）。
+待讨论：修复侧目标改分类（是否改进，AUC/准确率），或接受"ML 只调破坏侧"。
 M50 让 ML 接管真正替换轮盘（NoOpAwareSegmentedRouletteWheel 的 takeover 钩子，
 is_ready 无副作用与会消耗冷却的 should_use_ml 分离）。107 轮里 79 轮接管、
 模型决策 106 次、随机回退 0；ml 81.9 轮 vs basic 72.8 轮，开销不再拖慢。

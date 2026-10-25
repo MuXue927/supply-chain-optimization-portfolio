@@ -182,6 +182,11 @@ def _quality_label(quality: dict[str, Any]) -> str:
     )
 
 
+#: Magnitude ``_finite_float`` substitutes for an infinite improvement, and the
+#: marker used to recognise those rows when target scaling is estimated.
+_INF_CLAMP = 1e6
+
+
 def _finite_float(value: Any, default: float = 0.0) -> float:
     """Return a finite float, replacing NaN and infinities with safe values."""
     try:
@@ -192,7 +197,7 @@ def _finite_float(value: Any, default: float = 0.0) -> float:
     if math.isnan(result):
         return float(default)
     if math.isinf(result):
-        return 1e6 if result > 0 else -1e6
+        return _INF_CLAMP if result > 0 else -_INF_CLAMP
     return result
 
 
@@ -299,6 +304,7 @@ class MLOperatorSelector:
 
         # Initialize operator maps
         self._init_operator_maps()
+        self._init_param_feature_specs()
         self._ensure_parameterless_tuner_operators()
 
     @contextmanager
@@ -523,6 +529,51 @@ class MLOperatorSelector:
             self.destroy_op_map[op] = i
         for i, op in enumerate(REPAIR_OPERATOR_NAMES):
             self.repair_op_map[op] = i
+
+    def _init_param_feature_specs(self) -> None:
+        """Build one-hot × normalised-parameter interaction features.
+
+        ``encode_operator`` used to be pure one-hot, so a sample taken while the
+        tuner had ``k=2`` and one taken at ``k=5`` produced the *same* row while
+        their improvements differed. That multi-valued target is the
+        non-stationarity behind ``full`` scoring worse than ``ml`` (measured
+        803.23 vs 794.88 in M51). Each tunable parameter becomes its own feature
+        slot, and only the row of the operator that owns the slot is non-zero,
+        so a linear model can learn a per-operator slope instead of sharing one
+        coefficient across operators.
+
+        Parameters without a tuning range are excluded: they never change, so
+        the one-hot already identifies them and an extra constant column would
+        only add noise.
+        """
+        specs_by_op: dict[str, dict[str, list[tuple[int, str, float, float]]]] = {
+            "destroy": {},
+            "repair": {},
+        }
+        dims: dict[str, int] = {"destroy": 0, "repair": 0}
+        for op_type, names in (
+            ("destroy", DESTROY_OPERATOR_NAMES),
+            ("repair", REPAIR_OPERATOR_NAMES),
+        ):
+            offset = 0
+            for name in names:
+                entry = ALNSConfig.get_operator_default(name) or {}
+                ranges = entry.get("ranges") or {}
+                slots: list[tuple[int, str, float, float]] = []
+                for key in sorted(ranges):
+                    bounds = ranges[key]
+                    try:
+                        lo, hi = float(bounds[0]), float(bounds[1])
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                    if not (hi > lo):
+                        continue
+                    slots.append((offset, str(key), lo, hi))
+                    offset += 1
+                specs_by_op[op_type][name] = slots
+            dims[op_type] = offset
+        self._param_specs_by_op = specs_by_op
+        self._param_feature_dim = dims
 
     def _ensure_parameterless_tuner_operators(self):
         """Register missing no-parameter operators in the optional tuner.
@@ -754,17 +805,62 @@ class MLOperatorSelector:
     # ------------------------------------------------------------------
     def encode_operator(self, op_name: str, op_type: str) -> np.ndarray:
         """
-        Encode an operator name as a one-hot vector.
+        Encode an operator name and its current parameters.
+
+        The vector is ``one-hot(operator)`` followed by one slot per tunable
+        parameter of that operator, normalised into ``[0, 1]``. Slots of other
+        operators stay zero, so the interaction between "which operator" and
+        "which parameter value" is explicit instead of being averaged away.
+        ``ML_OPERATOR_PARAM_FEATURES=False`` restores the old pure one-hot
+        encoding for A/B runs.
 
         Unknown names return an all-zero vector instead of raising an exception
         that could interrupt the main workflow.
         """
         op_map = self.destroy_op_map if op_type == "destroy" else self.repair_op_map
-        encoding = np.zeros(len(op_map), dtype=float)
+        # Without a tuner the parameters never move, so the slots would be the
+        # same constant in every row: pure collinearity with the one-hot. Keep
+        # the ``ml`` mode byte-for-byte equivalent to the old encoding and add
+        # the interaction only where it can carry information.
+        use_params = bool(
+            getattr(ALNSConfig, "ML_OPERATOR_PARAM_FEATURES", True)
+        ) and self.param_tuner is not None
+        dim = int(self._param_feature_dim.get(op_type, 0)) if use_params else 0
+        encoding = np.zeros(len(op_map) + dim, dtype=float)
         idx = op_map.get(op_name)
-        if idx is not None:
-            encoding[idx] = 1.0
+        if idx is None:
+            return encoding
+        encoding[idx] = 1.0
+        if dim <= 0:
+            return encoding
+
+        slots = self._param_specs_by_op.get(op_type, {}).get(op_name) or ()
+        if not slots:
+            return encoding
+        params = self._operator_params_for_encoding(op_name)
+        base = len(op_map)
+        for offset, key, lo, hi in slots:
+            raw = params.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(value):
+                continue
+            normalised = (value - lo) / (hi - lo)
+            encoding[base + offset] = max(0.0, min(1.0, normalised))
         return encoding
+
+    def _operator_params_for_encoding(self, op_name: str) -> dict[str, Any]:
+        """Parameters to encode: the tuner's current values, else the defaults."""
+        params = self._safe_operator_params(op_name)
+        if params:
+            return params
+        entry = ALNSConfig.get_operator_default(op_name) or {}
+        base = entry.get("params")
+        return dict(base) if isinstance(base, dict) else {}
 
     def record_operator_performance(
         self,
@@ -966,6 +1062,9 @@ class MLOperatorSelector:
         ``is_ready`` refuses takeover while ``ok`` is False.
         """
         n = int(len(y))
+        clip_bounds = self._winsorise_target(y)
+        if clip_bounds is not None:
+            y = np.clip(y, clip_bounds[0], clip_bounds[1])
         holdout_fraction = float(
             getattr(ALNSConfig, "ML_MODEL_HOLDOUT_FRACTION", 0.25)
         )
@@ -984,6 +1083,7 @@ class MLOperatorSelector:
                 "r2": None,
                 "holdout": 0,
                 "n": n,
+                "clip": clip_bounds,
             }
 
         holdout = max(min_holdout, int(round(n * holdout_fraction)))
@@ -1023,7 +1123,60 @@ class MLOperatorSelector:
             "holdout": holdout,
             "n": n,
             "min_r2": min_r2,
+            "clip": clip_bounds,
         }
+
+    @staticmethod
+    def _winsorise_target(y: np.ndarray) -> tuple[float, float] | None:
+        """Clip the long tails of the improvement target, in place-of-use.
+
+        Improvement labels carry ``inf -> 1e6`` clamps, so one run-away sample
+        can dominate a squared loss and make a learnable signal look like noise
+        (measured: repair holdout R2 down to -253.7). Clipping at a two-sided
+        MAD band keeps the ordering that operator selection cares about while
+        stopping a single row from setting the scale.
+
+        A quantile rule was tried first and rejected by measurement: with 40
+        samples the 99th percentile is interpolated between the largest normal
+        value and the 1e6 clamp, i.e. it stays at ~6e5 and clips nothing.
+
+        The band has to be estimated *without* the clamps. On a real full run
+        the destroy labels were mostly ``+/-1e6`` (a destroy that makes the
+        state infeasible), so the plain median/MAD band came out at
+        ``[-2.36e6, +1.83e6]`` and clipped nothing. Clamped rows are therefore
+        excluded when estimating the centre and spread, then clipped into it.
+        """
+        n = int(len(y))
+        factor = float(getattr(ALNSConfig, "ML_TARGET_CLIP_MAD_FACTOR", 8.0))
+        if factor <= 0.0 or n < 8:
+            return None
+        # ``_finite_float`` maps +/-inf onto +/-1e6. Those rows are a signal
+        # ("this operator made the state invalid"), not a magnitude to regress.
+        clamped = np.abs(y) >= _INF_CLAMP * 0.999
+        clean = y[~clamped]
+        base = clean if clean.size >= max(8, n // 2) else y
+        try:
+            median = float(np.median(base))
+            mad = float(np.median(np.abs(base - median)))
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(median):
+            return None
+        if not (math.isfinite(mad) and mad > 0.0):
+            # More than half the labels are identical; use the standard
+            # deviation scaled to a MAD-equivalent instead of giving up.
+            std = float(np.std(base))
+            if not (math.isfinite(std) and std > 0.0):
+                return None
+            mad = std * 0.6744897501960817
+        lo, hi = median - factor * mad, median + factor * mad
+        if not (math.isfinite(lo) and math.isfinite(hi) and hi > lo):
+            return None
+        if float(np.min(y)) >= lo and float(np.max(y)) <= hi:
+            # Nothing to clip: reporting a band would imply a change that did
+            # not happen.
+            return None
+        return lo, hi
 
     def _quality_ok(self, op_type: str) -> bool:
         return bool(self.model_quality.get(op_type, {}).get("ok", False))

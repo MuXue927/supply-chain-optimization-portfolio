@@ -452,6 +452,19 @@ class ALNSConfig:
     # for the rest of the run and never get a model-based decision back. The cap
     # only bites in that pathological case; measured medium runs stay below it.
     ML_WARMUP_BUDGET_FRACTION: float = 0.15
+    # Include the operator's current (normalised) tuner parameters in the ML
+    # feature vector. Without them the same one-hot row maps to different
+    # improvements as the tuner moves the parameters, which is a multi-valued
+    # target; ``False`` restores the pure one-hot encoding for A/B runs.
+    ML_OPERATOR_PARAM_FEATURES: bool = True
+    # Robust winsorising of the improvement target: values outside
+    # ``median +/- k * MAD`` are clipped before fitting. Improvement labels
+    # contain ``inf -> 1e6`` clamps, and a single such row dominates Ridge's
+    # squared loss (measured repair holdout R2 as low as -253.7). A quantile
+    # rule does not work at these sample sizes (at n=40 the 99th percentile is
+    # interpolated to ~6e5 by the clamp itself); MAD adapts to the sample. 0
+    # disables the clipping.
+    ML_TARGET_CLIP_MAD_FACTOR: float = 8.0
 
     # --------------------------
     # Param tuner defaults (sync with ParamAutoTuner)
