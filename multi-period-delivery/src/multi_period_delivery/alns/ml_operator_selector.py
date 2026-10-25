@@ -172,6 +172,16 @@ PARAMETERLESS_OPERATOR_NAMES = frozenset(
 )
 
 
+def _quality_label(quality: dict[str, Any]) -> str:
+    """Format a fit report for the log line, tolerating an unreported R2."""
+    r2 = quality.get("r2")
+    r2_text = "n/a" if r2 is None else f"{float(r2):.3f}"
+    return (
+        f"holdout R2={r2_text}, ok={quality.get('ok')}, "
+        f"reason={quality.get('reason')}"
+    )
+
+
 def _finite_float(value: Any, default: float = 0.0) -> float:
     """Return a finite float, replacing NaN and infinities with safe values."""
     try:
@@ -260,6 +270,12 @@ class MLOperatorSelector:
         self.training_rounds: int = 0
         self.destroy_trained_rounds: int = 0
         self.repair_trained_rounds: int = 0
+        #: Per-side out-of-sample quality from the last fit (see
+        #: ``_fit_operator_model``). Takeover is gated on ``ok``.
+        self.model_quality: dict[str, dict[str, Any]] = {
+            "destroy": {"ok": False, "r2": None},
+            "repair": {"ok": False, "r2": None},
+        }
         # Why ``should_use_ml`` refused, so "ML was enabled but never used" is
         # diagnosable instead of a mystery.
         self.gate_rejections: dict[str, int] = {}
@@ -436,6 +452,10 @@ class MLOperatorSelector:
             return self._record_rejection("progress") if record else False
         if model is None or scaler is None:
             return self._record_rejection("model") if record else False
+        if not self._quality_ok(op_type):
+            # A fitted model is not the same as a *useful* one: the holdout must
+            # beat the sample mean before the model is allowed to take over.
+            return self._record_rejection("quality") if record else False
         return True
 
     def _record_rejection(self, reason: str) -> bool:
@@ -829,31 +849,21 @@ class MLOperatorSelector:
             )
             if X is not None and len(y) >= self.min_samples:
                 try:
-                    scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-
-                    if len(X) < getattr(ALNSConfig, "ML_USE_RF_THRESHOLD", 50):
-                        model = Ridge(
-                            alpha=getattr(ALNSConfig, "ML_RIDGE_ALPHA", 1.0)
-                        )
-                    else:
-                        model = RandomForestRegressor(
-                            n_estimators=getattr(
-                                ALNSConfig, "ML_RF_N_ESTIMATORS", 50
-                            ),
-                            max_depth=getattr(ALNSConfig, "ML_RF_MAX_DEPTH", 10),
-                            random_state=int(self.rng.integers(0, 10_000)),
-                        )
-                    model.fit(X_scaled, y)
+                    model, scaler, quality = self._fit_operator_model(
+                        X, y, "destroy"
+                    )
                     self.destroy_scaler = scaler
                     self.destroy_model = model
+                    self.model_quality["destroy"] = quality
                     print(
-                        f"[ML] Destroy-operator model trained with {len(X)} samples"
+                        f"[ML] Destroy-operator model trained with {len(X)} samples "
+                        f"({_quality_label(quality)})"
                     )
                     trained_destroy = True
-                except Exception as exc:
+                except PREDICTION_ERRORS as exc:
                     self.destroy_model = None
                     self.destroy_scaler = None
+                    self.model_quality["destroy"] = {"ok": False, "r2": None}
                     print(
                         f"[ML] Destroy-operator model training failed: {exc}; "
                         "falling back to exploration"
@@ -867,31 +877,21 @@ class MLOperatorSelector:
             )
             if X is not None and len(y) >= self.min_samples:
                 try:
-                    scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-
-                    if len(X) < getattr(ALNSConfig, "ML_USE_RF_THRESHOLD", 50):
-                        model = Ridge(
-                            alpha=getattr(ALNSConfig, "ML_RIDGE_ALPHA", 1.0)
-                        )
-                    else:
-                        model = RandomForestRegressor(
-                            n_estimators=getattr(
-                                ALNSConfig, "ML_RF_N_ESTIMATORS", 50
-                            ),
-                            max_depth=getattr(ALNSConfig, "ML_RF_MAX_DEPTH", 10),
-                            random_state=int(self.rng.integers(0, 10_000)),
-                        )
-                    model.fit(X_scaled, y)
+                    model, scaler, quality = self._fit_operator_model(
+                        X, y, "repair"
+                    )
                     self.repair_scaler = scaler
                     self.repair_model = model
+                    self.model_quality["repair"] = quality
                     print(
-                        f"[ML] Repair-operator model trained with {len(X)} samples"
+                        f"[ML] Repair-operator model trained with {len(X)} samples "
+                        f"({_quality_label(quality)})"
                     )
                     trained_repair = True
-                except Exception as exc:
+                except PREDICTION_ERRORS as exc:
                     self.repair_model = None
                     self.repair_scaler = None
+                    self.model_quality["repair"] = {"ok": False, "r2": None}
                     print(
                         f"[ML] Repair-operator model training failed: {exc}; "
                         "falling back to exploration"
@@ -906,6 +906,95 @@ class MLOperatorSelector:
                 self.destroy_trained_rounds += 1
             if trained_repair:
                 self.repair_trained_rounds += 1
+
+    def _make_regressor(self, n_samples: int):
+        """Return an unfitted regressor sized for ``n_samples``."""
+        if n_samples < getattr(ALNSConfig, "ML_USE_RF_THRESHOLD", 50):
+            return Ridge(alpha=getattr(ALNSConfig, "ML_RIDGE_ALPHA", 1.0))
+        return RandomForestRegressor(
+            n_estimators=getattr(ALNSConfig, "ML_RF_N_ESTIMATORS", 50),
+            max_depth=getattr(ALNSConfig, "ML_RF_MAX_DEPTH", 10),
+            random_state=int(self.rng.integers(0, 10_000)),
+        )
+
+    def _fit_operator_model(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        op_type: str,
+    ) -> tuple[Any, Any, dict[str, Any]]:
+        """Fit scaler+regressor and report out-of-sample quality.
+
+        Takeover used to start as soon as *any* model could be fitted, with no
+        evidence that the model predicted better than the sample mean. This
+        validates on the most recent samples (a chronological holdout, matching
+        how the buffers grow) and only then refits on everything.
+
+        The quality gate is what makes "ML is on" mean "ML knows something":
+        ``is_ready`` refuses takeover while ``ok`` is False.
+        """
+        n = int(len(y))
+        holdout_fraction = float(
+            getattr(ALNSConfig, "ML_MODEL_HOLDOUT_FRACTION", 0.25)
+        )
+        min_holdout = int(getattr(ALNSConfig, "ML_MODEL_MIN_HOLDOUT_SAMPLES", 8))
+        min_train = max(4, int(getattr(ALNSConfig, "ML_MODEL_MIN_TRAIN_SAMPLES", 8)))
+        min_r2 = float(getattr(ALNSConfig, "ML_MIN_HOLDOUT_R2", 0.0))
+
+        if n - min_train < min_holdout:
+            # Too few samples to validate: fit on everything but do not claim
+            # quality, so takeover stays blocked until more samples arrive.
+            scaler = StandardScaler().fit(X)
+            model = self._make_regressor(n).fit(scaler.transform(X), y)
+            return model, scaler, {
+                "ok": False,
+                "reason": "too_few_samples",
+                "r2": None,
+                "holdout": 0,
+                "n": n,
+            }
+
+        holdout = max(min_holdout, int(round(n * holdout_fraction)))
+        holdout = min(holdout, n - min_train)
+
+        split = n - holdout
+        scaler = StandardScaler().fit(X[:split])
+        model = self._make_regressor(split).fit(
+            scaler.transform(X[:split]), y[:split]
+        )
+        predictions = np.asarray(
+            model.predict(scaler.transform(X[split:])), dtype=float
+        ).reshape(-1)
+        actual = y[split:]
+        residual = float(np.sum((actual - predictions) ** 2))
+        variance = float(np.sum((actual - float(np.mean(actual))) ** 2))
+        if variance <= 1e-12:
+            # A constant holdout carries no signal; beating its mean is not
+            # evidence of anything, so do not grant takeover.
+            r2 = None
+            ok = False
+            reason = "constant_holdout"
+        else:
+            r2 = 1.0 - residual / variance
+            ok = bool(r2 >= min_r2)
+            reason = "ok" if ok else "low_r2"
+
+        if ok:
+            # Validation passed: spend the held-out rows on the deployed model.
+            scaler = StandardScaler().fit(X)
+            model = self._make_regressor(n).fit(scaler.transform(X), y)
+
+        return model, scaler, {
+            "ok": ok,
+            "reason": reason,
+            "r2": r2,
+            "holdout": holdout,
+            "n": n,
+            "min_r2": min_r2,
+        }
+
+    def _quality_ok(self, op_type: str) -> bool:
+        return bool(self.model_quality.get(op_type, {}).get("ok", False))
 
     def get_statistics(self) -> dict[str, Any]:
         """Return counters proving how the selector actually decided.
@@ -938,6 +1027,8 @@ class MLOperatorSelector:
             "last_gate": self.last_gate,
             "feature_cache_hits": int(self.feature_cache_hits),
             "feature_cache_misses": int(self.feature_cache_misses),
+            "destroy_quality": dict(self.model_quality.get("destroy", {})),
+            "repair_quality": dict(self.model_quality.get("repair", {})),
         }
 
     # ------------------------------------------------------------------

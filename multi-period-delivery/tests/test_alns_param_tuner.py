@@ -80,7 +80,33 @@ def test_tuner_registers_default_destroy_and_repair_operators() -> None:
 
     assert "random_removal" in tuner.operators
     assert tuner.operators["random_removal"].params == {"degree": 0.25}
-    assert tuner.operators["random_removal"].ranges
+    # ``degree`` is intentionally not tuned (M43 measured no payoff), so an
+    # operator whose only parameter is ``degree`` exposes no tuning range.
+    assert tuner.operators["random_removal"].ranges == {}
+    assert tuner.operators["worst_removal"].ranges == {"value_bias": (1.0, 3.0)}
+
+
+def test_degree_is_never_exposed_to_the_tuner() -> None:
+    """Only the removal size is excluded; everything else stays tunable.
+
+    M43 measured that halving every degree raised iterations by ~70% and made
+    the cost worse (2040.26 -> 2043.16), so tuning budget spent on ``degree``
+    cannot pay off on this problem.
+    """
+    tuner = _make_tuner()
+
+    for name, op in tuner.operators.items():
+        assert "degree" not in op.ranges, name
+
+    # The parameters without a measured verdict remain tunable.
+    tunable = {
+        name: set(op.ranges)
+        for name, op in tuner.operators.items()
+        if op.ranges
+    }
+    assert tunable["regret_based_repair"] == {"k", "topN"}
+    assert tunable["lookahead_repair"] == {"lookahead_horizon"}
+    assert tunable["smart_batch_repair"] == {"batch_size"}
 
 
 def test_register_operator_overrides_baseline() -> None:
@@ -105,17 +131,17 @@ def test_registration_does_not_alias_the_shared_config_table() -> None:
 
 def test_tuning_does_not_mutate_the_shared_config_table() -> None:
     tuner = _make_tuner()
-    name = "random_removal"
+    name = "worst_removal"
     op = tuner.operators[name]
     for _ in range(5):
         op.update_performance(1.0, success=True)
-    tuner._last_used[name] = {"degree": 0.5}
+    tuner._last_used[name] = {"value_bias": 3.0}
 
     tuner.adjust_operator_params(name, improvement=5.0, success=True)
 
-    assert op.params["degree"] != 0.25  # the live baseline did move ...
+    assert op.params["value_bias"] != 2.0  # the live baseline did move ...
     # ... but the shared configuration table stayed at its published default.
-    assert ALNSConfig.OPERATOR_DEFAULTS[name]["params"]["degree"] == 0.25
+    assert ALNSConfig.OPERATOR_DEFAULTS[name]["params"]["value_bias"] == 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -170,22 +196,25 @@ def test_get_operator_params_exploration_stays_within_range() -> None:
     tuner = _make_tuner()
     tuner.exploration_rate = 1.0  # always explore
 
-    params = tuner.get_operator_params("random_removal")
+    params = tuner.get_operator_params("worst_removal")
 
-    low, high = tuner.operators["random_removal"].ranges["degree"]
-    assert low <= params["degree"] <= high
+    low, high = tuner.operators["worst_removal"].ranges["value_bias"]
+    assert low <= params["value_bias"] <= high
     # Exploration samples are not written back to the baseline.
-    assert tuner.operators["random_removal"].params == {"degree": 0.25}
+    assert tuner.operators["worst_removal"].params["value_bias"] == 2.0
 
 
 def test_get_operator_params_exploitation_returns_baseline() -> None:
     tuner = _make_tuner()
     tuner.exploration_rate = 0.0  # never explore
 
-    params = tuner.get_operator_params("random_removal")
+    params = tuner.get_operator_params("worst_removal")
 
-    assert params == {"degree": 0.25}
-    assert params is not tuner.operators["random_removal"].params
+    assert params == {"degree": 0.25, "value_bias": 2.0}
+    assert params is not tuner.operators["worst_removal"].params
+    # An operator with no tunable parameter yields an empty mapping, so the
+    # wrapper keeps its registered fixed value.
+    assert tuner.get_operator_params("random_removal") == {}
 
 
 # ---------------------------------------------------------------------------
@@ -194,36 +223,36 @@ def test_get_operator_params_exploitation_returns_baseline() -> None:
 def test_adjust_operator_params_waits_for_min_history() -> None:
     tuner = _make_tuner()
 
-    tuner.adjust_operator_params("random_removal", improvement=5.0, success=True)
+    tuner.adjust_operator_params("worst_removal", improvement=5.0, success=True)
 
-    assert tuner.operators["random_removal"].params == {"degree": 0.25}
+    assert tuner.operators["worst_removal"].params["value_bias"] == 2.0
 
 
 def test_adjust_operator_params_follows_the_used_direction() -> None:
     tuner = _make_tuner()
-    name = "random_removal"
+    name = "worst_removal"
     op = tuner.operators[name]
     for _ in range(5):
         op.update_performance(1.0, success=True)
     # Pretend the last execution explored upwards from the baseline.
-    tuner._last_used[name] = {"degree": 0.5}
+    tuner._last_used[name] = {"value_bias": 3.0}
 
     tuner.adjust_operator_params(name, improvement=5.0, success=True)
 
-    assert 0.25 < op.params["degree"] <= 0.5
+    assert 2.0 < op.params["value_bias"] <= 3.0
 
 
 def test_adjust_operator_params_ignores_unsuccessful_use() -> None:
     tuner = _make_tuner()
-    name = "random_removal"
+    name = "worst_removal"
     op = tuner.operators[name]
     for _ in range(5):
         op.update_performance(1.0, success=True)
-    tuner._last_used[name] = {"degree": 0.5}
+    tuner._last_used[name] = {"value_bias": 3.0}
 
     tuner.adjust_operator_params(name, improvement=5.0, success=False)
 
-    assert op.params["degree"] == 0.25
+    assert op.params["value_bias"] == 2.0
 
 
 # ---------------------------------------------------------------------------

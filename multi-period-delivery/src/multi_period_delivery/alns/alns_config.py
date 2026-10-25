@@ -400,6 +400,24 @@ class ALNSConfig:
     # and would otherwise train on too little data.
     # Scaled with the value above (was 120 for a base of 80).
     ML_TAKEOVER_MIN_SAMPLE_SIZE_SMALL: int = 60
+    # --- Model quality gate ---------------------------------------------
+    # Takeover requires evidence that the model beats the sample mean on data
+    # it was not fitted on. Without this gate a model that had merely *seen*
+    # enough rows was allowed to replace the selector, which made "ML is on"
+    # and "ML knows something" the same claim (measured: three enhanced modes
+    # all slightly worse than the plain baseline).
+    #
+    # Holdout is chronological (the most recent samples), matching how the
+    # buffers grow, and is validated before the deployed model is refitted on
+    # everything.
+    ML_MODEL_HOLDOUT_FRACTION: float = 0.25
+    # Minimum holdout rows; below ``MIN_TRAIN + MIN_HOLDOUT`` samples the model
+    # is fitted but takeover stays blocked (no evidence yet).
+    ML_MODEL_MIN_HOLDOUT_SAMPLES: int = 8
+    ML_MODEL_MIN_TRAIN_SAMPLES: int = 8
+    # Required out-of-sample R2. 0.0 means "at least as good as predicting the
+    # mean"; raise it to demand a real signal before ML may take over.
+    ML_MIN_HOLDOUT_R2: float = 0.0
     # Earliest progress fraction (0-1) at which ML takeover is allowed.
     ML_TAKEOVER_MIN_PROGRESS: float = 0.30
     # Base epsilon-greedy exploration probability for ML selection.
@@ -471,18 +489,25 @@ class ALNSConfig:
     OPERATOR_DEFAULTS: dict[str, dict[str, Any]] = field(
         default_factory=lambda: {
             # --- Destroy operators ---
-            # degree: fraction of vehicles to remove when the operator fires.
+            #
+            # ``degree`` (the fraction of the fleet a destroy operator removes)
+            # is deliberately **not** tunable here. Measured on large with the
+            # progress-cooled acceptance (M43): halving every degree raised the
+            # iteration count by ~70% and made the final cost worse
+            # (2040.26 -> 2043.16 over three seeds). Tuning it therefore spends
+            # budget on a dimension with no measured payoff. The operators keep
+            # their registered degree from DESTROY_DEFAULTS; only the *other*
+            # parameters below are exposed to the tuner.
             "random_removal": {
                 "params": {"degree": 0.25},
-                "ranges": {"degree": (0.1, 0.5)},
+                "ranges": {},
             },
-            # degree: fraction of vehicles removed, chosen by relatedness.
             "shaw_removal": {
                 "params": {"degree": 0.3},
-                "ranges": {"degree": (0.1, 0.5)},
+                "ranges": {},
             },
-            # degree: removal size. alpha/beta/gamma: weights of the
-            # time / demand / inventory components of the clustering distance.
+            # alpha/beta/gamma: weights of the time / demand / inventory
+            # components of the clustering distance.
             # k_clusters: number of KMeans clusters used to group vehicles.
             "periodic_shaw_removal": {
                 "params": {
@@ -493,48 +518,41 @@ class ALNSConfig:
                     "k_clusters": 3,
                 },
                 "ranges": {
-                    "degree": (0.1, 0.5),
                     "alpha": (0.2, 0.6),
                     "beta": (0.1, 0.5),
                     "gamma": (0.1, 0.5),
                     "k_clusters": (2, 10),
                 },
             },
-            # degree: fraction of the plant-to-dealer paths removed.
             "path_removal": {
                 "params": {"degree": 0.5},
-                "ranges": {"degree": (0.2, 0.7)},
+                "ranges": {},
             },
-            # degree: fraction of vehicles removed from the selected dealers.
             "cross_period_dealer_removal": {
                 "params": {"degree": 0.45},
-                "ranges": {"degree": (0.2, 0.8)},
+                "ranges": {},
             },
-            # degree: fraction of vehicles removed inside the chosen window.
             # window_ratio: length of that day window as a fraction of the horizon.
             "period_range_removal": {
                 "params": {"degree": 0.35, "window_ratio": 0.30},
-                "ranges": {"degree": (0.15, 0.8), "window_ratio": (0.15, 0.7)},
+                "ranges": {"window_ratio": (0.15, 0.7)},
             },
-            # degree: fraction of vehicles removed. value_bias: exponent that
-            # skews the sampling toward the worst-ranked vehicles.
+            # value_bias: exponent that skews the sampling toward the
+            # worst-ranked vehicles.
             "worst_removal": {
                 "params": {"degree": 0.25, "value_bias": 2.0},
-                "ranges": {"degree": (0.1, 0.5), "value_bias": (1.0, 3.0)},
+                "ranges": {"value_bias": (1.0, 3.0)},
             },
             # No tunable parameters: it rolls back the vehicles that cause a
             # negative inventory violation.
             "infeasible_removal": {"params": {}, "ranges": {}},
-            # degree: fraction of the high-inventory-pressure shipments released.
             "surplus_inventory_removal": {
                 "params": {"degree": 0.25},
-                "ranges": {"degree": (0.1, 0.5)},
+                "ranges": {},
             },
-            # degree: fraction of vehicles serving dealers with abnormal
-            # inventory (both stockout and overstock).
             "inventory_level_removal": {
                 "params": {"degree": 0.25},
-                "ranges": {"degree": (0.1, 0.5)},
+                "ranges": {},
             },
             # --- Repair operators ---
             # demand_weight / stock_weight: relative preference for closing a

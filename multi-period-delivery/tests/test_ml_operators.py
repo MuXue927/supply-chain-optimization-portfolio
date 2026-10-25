@@ -360,6 +360,73 @@ def test_training_filters_nonfinite_samples() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Model quality gate
+# ---------------------------------------------------------------------------
+def _noise_samples(n: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    return rng.normal(size=(n, 4)), rng.normal(size=n)
+
+
+def test_fit_reports_quality_and_rejects_pure_noise(monkeypatch) -> None:
+    """A model fitted on noise must not pass the holdout gate.
+
+    Takeover used to start as soon as any model could be fitted, with no
+    evidence that it beat the sample mean. That is what allowed "ML is on" to
+    differ from "ML knows something".
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(41))
+    monkeypatch.setattr(ALNSConfig, "ML_MIN_HOLDOUT_R2", 0.0)
+    X, y = _noise_samples(60, seed=5)
+
+    _model, _scaler, quality = selector._fit_operator_model(X, y, "destroy")
+
+    assert quality["holdout"] >= 8
+    assert quality["r2"] is not None
+    assert quality["ok"] is False
+    assert quality["reason"] == "low_r2"
+
+
+def test_fit_accepts_a_learnable_signal(monkeypatch) -> None:
+    selector = MLOperatorSelector(None, np.random.default_rng(42))
+    monkeypatch.setattr(ALNSConfig, "ML_MIN_HOLDOUT_R2", 0.0)
+    rng = np.random.default_rng(6)
+    X = rng.normal(size=(80, 3))
+    y = 2.0 * X[:, 0] - 1.5 * X[:, 1]
+
+    _model, _scaler, quality = selector._fit_operator_model(X, y, "repair")
+
+    assert quality["ok"] is True
+    assert quality["r2"] > 0.5
+
+
+def test_too_few_samples_blocks_rather_than_guesses(monkeypatch) -> None:
+    selector = MLOperatorSelector(None, np.random.default_rng(43))
+    # Fewer than MIN_TRAIN + MIN_HOLDOUT rows: a model can be fitted, but no
+    # out-of-sample evidence exists, so takeover must stay blocked.
+    too_few = int(ALNSConfig.ML_MODEL_MIN_TRAIN_SAMPLES) + int(
+        ALNSConfig.ML_MODEL_MIN_HOLDOUT_SAMPLES
+    ) - 1
+    X, y = _noise_samples(too_few, seed=7)
+
+    _model, _scaler, quality = selector._fit_operator_model(X, y, "destroy")
+
+    assert quality["ok"] is False
+    assert quality["reason"] == "too_few_samples"
+    assert quality["r2"] is None
+
+
+def test_constant_holdout_carries_no_signal(monkeypatch) -> None:
+    selector = MLOperatorSelector(None, np.random.default_rng(44))
+    X, _ = _noise_samples(60, seed=8)
+    y = np.full(60, 0.5)
+
+    _model, _scaler, quality = selector._fit_operator_model(X, y, "destroy")
+
+    assert quality["ok"] is False
+    assert quality["reason"] == "constant_holdout"
+
+
+# ---------------------------------------------------------------------------
 # ML without a tuner: selection only, parameters from configured defaults
 # ---------------------------------------------------------------------------
 def test_selector_accepts_no_tuner_and_keeps_its_own_iteration_clock(
@@ -505,6 +572,8 @@ def _ready_selector(monkeypatch) -> MLOperatorSelector:
     selector.destroy_performances = [0.1] * 45
     selector.destroy_model = _ZeroModel()
     selector.destroy_scaler = _IdentityScaler()
+    # The model-quality gate also has to pass, otherwise readiness is False.
+    selector.model_quality["destroy"] = {"ok": True, "r2": 0.5}
     return selector
 
 
