@@ -691,6 +691,42 @@ def test_ml_warmup_sample_copies_the_state_and_survives_failures(
     assert state.s_ikt is before
 
 
+def test_ml_warmup_sample_starts_no_trial_once_the_budget_is_spent(
+    feasible_solution: SolutionState,
+) -> None:
+    """An exhausted time budget must stop sampling before another trial starts."""
+
+    class _BudgetedSelector:
+        warmup_stop_reason = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def warmup_scope(self):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+        def warmup_budget_exhausted(self) -> bool:
+            return True
+
+        def note_warmup_seconds(self, seconds: float) -> None:
+            self.calls += 1
+
+    optimizer = _DummyOptimizer()
+    optimizer.ml_selector = _BudgetedSelector()
+    optimizer.rng = np.random.default_rng(2)
+
+    assert cb.ml_warmup_sample(optimizer, feasible_solution, budget=3) is None
+
+    assert optimizer.ml_selector.calls == 0
+    assert optimizer.ml_selector.warmup_stop_reason == "budget"
+
+    # A second call must bail out before doing any work as well.
+    assert cb.ml_warmup_sample(optimizer, feasible_solution, budget=3) is None
+    assert optimizer.ml_selector.calls == 0
+
+
 # ---------------------------------------------------------------------------
 # Iteration callback
 # ---------------------------------------------------------------------------

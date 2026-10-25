@@ -14,6 +14,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from math import isfinite
 from typing import TYPE_CHECKING, Any
@@ -700,34 +701,50 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
     # the ML models) whenever ``ENABLE_PARAM_TUNER`` was off.
     if not optimizer.ml_selector:
         return
+    selector = optimizer.ml_selector
+    if getattr(selector, "warmup_stop_reason", None) == "budget":
+        return
+    budget_exhausted = getattr(selector, "warmup_budget_exhausted", None)
+    note_seconds = getattr(selector, "note_warmup_seconds", None)
     try:
         # Sampling runs on copies to collect training rows; it must not feed the
         # selection feedback, or the stagnation counter arms the fallback
         # cooldown before the selector has made a single choice.
-        with optimizer.ml_selector.warmup_scope():
+        with selector.warmup_scope():
             for _ in range(max(0, int(budget))):
-                tmp_state = safe_state_snapshot(state)
-                if tmp_state is None:
-                    continue
-                # Try one destroy operation with explicit selector and tuner inputs.
+                # The sample-count threshold is not a budget: a slow instance,
+                # or a side whose sampling keeps failing, could otherwise spend
+                # the whole run here and never reach a takeover decision.
+                if callable(budget_exhausted) and budget_exhausted():
+                    selector.warmup_stop_reason = "budget"
+                    break
+                started = time.perf_counter()
                 try:
-                    _ = ml_based_destroy(
-                        tmp_state,
-                        optimizer.rng,
-                        1,
-                    )
-                except Exception:
-                    # A failed destroy does not prevent the repair attempt.
-                    logger.debug("ML warmup: destroy failed on temp state, continuing")
-                # Try one repair operation with explicit selector and tuner inputs.
-                try:
-                    _ = ml_based_repair(
-                        tmp_state,
-                        optimizer.rng,
-                        1,
-                    )
-                except Exception:
-                    logger.debug("ML warmup: repair failed on temp state, continuing")
+                    tmp_state = safe_state_snapshot(state)
+                    if tmp_state is None:
+                        continue
+                    # Try one destroy operation with explicit selector and tuner inputs.
+                    try:
+                        _ = ml_based_destroy(
+                            tmp_state,
+                            optimizer.rng,
+                            1,
+                        )
+                    except Exception:
+                        # A failed destroy does not prevent the repair attempt.
+                        logger.debug("ML warmup: destroy failed on temp state, continuing")
+                    # Try one repair operation with explicit selector and tuner inputs.
+                    try:
+                        _ = ml_based_repair(
+                            tmp_state,
+                            optimizer.rng,
+                            1,
+                        )
+                    except Exception:
+                        logger.debug("ML warmup: repair failed on temp state, continuing")
+                finally:
+                    if callable(note_seconds):
+                        note_seconds(time.perf_counter() - started)
     except Exception:
         logger.exception("ML warmup sampling failed")
 
@@ -1621,6 +1638,7 @@ def make_callback_on_iteration(
                                 len(sel.destroy_features) < min_samples
                                 or len(sel.repair_features) < min_samples
                             )
+                            and getattr(sel, "warmup_stop_reason", None) != "budget"
                         ):
                             ml_warmup_sample(optimizer, state, budget=warmup_budget)
                     except Exception:

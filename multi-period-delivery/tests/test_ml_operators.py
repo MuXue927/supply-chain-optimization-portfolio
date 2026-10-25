@@ -560,6 +560,50 @@ def test_warmup_scope_does_not_touch_the_selection_feedback() -> None:
     assert selector._fallback_cooldown["destroy"] > 0
 
 
+def test_warmup_time_budget_accumulates_and_stops_on_budget(monkeypatch) -> None:
+    """The sample threshold is not a budget: warm-up must also be time-bounded.
+
+    Nothing used to stop warm-up before both buffers reached the takeover
+    threshold, so a slow instance (or a side whose sampling kept failing) could
+    spend the run there and never take over.
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(31))
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 100)
+    monkeypatch.setattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.15)
+
+    assert abs(selector.warmup_time_limit_seconds() - 15.0) < 1e-9
+    assert selector.warmup_budget_exhausted() is False
+    assert selector.warmup_stop_reason is None
+
+    selector.note_warmup_seconds(10.0)
+    assert selector.warmup_trials == 1
+    assert selector.warmup_budget_exhausted() is False
+
+    selector.note_warmup_seconds(5.0)
+    assert selector.warmup_budget_exhausted() is True
+    assert selector.warmup_stop_reason == "budget"
+    assert selector.get_statistics()["warmup_stop_reason"] == "budget"
+
+    # A zero fraction disables warm-up instead of meaning "unlimited".
+    monkeypatch.setattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.0)
+    assert selector.warmup_time_limit_seconds() == 0.0
+    assert selector.warmup_budget_exhausted() is True
+
+    # A non-positive runtime budget cannot describe a share either.
+    monkeypatch.setattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.15)
+    monkeypatch.setattr(ALNSConfig, "MAX_RUNTIME", 0)
+    assert selector.warmup_time_limit_seconds() == 0.0
+
+    # Non-finite and unparsable observations are counted as trials but must not
+    # corrupt the accumulated seconds (they would poison the exhaustion check).
+    before = selector.warmup_seconds
+    selector.note_warmup_seconds("not-a-number")
+    selector.note_warmup_seconds(float("nan"))
+    selector.note_warmup_seconds(float("inf"))
+    selector.note_warmup_seconds(-1.0)
+    assert selector.warmup_seconds == before
+
+
 # ---------------------------------------------------------------------------
 # Ready check and selector takeover
 # ---------------------------------------------------------------------------

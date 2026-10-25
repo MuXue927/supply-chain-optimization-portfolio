@@ -76,16 +76,20 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 23:51   HEAD = da71296   649 passed / 42 deselected
-覆盖率 66.20%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
-CI 40208957646 success（文档基线 23b2df4）
+2026-10-26   HEAD = M52 代码提交   651 passed / 42 deselected
+覆盖率 66.11%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M52 给 ML warm-up 加时间上限（ML_WARMUP_BUDGET_FRACTION=0.15）：
+medium/45s 只占 8-9%、上限不触发（cost 与改前逐位相同 803.86/804.60）；
+large/45s 无上限时 14 轮迭代全在 warm-up、正常搜索 0 轮，加上限后
+22 轮（+57%）、终解 2040.32 不变。新缺陷：large 短预算下样本只到 29/30，
+低于门槛 40，ml 仍零接管；候选方向见 `修复主线重估` §四。
 M51 模型质量门：接管要求时间序留出集 R²≥0（实测破坏 +0.38 放行、修复 −8.5e8 拒绝）。
 tuner 的 ranges 全部移除 degree，预算转向 regret k/topN、lookahead_horizon、batch_size。
 消融（medium/45s，3 种子，两轮交替）：basic 798.74、tuner 802.33、ml 794.88、
 full 803.23；配对差 +3.59/−3.86/+4.49。同种子比 M50：ml 804.84→794.88，
 相对 basic 由 +4.3 转为 −3.9，但 ±11.8 波动、不显著。
-待讨论三个新缺陷：warm-up 无上限（seed42/ml 只跑 30 轮）、ML 特征不含算子参数
-（解释 full 差于 ml）、修复模型 R² 多为负（标签未尺度化）。
+待讨论两个缺陷：ML 特征不含算子参数（解释 full 差于 ml）、
+修复模型 R² 多为负（标签未尺度化）。
 M50 让 ML 接管真正替换轮盘（NoOpAwareSegmentedRouletteWheel 的 takeover 钩子，
 is_ready 无副作用与会消耗冷却的 should_use_ml 分离）。107 轮里 79 轮接管、
 模型决策 106 次、随机回退 0；ml 81.9 轮 vs basic 72.8 轮，开销不再拖慢。

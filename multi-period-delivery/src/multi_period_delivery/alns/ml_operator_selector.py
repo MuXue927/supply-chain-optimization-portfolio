@@ -289,6 +289,11 @@ class MLOperatorSelector:
         # rows but must not touch the selection feedback (streak / cooldown).
         self._suppress_feedback: bool = False
         self.warmup_trials: int = 0
+        #: Wall time warm-up sampling has consumed, and why it stopped. The
+        #: sample-count threshold alone is not a budget: a slow instance can
+        #: spend the search on warm-up and never reach a takeover decision.
+        self.warmup_seconds: float = 0.0
+        self.warmup_stop_reason: str | None = None
         self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
         self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
@@ -310,6 +315,33 @@ class MLOperatorSelector:
             yield self
         finally:
             self._suppress_feedback = previous
+
+    def warmup_time_limit_seconds(self) -> float:
+        """Wall-clock budget warm-up sampling may consume in total."""
+        fraction = float(getattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.15))
+        budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 0) or 0)
+        if fraction <= 0.0 or budget <= 0.0:
+            return 0.0
+        return fraction * budget
+
+    def warmup_budget_exhausted(self) -> bool:
+        """Whether warm-up must stop starting new sampling trials."""
+        limit = self.warmup_time_limit_seconds()
+        if limit <= 0.0:
+            return True
+        return self.warmup_seconds >= limit
+
+    def note_warmup_seconds(self, seconds: float) -> None:
+        """Accumulate observed warm-up cost; called once per completed trial."""
+        self.warmup_trials += 1
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if value > 0.0 and value == value and value != float("inf"):
+            self.warmup_seconds += value
+        if self.warmup_stop_reason is None and self.warmup_budget_exhausted():
+            self.warmup_stop_reason = "budget"
 
     def set_iteration(
         self,
@@ -1023,6 +1055,9 @@ class MLOperatorSelector:
             "repair_explore_picks": int(self.explore_picks["repair"]),
             "destroy_random_fallbacks": int(self.random_fallbacks["destroy"]),
             "repair_random_fallbacks": int(self.random_fallbacks["repair"]),
+            "warmup_trials": int(self.warmup_trials),
+            "warmup_seconds": round(float(self.warmup_seconds), 4),
+            "warmup_stop_reason": self.warmup_stop_reason,
             "gate_rejections": dict(self.gate_rejections),
             "last_gate": self.last_gate,
             "feature_cache_hits": int(self.feature_cache_hits),

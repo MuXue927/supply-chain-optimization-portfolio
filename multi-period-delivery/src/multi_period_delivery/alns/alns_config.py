@@ -442,6 +442,16 @@ class ALNSConfig:
     ML_FALLBACK_COOLDOWN_ITERS: int = 5
     # Extra warm-up samples to collect per iteration while in the warm-up phase.
     ML_WARMUP_PER_ITER: int = 2
+    # Hard cap on the wall-clock share warm-up sampling may consume, as a
+    # fraction of ``MAX_RUNTIME``.
+    #
+    # Warm-up stops when both buffers reach the takeover sample threshold, and
+    # that threshold is reached in ~20 iterations on medium (measured 8-9% of a
+    # 45 s budget, 4.0-4.7 s). Nothing bounded the *time* it might spend, so a
+    # slow instance or a side whose sampling keeps failing could pay warm-up cost
+    # for the rest of the run and never get a model-based decision back. The cap
+    # only bites in that pathological case; measured medium runs stay below it.
+    ML_WARMUP_BUDGET_FRACTION: float = 0.15
 
     # --------------------------
     # Param tuner defaults (sync with ParamAutoTuner)
