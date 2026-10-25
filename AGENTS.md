@@ -78,6 +78,7 @@
 ```text
 2026-10-25 22:25   HEAD = 3109bb5   644 passed / 42 deselected
 覆盖率 65.98%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+CI 40202248526 success（文档基线 a34f3db）
 M50 让 ML 接管真正替换轮盘（NoOpAwareSegmentedRouletteWheel 的 takeover 钩子，
 is_ready 无副作用与会消耗冷却的 should_use_ml 分离）。107 轮里 79 轮接管、
 模型决策 106 次、随机回退 0；ml 81.9 轮 vs basic 72.8 轮，开销不再拖慢。
