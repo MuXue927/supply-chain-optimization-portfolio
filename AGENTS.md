@@ -76,7 +76,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M53 代码提交   653 passed / 42 deselected
+2026-10-26   HEAD = 0bdaa17   653 passed / 42 deselected
 覆盖率 66.41%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
 M53 特征并入算子参数（仅 tuner 侧生效）+ 收益标签 MAD 裁剪（先排除 ±1e6 钳位行）：
 medium/45s、3 种子同会话：basic 803.69、ml 804.03、full 803.87；
