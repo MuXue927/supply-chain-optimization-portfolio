@@ -375,19 +375,30 @@ def test_selector_accepts_no_tuner_and_keeps_its_own_iteration_clock(
     selector.min_samples = 2
 
     feature = np.zeros(3)
-    selector.destroy_features = [feature.copy() for _ in range(4)]
-    selector.destroy_performances = [0.1] * 4
 
-    # Force-less retraining must still be gated by the selector's own clock.
-    selector.set_iteration(3, 100)
+    # Too few samples: nothing to fit, at any iteration.
+    selector.destroy_features = [feature.copy()]
+    selector.destroy_performances = [0.1]
+    selector.set_iteration(50, 100)
     selector.train_models()
     assert selector.destroy_model is None
 
-    # Past the interval it must train, without any tuner present.
-    selector.set_iteration(6, 100)
+    # First fit happens as soon as the sample threshold is met, without
+    # waiting for a full retrain interval (otherwise takeover is unreachable).
+    selector.destroy_features = [feature.copy() for _ in range(4)]
+    selector.destroy_performances = [0.1] * 4
+    selector.set_iteration(3, 100)
     selector.train_models()
     assert selector.destroy_model is not None
-    assert selector.iteration == 6
+    assert selector.training_rounds == 1
+
+    # Once fitted, the interval governs the next retrain.
+    selector.set_iteration(4, 100)
+    selector.train_models()
+    assert selector.training_rounds == 1
+    selector.set_iteration(9, 100)
+    selector.train_models()
+    assert selector.training_rounds == 2
 
 
 def test_selector_without_tuner_uses_configured_default_params() -> None:
@@ -398,6 +409,56 @@ def test_selector_without_tuner_uses_configured_default_params() -> None:
     # set_iteration must not fail when there is no tuner to synchronise.
     selector.set_iteration(10, 100, no_improve_iters=3)
     assert selector.max_iterations == 100
+
+
+def test_statistics_separate_model_choices_from_random_fallbacks() -> None:
+    """The counters must prove whether a model choice actually happened."""
+    selector = MLOperatorSelector(None, np.random.default_rng(3))
+    state = _load_state()
+
+    # Before any model exists every selection is a random fallback.
+    selector.select_best_operator(state, "destroy", list(_DESTROY_OPERATORS))
+    stats = selector.get_statistics()
+    assert stats["destroy_selections"] == 1
+    assert stats["destroy_random_fallbacks"] == 1
+    assert stats["destroy_model_selections"] == 0
+
+    # With a trained model the choice is recorded as a model selection.
+    selector.destroy_model = _ZeroModel()
+    selector.destroy_scaler = _IdentityScaler()
+    selector.rng = np.random.default_rng(4)
+    selector.select_best_operator(state, "destroy", list(_DESTROY_OPERATORS))
+    stats = selector.get_statistics()
+    assert stats["destroy_selections"] == 2
+    assert stats["destroy_model_selections"] == 1
+    assert stats["destroy_random_fallbacks"] == 1
+    assert stats["trained_with_param_tuner"] is False
+
+
+def test_feedback_during_a_cooldown_does_not_rearm_it() -> None:
+    """A cooldown must expire; feedback from fallback trials must not extend it.
+
+    Warmup sampling and fallback trials reported their (usually zero)
+    improvement, which rebuilt the 18-trial streak inside the 30-trial cooldown
+    and re-armed it immediately. ML was then locked out for the whole run.
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(7))
+    selector._no_improve_streak["destroy"] = 17
+
+    # The 18th non-improving choice arms the cooldown and clears the streak.
+    selector.update_op_feedback("destroy", 0.0)
+    assert selector._fallback_cooldown["destroy"] == 30
+    assert selector._no_improve_streak["destroy"] == 0
+
+    # Many fallback trials during the cooldown must not re-arm it.
+    for _ in range(40):
+        selector.update_op_feedback("destroy", 0.0)
+    assert selector._fallback_cooldown["destroy"] == 30
+    assert selector._no_improve_streak["destroy"] == 0
+
+    # Draining the cooldown restores the selector.
+    assert all(selector.should_force_fallback("destroy") for _ in range(30))
+    assert selector.should_force_fallback("destroy") is False
 
 
 def test_ml_only_mode_builds_a_selector_without_a_tuner(

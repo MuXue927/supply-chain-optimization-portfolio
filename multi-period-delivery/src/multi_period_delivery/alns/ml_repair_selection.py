@@ -171,6 +171,10 @@ def ml_based_repair(
     # order so the selector and one-hot encoding cannot drift apart.
     repair_operators = _REPAIR_OPERATORS
 
+    # Train before asking whether to take over: ``should_use_ml`` requires a
+    # trained model, so training only after the check made takeover unreachable.
+    state.ml_selector.train_models()
+
     # Check whether training data is sufficient
     use_ml = False
     if hasattr(state.ml_selector, "should_use_ml"):
@@ -221,9 +225,6 @@ def ml_based_repair(
             f"improvement {improvement:.4f}"
         )
         return new_state
-
-    # Sufficient training data: use the ML selector to choose the best operator
-    state.ml_selector.train_models()
 
     # Select the best operator
     op_name, params = state.ml_selector.select_best_operator(

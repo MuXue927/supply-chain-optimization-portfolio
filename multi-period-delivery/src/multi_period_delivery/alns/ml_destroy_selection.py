@@ -228,6 +228,10 @@ def ml_based_destroy(
         print("[OPLOG][Destroy-ML] No ML selector attached; falling back to random_removal")
         return random_removal(state, rng)
 
+    # Train before asking whether to take over: ``should_use_ml`` requires a
+    # trained model, so training after the check made takeover unreachable.
+    ml_selector.train_models()
+
     # Fallback: insufficient samples
     use_ml = False
     if hasattr(ml_selector, "should_use_ml"):
@@ -266,10 +270,6 @@ def ml_based_destroy(
             f"elapsed {time.time() - t_start:.4f}s"
         )
         return new_state
-
-    # Model side: attempt training. Internal throttling trains only when the
-    # interval and sample requirements are satisfied.
-    ml_selector.train_models()
 
     # ML selection
     op_name, params = ml_selector.select_best_operator(

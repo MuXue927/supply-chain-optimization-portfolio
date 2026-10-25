@@ -242,6 +242,19 @@ class MLOperatorSelector:
         # permanently 0 and the interval-triggered retraining never fired.
         self.iteration: int = 0
         self.max_iterations: int = 0
+        # Counters that make "ML was actually used" verifiable instead of
+        # assumed. They feed ``get_statistics`` and the ablation reports.
+        self.selection_calls: dict[str, int] = {"destroy": 0, "repair": 0}
+        self.model_selections: dict[str, int] = {"destroy": 0, "repair": 0}
+        self.explore_picks: dict[str, int] = {"destroy": 0, "repair": 0}
+        self.random_fallbacks: dict[str, int] = {"destroy": 0, "repair": 0}
+        self.training_rounds: int = 0
+        self.destroy_trained_rounds: int = 0
+        self.repair_trained_rounds: int = 0
+        # Why ``should_use_ml`` refused, so "ML was enabled but never used" is
+        # diagnosable instead of a mystery.
+        self.gate_rejections: dict[str, int] = {}
+        self.last_gate: dict[str, float | int | bool | None] | None = None
         self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
         self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
@@ -306,6 +319,15 @@ class MLOperatorSelector:
             self._no_improve_streak[key] = 0
             return
 
+        # Only trials the selector actually chose may feed the streak. During a
+        # cooldown the outcomes come from the random fallback (and from warmup
+        # sampling on state copies), and those calls arrive faster than the
+        # cooldown decrements: the streak reached 18 again inside the cooldown,
+        # re-armed it, and ML stayed off for the whole run (measured: 90
+        # cooldown rejections, 0 model-based selections).
+        if int(self._fallback_cooldown.get(key, 0)) > 0:
+            return
+
         streak = int(self._no_improve_streak.get(key, 0)) + 1
         self._no_improve_streak[key] = streak
         limit = int(getattr(ALNSConfig, "ML_STAGNATION_NO_IMPROVE_LIMIT", 18))
@@ -323,24 +345,38 @@ class MLOperatorSelector:
         op_type: str,
         min_sample_size: int | None = None,
     ) -> bool:
-        if self.should_force_fallback(op_type):
-            return False
-
+        samples = self._sample_count(op_type)
         required_samples = self._takeover_min_samples()
         if min_sample_size is not None:
             required_samples = max(required_samples, int(min_sample_size))
-
-        if self._sample_count(op_type) < required_samples:
-            return False
-
         progress = self._resolve_progress(state)
-        takeover_progress = float(getattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.30))
-        if progress < takeover_progress:
-            return False
-
         model = self.destroy_model if op_type == "destroy" else self.repair_model
         scaler = self.destroy_scaler if op_type == "destroy" else self.repair_scaler
-        return model is not None and scaler is not None
+        takeover_progress = float(getattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.30))
+        self.last_gate = {
+            "samples": samples,
+            "required_samples": required_samples,
+            "progress": progress,
+            "takeover_progress": takeover_progress,
+            "model": model is not None,
+        }
+
+        def _reject(reason: str) -> bool:
+            self.gate_rejections[reason] = self.gate_rejections.get(reason, 0) + 1
+            return False
+
+        if self.should_force_fallback(op_type):
+            return _reject("cooldown")
+
+        if samples < required_samples:
+            return _reject("samples")
+
+        if progress < takeover_progress:
+            return _reject("progress")
+
+        if model is None or scaler is None:
+            return _reject("model")
+        return True
 
     def _dynamic_epsilon(self, state: SolutionState | None) -> float:
         progress = self._resolve_progress(state)
@@ -650,7 +686,14 @@ class MLOperatorSelector:
                 current_iter, int(getattr(self.param_tuner, "iteration", 0) or 0)
             )
 
-        need_train = force or (
+        # First fit ignores the interval. ``should_use_ml`` requires a trained
+        # model, and the operators only called ``train_models`` *after* that
+        # check passed, so waiting for one full retrain interval before the
+        # first fit made takeover impossible (measured: 0 training rounds and
+        # 0 model-based selections across 20 runs). Steady-state retraining
+        # still respects the interval.
+        first_fit = self.last_train_iter == 0
+        need_train = force or first_fit or (
             current_iter - self.last_train_iter >= self.retrain_interval
         )
         if not need_train:
@@ -738,6 +781,42 @@ class MLOperatorSelector:
         # Otherwise keep the old value so the next call can try again.
         if trained_destroy or trained_repair:
             self.last_train_iter = current_iter
+            self.training_rounds += 1
+            if trained_destroy:
+                self.destroy_trained_rounds += 1
+            if trained_repair:
+                self.repair_trained_rounds += 1
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Return counters proving how the selector actually decided.
+
+        A run can report ``ENABLE_ML_OPERATORS=True`` while every choice was a
+        random fallback (model never trained, or training failed silently).
+        These counters separate the three cases so an ablation cannot mistake
+        "ML was on" for "ML was used".
+        """
+        return {
+            "iteration": int(self.iteration),
+            "max_iterations": int(self.max_iterations),
+            "trained_with_param_tuner": self.param_tuner is not None,
+            "training_rounds": int(self.training_rounds),
+            "destroy_trained_rounds": int(self.destroy_trained_rounds),
+            "repair_trained_rounds": int(self.repair_trained_rounds),
+            "destroy_samples": len(self.destroy_features),
+            "repair_samples": len(self.repair_features),
+            "destroy_model": self.destroy_model is not None,
+            "repair_model": self.repair_model is not None,
+            "destroy_selections": int(self.selection_calls["destroy"]),
+            "repair_selections": int(self.selection_calls["repair"]),
+            "destroy_model_selections": int(self.model_selections["destroy"]),
+            "repair_model_selections": int(self.model_selections["repair"]),
+            "destroy_explore_picks": int(self.explore_picks["destroy"]),
+            "repair_explore_picks": int(self.explore_picks["repair"]),
+            "destroy_random_fallbacks": int(self.random_fallbacks["destroy"]),
+            "repair_random_fallbacks": int(self.random_fallbacks["repair"]),
+            "gate_rejections": dict(self.gate_rejections),
+            "last_gate": self.last_gate,
+        }
 
     # ------------------------------------------------------------------
     # Operator selection
@@ -840,6 +919,7 @@ class MLOperatorSelector:
         if op_type not in {"destroy", "repair"}:
             op_type = "repair"
 
+        self.selection_calls[op_type] += 1
         op_map = self.destroy_op_map if op_type == "destroy" else self.repair_op_map
         if not candidates:
             return self._default_operator(op_type)
@@ -860,6 +940,7 @@ class MLOperatorSelector:
             record_swallowed(
                 "ml_operator_selector.extract_state_features", exc
             )
+            self.random_fallbacks[op_type] += 1
             return self._random_valid_operator(op_type, valid_candidates)
 
         model = self.destroy_model if op_type == "destroy" else self.repair_model
@@ -867,6 +948,7 @@ class MLOperatorSelector:
 
         # The model is not available yet: explore randomly.
         if model is None or scaler is None:
+            self.random_fallbacks[op_type] += 1
             return self._random_valid_operator(op_type, valid_candidates)
 
         predictions = []
@@ -894,7 +976,10 @@ class MLOperatorSelector:
             prediction for prediction in predictions if prediction[1] is not None
         ]
         if not finite_predictions:
+            self.random_fallbacks[op_type] += 1
             return self._random_valid_operator(op_type, valid_candidates)
+
+        self.model_selections[op_type] += 1
 
         # Sort predicted performance in descending order
         finite_predictions.sort(
@@ -906,6 +991,7 @@ class MLOperatorSelector:
         # convergence later.
         epsilon = self._dynamic_epsilon(state)
         if self.rng.random() < epsilon:
+            self.explore_picks[op_type] += 1
             idx = int(self.rng.integers(0, len(finite_predictions)))
             return finite_predictions[idx][0], finite_predictions[idx][2]
         return finite_predictions[0][0], finite_predictions[0][2]
