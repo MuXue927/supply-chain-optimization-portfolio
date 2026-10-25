@@ -78,6 +78,7 @@
 ```text
 2026-10-25 15:36   HEAD = a7cf784   640 passed / 42 deselected
 覆盖率 66.18%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+CI 40173429590 success（文档基线 8a08073）
 M48 优化 ML 每次选择的开销：批预测（19 次 transform+predict → 1 次，11.7×）
 + 一次决策内特征复用（键 iteration/id/车辆数/revision）。固定开销
 12.1 ms → 约 4.6 ms（−62%）；medium/60s 成本 804.32 → 795.64。
