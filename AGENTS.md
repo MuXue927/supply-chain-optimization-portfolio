@@ -76,9 +76,16 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 13:30   HEAD = b0a73c1   632 passed / 42 deselected
-覆盖率 65.85%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
-CI 40164482823 success
+2026-10-25 14:36   HEAD = 486bf10   637 passed / 42 deselected
+覆盖率 66.17%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+M47 按作者定夺让 ML 模式独立：ENABLE_ML_OPERATORS 不再隐式构造 tuner，
+ML 与 full 是两种不同配置。同时修掉三个让 ML 从未生效的缺陷：
+  (a) 四处把 tuner 当 ML 前置条件（含算子注册与 warmup）；
+  (b) should_use_ml 要求模型已存在，而训练只在接管后调用（循环依赖）；
+  (c) 冷却期内的回退样本继续累计"无改进"，冷却被无限重挂。
+修复后 medium/90s 出现 3 轮训练、45 次模型选择、0 次随机回退。
+消融首测（medium/90s/3 种子）：tuner +16.26、ML +12.06、full +18.84（均更差），
+交互项 −9.48；样本不足，下一步要 5–10 种子配对检验。
 M45 收窄盲 except Exception：helper 的显式抛出面是闭合的五元组，落成
 alns/errors.STATE_OPERATION_ERRORS；另删除 15 处纯日志守卫与 7 处纯 setattr 守卫。
 保留的 113 个是回调/算子隔离、范围外模块、惰性 import/可选依赖、I/O、deepcopy。
