@@ -78,6 +78,7 @@
 ```text
 2026-10-25 23:51   HEAD = da71296   649 passed / 42 deselected
 覆盖率 66.20%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+CI 40208957646 success（文档基线 23b2df4）
 M51 模型质量门：接管要求时间序留出集 R²≥0（实测破坏 +0.38 放行、修复 −8.5e8 拒绝）。
 tuner 的 ranges 全部移除 degree，预算转向 regret k/topN、lookahead_horizon、batch_size。
 消融（medium/45s，3 种子，两轮交替）：basic 798.74、tuner 802.33、ml 794.88、
