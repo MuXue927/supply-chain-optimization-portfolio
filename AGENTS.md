@@ -78,6 +78,7 @@
 ```text
 2026-10-25 14:36   HEAD = 486bf10   637 passed / 42 deselected
 覆盖率 66.17%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+CI 40169754813 success（文档基线 7d980d6）
 M47 按作者定夺让 ML 模式独立：ENABLE_ML_OPERATORS 不再隐式构造 tuner，
 ML 与 full 是两种不同配置。同时修掉三个让 ML 从未生效的缺陷：
   (a) 四处把 tuner 当 ML 前置条件（含算子注册与 warmup）；
