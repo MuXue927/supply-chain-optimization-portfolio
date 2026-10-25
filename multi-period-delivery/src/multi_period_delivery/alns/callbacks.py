@@ -701,29 +701,33 @@ def ml_warmup_sample(optimizer: ALNSOptimizer, state: SolutionState, budget: int
     if not optimizer.ml_selector:
         return
     try:
-        for _ in range(max(0, int(budget))):
-            tmp_state = safe_state_snapshot(state)
-            if tmp_state is None:
-                continue
-            # Try one destroy operation with explicit selector and tuner inputs.
-            try:
-                _ = ml_based_destroy(
-                    tmp_state,
-                    optimizer.rng,
-                    1,
-                )
-            except Exception:
-                # A failed destroy does not prevent the repair attempt.
-                logger.debug("ML warmup: destroy failed on temp state, continuing")
-            # Try one repair operation with explicit selector and tuner inputs.
-            try:
-                _ = ml_based_repair(
-                    tmp_state,
-                    optimizer.rng,
-                    1,
-                )
-            except Exception:
-                logger.debug("ML warmup: repair failed on temp state, continuing")
+        # Sampling runs on copies to collect training rows; it must not feed the
+        # selection feedback, or the stagnation counter arms the fallback
+        # cooldown before the selector has made a single choice.
+        with optimizer.ml_selector.warmup_scope():
+            for _ in range(max(0, int(budget))):
+                tmp_state = safe_state_snapshot(state)
+                if tmp_state is None:
+                    continue
+                # Try one destroy operation with explicit selector and tuner inputs.
+                try:
+                    _ = ml_based_destroy(
+                        tmp_state,
+                        optimizer.rng,
+                        1,
+                    )
+                except Exception:
+                    # A failed destroy does not prevent the repair attempt.
+                    logger.debug("ML warmup: destroy failed on temp state, continuing")
+                # Try one repair operation with explicit selector and tuner inputs.
+                try:
+                    _ = ml_based_repair(
+                        tmp_state,
+                        optimizer.rng,
+                        1,
+                    )
+                except Exception:
+                    logger.debug("ML warmup: repair failed on temp state, continuing")
     except Exception:
         logger.exception("ML warmup sampling failed")
 

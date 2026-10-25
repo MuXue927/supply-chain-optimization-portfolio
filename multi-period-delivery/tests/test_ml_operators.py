@@ -445,20 +445,51 @@ def test_feedback_during_a_cooldown_does_not_rearm_it() -> None:
     selector = MLOperatorSelector(None, np.random.default_rng(7))
     selector._no_improve_streak["destroy"] = 17
 
+    cooldown_len = int(ALNSConfig.ML_FALLBACK_COOLDOWN_ITERS)
+    assert cooldown_len > 0
+
     # The 18th non-improving choice arms the cooldown and clears the streak.
     selector.update_op_feedback("destroy", 0.0)
-    assert selector._fallback_cooldown["destroy"] == 30
+    assert selector._fallback_cooldown["destroy"] == cooldown_len
     assert selector._no_improve_streak["destroy"] == 0
 
     # Many fallback trials during the cooldown must not re-arm it.
     for _ in range(40):
         selector.update_op_feedback("destroy", 0.0)
-    assert selector._fallback_cooldown["destroy"] == 30
+    assert selector._fallback_cooldown["destroy"] == cooldown_len
     assert selector._no_improve_streak["destroy"] == 0
 
     # Draining the cooldown restores the selector.
-    assert all(selector.should_force_fallback("destroy") for _ in range(30))
+    assert all(selector.should_force_fallback("destroy") for _ in range(cooldown_len))
     assert selector.should_force_fallback("destroy") is False
+
+
+def test_warmup_scope_does_not_touch_the_selection_feedback() -> None:
+    """Sampling on state copies must not arm the cooldown or reset the streak.
+
+    Warm-up calls the ML operators to collect training rows. Those trials are
+    not selection decisions; feeding them back armed the cooldown before the
+    selector ever chose an operator (measured: 51 cooldown rejections and 2
+    model-based selections in a 106-iteration run).
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(21))
+    selector._no_improve_streak["destroy"] = int(
+        ALNSConfig.ML_STAGNATION_NO_IMPROVE_LIMIT
+    ) - 1
+
+    with selector.warmup_scope():
+        for _ in range(200):
+            selector.update_op_feedback("destroy", 0.0)
+        assert selector.should_force_fallback("destroy") is False
+
+    assert selector._fallback_cooldown["destroy"] == 0
+    assert selector._no_improve_streak["destroy"] == (
+        int(ALNSConfig.ML_STAGNATION_NO_IMPROVE_LIMIT) - 1
+    )
+
+    # After the scope the streak still works: one more miss arms the cooldown.
+    selector.update_op_feedback("destroy", 0.0)
+    assert selector._fallback_cooldown["destroy"] > 0
 
 
 def test_batched_predictions_match_the_per_candidate_loop() -> None:

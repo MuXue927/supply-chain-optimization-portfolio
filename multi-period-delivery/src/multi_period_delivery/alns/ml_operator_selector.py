@@ -96,6 +96,7 @@ from __future__ import annotations
 # Standard library
 # =========================
 import math
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 # =========================
@@ -268,12 +269,31 @@ class MLOperatorSelector:
         self._feature_cache_vector: np.ndarray | None = None
         self.feature_cache_hits: int = 0
         self.feature_cache_misses: int = 0
+        # True while warm-up sampling runs: those trials still produce training
+        # rows but must not touch the selection feedback (streak / cooldown).
+        self._suppress_feedback: bool = False
+        self.warmup_trials: int = 0
         self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
         self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
         # Initialize operator maps
         self._init_operator_maps()
         self._ensure_parameterless_tuner_operators()
+
+    @contextmanager
+    def warmup_scope(self):
+        """Collect training rows without feeding selection feedback.
+
+        Used by ``callbacks.ml_warmup_sample``: the sampling runs operators on
+        state copies, so its outcome says nothing about the *choice* the
+        selector would have made.
+        """
+        previous = self._suppress_feedback
+        self._suppress_feedback = True
+        try:
+            yield self
+        finally:
+            self._suppress_feedback = previous
 
     def set_iteration(
         self,
@@ -319,6 +339,10 @@ class MLOperatorSelector:
         return base
 
     def should_force_fallback(self, op_type: str) -> bool:
+        if self._suppress_feedback:
+            # Warm-up must not drain a real cooldown either: otherwise the
+            # sampling calls silently shorten the cooldown the selector needs.
+            return False
         cooldown = int(self._fallback_cooldown.get(op_type, 0))
         if cooldown <= 0:
             return False
@@ -328,6 +352,15 @@ class MLOperatorSelector:
     def update_op_feedback(self, op_type: str, improvement: float):
         improvement = _finite_float(improvement, 0.0)
         key = "destroy" if op_type == "destroy" else "repair"
+
+        # Warm-up sampling runs the operators on state *copies* to collect
+        # training rows. Those trials are not selection decisions, so feeding
+        # them into the stagnation streak armed the cooldown before the selector
+        # ever made a choice (measured: 51 cooldown rejections, 2 model-based
+        # selections in a 106-iteration run).
+        if self._suppress_feedback:
+            return
+
         if improvement > 0:
             self._no_improve_streak[key] = 0
             return

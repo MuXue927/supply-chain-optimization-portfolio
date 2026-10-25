@@ -370,9 +370,19 @@ class ALNSConfig:
     # --------------------------
     # Number of recorded samples required before the ML selector starts being
     # used at all (the warm-up phase).
-    ML_INITIAL_SAMPLE_SIZE: int = 25
+    #
+    # Calibrated against measured throughput (medium/dataset_13, 90 s budget =
+    # 106 iterations). Samples grow by 2 per iteration only while warming up,
+    # so a threshold of S costs S/2 iterations: 12 costs ~6 iterations (6% of
+    # the run) instead of 40 iterations (38%) at the previous value of 25 with
+    # a takeover threshold of 80.
+    ML_INITIAL_SAMPLE_SIZE: int = 12
     # Retrain the ridge / random-forest models every this many iterations.
-    ML_RETRAIN_INTERVAL: int = 80
+    #
+    # The previous value (80) exceeded the number of iterations a 90 s run
+    # performs (106), so at most one retrain happened; 25 gives 3-4 retrains
+    # inside the same budget.
+    ML_RETRAIN_INTERVAL: int = 25
     # Hard cap on the number of samples kept in the ML operator selector's
     # training buffers. Keeping only the most recent window bounds memory (the
     # buffers would otherwise grow with every iteration and never shrink) and
@@ -380,10 +390,16 @@ class ALNSConfig:
     # Matches the sliding window already used by ALNSTracker.update_ml_data.
     ML_MAX_SAMPLES: int = 1000
     # Samples required before ML selection may replace the default selector.
-    ML_TAKEOVER_MIN_SAMPLE_SIZE: int = 80
+    #
+    # Measured: reaching 80 samples consumed 39 iterations (37% of a 106-
+    # iteration run) and left the selector with almost nothing to act on.
+    # 40 costs ~20 iterations (19%), which leaves the majority of the budget
+    # to actual model-based selection.
+    ML_TAKEOVER_MIN_SAMPLE_SIZE: int = 40
     # Higher takeover requirement for small instances, which converge quickly
     # and would otherwise train on too little data.
-    ML_TAKEOVER_MIN_SAMPLE_SIZE_SMALL: int = 120
+    # Scaled with the value above (was 120 for a base of 80).
+    ML_TAKEOVER_MIN_SAMPLE_SIZE_SMALL: int = 60
     # Earliest progress fraction (0-1) at which ML takeover is allowed.
     ML_TAKEOVER_MIN_PROGRESS: float = 0.30
     # Base epsilon-greedy exploration probability for ML selection.
@@ -394,11 +410,18 @@ class ALNSConfig:
     # Extra exploration on small instances. The final epsilon is clamped to
     # [0.02, 0.60].
     ML_EPSILON_SMALL_INSTANCE_BOOST: float = 0.05
-    # Consecutive non-improving feedback updates for one operator type after
+    # Consecutive non-improving *selection* outcomes for one operator type after
     # which the ML selector temporarily falls back to the default selection.
+    # Warm-up sampling is excluded from this counter (it runs on state copies).
     ML_STAGNATION_NO_IMPROVE_LIMIT: int = 18
-    # Iterations that the forced fallback stays active once triggered.
-    ML_FALLBACK_COOLDOWN_ITERS: int = 30
+    # Selector calls that the forced fallback stays active once triggered.
+    #
+    # Note the unit: this is *selector calls*, not ALNS iterations. The ML
+    # operator is one of eleven destroy candidates, so a 106-iteration run
+    # offers it only ~10-17 calls in total; a cooldown of 30 therefore lasted
+    # longer than the entire search. 5 restores the intent ("pause briefly
+    # after a stagnant streak") without locking the selector out.
+    ML_FALLBACK_COOLDOWN_ITERS: int = 5
     # Extra warm-up samples to collect per iteration while in the warm-up phase.
     ML_WARMUP_PER_ITER: int = 2
 
