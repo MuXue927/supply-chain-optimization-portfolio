@@ -147,6 +147,7 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         normalisation: str = "sum",
         prior_k: float = 2.0,
         progress_segments: int = 0,
+        takeover=None,
     ):
         if normalisation not in ("sum", "mean", "shrunk"):
             raise ValueError(
@@ -164,6 +165,16 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         )
         self._d_seg_calls = np.zeros(num_destroy, dtype=float)
         self._r_seg_calls = np.zeros(num_repair, dtype=float)
+        #: Optional ``(rng, best, curr) -> (d_idx|None, r_idx|None)`` hook.
+        #:
+        #: When it returns an index, that half of the pair is used instead of
+        #: the roulette's choice. This is how ML takeover *replaces* the
+        #: selector: registering the ML operator as merely one more candidate
+        #: capped its influence at 1/11 of the iterations, because the wheel
+        #: had to draw it (measured: 0.13 draws per iteration, so ~9%).
+        self._takeover = takeover
+        self.takeover_used = 0
+        self.takeover_failures = 0
         super().__init__(
             scores, decay, seg_length, num_destroy, num_repair, op_coupling
         )
@@ -199,6 +210,27 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         return (weights + self._prior_k * grand) / (calls + self._prior_k)
 
     def __call__(self, rng, best, curr):
+        d_idx, r_idx = self._select_indices(rng, best, curr)
+        if self._takeover is not None:
+            override = None
+            try:
+                override = self._takeover(rng, best, curr)
+            except STATE_OPERATION_ERRORS as exc:
+                # A broken takeover hook must not stop the search, but it must
+                # not silently degrade to "ML is on" either.
+                record_swallowed("alns_optimizer.ml_takeover_hook", exc)
+                self.takeover_failures += 1
+            if override is not None:
+                forced_destroy, forced_repair = override
+                if forced_destroy is not None:
+                    d_idx = int(forced_destroy)
+                if forced_repair is not None:
+                    r_idx = int(forced_repair)
+                self.takeover_used += 1
+        return d_idx, r_idx
+
+    def _select_indices(self, rng, best, curr):
+        """Return the roulette's own choice, ignoring any takeover."""
         if self._progress_segments > 0:
             self._iter += 1
             progress = resolve_progress((best, curr))
@@ -1037,6 +1069,48 @@ class ALNSOptimizer:
             logger.error(f"Failed to register repair operators: {e}")
             raise
 
+    def _make_ml_takeover(self, alns: ALNS):
+        """Return the hook that lets ML *replace* the roulette.
+
+        Registering ``ml_based_destroy`` / ``ml_based_repair`` as ordinary
+        candidates made the ML decision apply only when the wheel happened to
+        draw them: 11 destroy and 10 repair candidates, measured at 0.13 draws
+        per iteration, i.e. about 9% of the search. The configuration and the
+        documentation both describe ML as *replacing* the default selector, so
+        once the models are ready every iteration should be model-chosen.
+
+        The hook only asks for readiness (no side effects) and is applied per
+        side, so a ready destroy model can take over while the repair model is
+        still warming up.
+        """
+        if not self.is_ml_enabled():
+            return None
+        try:
+            destroy_index = list(alns._d_ops).index("ml_based_destroy")
+            repair_index = list(alns._r_ops).index("ml_based_repair")
+        except ValueError:
+            # ML operators were not registered (for example because the base
+            # operator set is custom); the roulette then keeps full control.
+            return None
+
+        def takeover(_rng, best, curr):
+            selector = self.ml_selector
+            if selector is None:
+                return None
+            state = curr if curr is not None else best
+            if state is None:
+                return None
+            ready_destroy = selector.is_ready(state, "destroy")
+            ready_repair = selector.is_ready(state, "repair")
+            if not (ready_destroy or ready_repair):
+                return None
+            return (
+                destroy_index if ready_destroy else None,
+                repair_index if ready_repair else None,
+            )
+
+        return takeover
+
     def _create_named_partial(self, func, name=None, **kwargs):
         """
         Create a callable with a readable ``__name__`` for ALNS compatibility.
@@ -1155,6 +1229,7 @@ class ALNSOptimizer:
             # Use actual registration counts instead of hard-coded values.
             num_destroy = getattr(self, "_num_registered_destroy_ops", 7) or 7
             num_repair = getattr(self, "_num_registered_repair_ops", 6) or 6
+            takeover = self._make_ml_takeover(alns)
             select = NoOpAwareSegmentedRouletteWheel(
                 scores=getattr(ALNSConfig, "ROULETTE_SCORES", [1.0]),
                 decay=getattr(ALNSConfig, "ROULETTE_DECAY", 0.9),
@@ -1168,7 +1243,9 @@ class ALNSOptimizer:
                 progress_segments=int(
                     getattr(ALNSConfig, "ROULETTE_PROGRESS_SEGMENTS", 0)
                 ),
+                takeover=takeover,
             )
+            self._operator_selector = select
             self.log_printer.print(f"Step 4 elapsed: {time.time() - t0:.2f}s")
 
             # 5. Configure acceptance rules.

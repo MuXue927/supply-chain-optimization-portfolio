@@ -391,6 +391,25 @@ class MLOperatorSelector:
         op_type: str,
         min_sample_size: int | None = None,
     ) -> bool:
+        if self.should_force_fallback(op_type):
+            return self._record_rejection("cooldown")
+        return self.is_ready(state, op_type, min_sample_size, record=True)
+
+    def is_ready(
+        self,
+        state: SolutionState | None,
+        op_type: str,
+        min_sample_size: int | None = None,
+        record: bool = False,
+    ) -> bool:
+        """Whether ML may act, *without* consuming a cooldown tick.
+
+        ``should_use_ml`` is called once per executed operator and is allowed to
+        advance the cooldown. Readiness is asked separately by the takeover hook
+        that decides whether the ML operator should replace the roulette, so the
+        two questions must not share side effects - otherwise every iteration
+        would drain two cooldown ticks.
+        """
         samples = self._sample_count(op_type)
         required_samples = self._takeover_min_samples()
         if min_sample_size is not None:
@@ -398,7 +417,9 @@ class MLOperatorSelector:
         progress = self._resolve_progress(state)
         model = self.destroy_model if op_type == "destroy" else self.repair_model
         scaler = self.destroy_scaler if op_type == "destroy" else self.repair_scaler
-        takeover_progress = float(getattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.30))
+        takeover_progress = float(
+            getattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.30)
+        )
         self.last_gate = {
             "samples": samples,
             "required_samples": required_samples,
@@ -407,22 +428,30 @@ class MLOperatorSelector:
             "model": model is not None,
         }
 
-        def _reject(reason: str) -> bool:
-            self.gate_rejections[reason] = self.gate_rejections.get(reason, 0) + 1
-            return False
-
-        if self.should_force_fallback(op_type):
-            return _reject("cooldown")
-
+        if int(self._fallback_cooldown.get(op_type, 0)) > 0:
+            return self._record_rejection("cooldown") if record else False
         if samples < required_samples:
-            return _reject("samples")
-
+            return self._record_rejection("samples") if record else False
         if progress < takeover_progress:
-            return _reject("progress")
-
+            return self._record_rejection("progress") if record else False
         if model is None or scaler is None:
-            return _reject("model")
+            return self._record_rejection("model") if record else False
         return True
+
+    def _record_rejection(self, reason: str) -> bool:
+        self.gate_rejections[reason] = self.gate_rejections.get(reason, 0) + 1
+        return False
+
+    def record_operator_level_fallback(self, op_type: str) -> None:
+        """Count a fallback decided *inside* the ML operator wrapper.
+
+        ``select_best_operator`` already counts its own random fallbacks, but
+        ``ml_based_destroy`` / ``ml_based_repair`` fall back *before* calling it
+        whenever the gate refuses. Without this counter a run can report
+        "0 random fallbacks" while most iterations never consulted the model.
+        """
+        key = "destroy" if str(op_type).lower() == "destroy" else "repair"
+        self.random_fallbacks[key] = self.random_fallbacks.get(key, 0) + 1
 
     def _dynamic_epsilon(self, state: SolutionState | None) -> float:
         progress = self._resolve_progress(state)

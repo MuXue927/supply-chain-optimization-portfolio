@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -490,6 +491,94 @@ def test_warmup_scope_does_not_touch_the_selection_feedback() -> None:
     # After the scope the streak still works: one more miss arms the cooldown.
     selector.update_op_feedback("destroy", 0.0)
     assert selector._fallback_cooldown["destroy"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Ready check and selector takeover
+# ---------------------------------------------------------------------------
+def _ready_selector(monkeypatch) -> MLOperatorSelector:
+    """Selector whose destroy side is fully ready to take over."""
+    monkeypatch.setattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.0)
+    selector = MLOperatorSelector(None, np.random.default_rng(31))
+    feature = np.zeros(3)
+    selector.destroy_features = [feature.copy() for _ in range(45)]
+    selector.destroy_performances = [0.1] * 45
+    selector.destroy_model = _ZeroModel()
+    selector.destroy_scaler = _IdentityScaler()
+    return selector
+
+
+def test_is_ready_does_not_consume_a_cooldown_tick(monkeypatch) -> None:
+    """Readiness is a question, not a decision: it must not change state.
+
+    The takeover hook asks every iteration; sharing the cooldown decrement with
+    ``should_use_ml`` would drain a 5-tick cooldown in three iterations.
+    """
+    selector = _ready_selector(monkeypatch)
+    state = _load_state()
+    selector._fallback_cooldown["destroy"] = 3
+
+    for _ in range(5):
+        assert selector.is_ready(state, "destroy") is False
+    assert selector._fallback_cooldown["destroy"] == 3
+
+    # The real decision still spends one tick.
+    assert selector.should_use_ml(state, "destroy") is False
+    assert selector._fallback_cooldown["destroy"] == 2
+
+
+def test_is_ready_requires_samples_progress_and_a_model(monkeypatch) -> None:
+    selector = _ready_selector(monkeypatch)
+    state = _load_state()
+
+    assert selector.is_ready(state, "destroy") is True
+
+    selector.destroy_model = None
+    assert selector.is_ready(state, "destroy") is False
+
+    selector.destroy_model = _ZeroModel()
+    monkeypatch.setattr(ALNSConfig, "ML_TAKEOVER_MIN_PROGRESS", 0.9)
+    assert selector.is_ready(state, "destroy") is False
+
+
+def test_roulette_uses_the_takeover_indices() -> None:
+    """A takeover hook replaces the wheel's choice for the sides it returns."""
+    from alns.select import RouletteWheel  # noqa: F401  (documented parent)
+
+    from multi_period_delivery.alns.alns_optimizer import (
+        NoOpAwareSegmentedRouletteWheel,
+    )
+
+    def wheel(takeover):
+        return NoOpAwareSegmentedRouletteWheel(
+            scores=[8.0, 3.0, 1.0, 0.2],
+            decay=0.65,
+            seg_length=10,
+            num_destroy=4,
+            num_repair=3,
+            takeover=takeover,
+        )
+
+    cand = SimpleNamespace()
+    forced = wheel(lambda _rng, _best, _curr: (3, None))
+    d_idx, _r_idx = forced(np.random.default_rng(0), cand, cand)
+    assert d_idx == 3
+    assert forced.takeover_used == 1
+
+    # Returning None leaves the roulette in charge.
+    plain = wheel(lambda _rng, _best, _curr: None)
+    d_idx, _r_idx = plain(np.random.default_rng(0), cand, cand)
+    assert 0 <= d_idx < 4
+    assert plain.takeover_used == 0
+
+    # A raising hook must not stop the search.
+    def broken(_rng, _best, _curr):
+        raise RuntimeError("hook broken")
+
+    failing = wheel(broken)
+    d_idx, _r_idx = failing(np.random.default_rng(0), cand, cand)
+    assert 0 <= d_idx < 4
+    assert failing.takeover_failures == 1
 
 
 def test_batched_predictions_match_the_per_candidate_loop() -> None:

@@ -187,6 +187,8 @@ def ml_based_repair(
         )
 
     if not use_ml:
+        if hasattr(state.ml_selector, "record_operator_level_fallback"):
+            state.ml_selector.record_operator_level_fallback("repair")
         # Insufficient data: choose a repair operator randomly
         print(
             f"[OPLOG] ml_based_repair: using random fallback "

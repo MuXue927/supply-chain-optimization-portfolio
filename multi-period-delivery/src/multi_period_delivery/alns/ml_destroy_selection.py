@@ -244,6 +244,8 @@ def ml_based_destroy(
         )
 
     if not use_ml:
+        if hasattr(ml_selector, "record_operator_level_fallback"):
+            ml_selector.record_operator_level_fallback("destroy")
         op_name = str(rng.choice(list(_DESTROY_OPERATORS.keys())))
         params = _get_destroy_params(state, op_name)
         params = _sanitize_destroy_params(op_name, params)
