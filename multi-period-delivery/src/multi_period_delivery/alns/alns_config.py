@@ -465,6 +465,40 @@ class ALNSConfig:
     # interpolated to ~6e5 by the clamp itself); MAD adapts to the sample. 0
     # disables the clipping.
     ML_TARGET_CLIP_MAD_FACTOR: float = 8.0
+    # What the repair side predicts. ``"classification"`` answers "will this
+    # operator improve the objective at all"; ``"regression"`` predicts the
+    # improvement magnitude (the old behaviour, kept for A/B runs).
+    #
+    # Measured with 5 contiguous time blocks on five real runs (medium/45 s):
+    # regression R2 ranged from -0.3 down to -1.8e7 (never positive), while the
+    # classifier's pooled out-of-fold AUC stayed in 0.65-0.77. The magnitude is
+    # dominated by a handful of large repairs, so ranking operators by
+    # "improves / does not improve" carries the signal that regression loses.
+    ML_REPAIR_TARGET: str = "classification"
+    # Pooled out-of-fold AUC the repair classifier must reach before takeover.
+    # 0.5 is chance; the measured means were 0.65-0.77, so this is a floor
+    # against a useless model rather than a bar the model has to stretch for.
+    ML_CLASSIFIER_MIN_AUC: float = 0.55
+    # Contiguous time blocks used for that estimate. A single chronological
+    # holdout at n~45 scored only 11 rows and swung between AUC 0.54 and 0.86
+    # on identical configurations, which is too noisy to gate on.
+    ML_CLASSIFIER_CV_FOLDS: int = 5
+    # Rows needed before the pooled AUC means anything. The generic training
+    # floor is 12, and a 12-row / 3-fold estimate was measured at AUC 0.056 on
+    # a run whose model was simply untrained: reporting that as a metric invites
+    # reading noise as a result.
+    ML_CLASSIFIER_MIN_SAMPLES: int = 24
+    # Inverse L2 strength for the repair classifier.
+    ML_CLASSIFIER_C: float = 1.0
+    # Repair side uses the operator-parameter interaction slots.
+    #
+    # Offline, dropping them on regression-era buffers looked neutral (AUC
+    # 0.685 -> 0.704). Under the classification target that was wrong: on the
+    # same seed the gate's AUC went 0.546 -> 0.722 (s42) and 0.341 -> 0.784
+    # (s11) when the slots were present, with the s11 final cost 804.60 ->
+    # 798.41. A logistic model needs the parameter to tell "regret repair at
+    # k=2" from "regret repair at k=5"; without it those rows share a column.
+    ML_REPAIR_PARAM_FEATURES: bool = True
 
     # --------------------------
     # Param tuner defaults (sync with ParamAutoTuner)

@@ -105,7 +105,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import numpy.random as rnd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 
 from .alns_config import default_config as ALNSConfig
@@ -172,8 +172,53 @@ PARAMETERLESS_OPERATOR_NAMES = frozenset(
 )
 
 
+def _rank_auc(scores: Any, labels: Any) -> float | None:
+    """Rank-based AUC with ties counted as 1/2, or ``None`` for one class.
+
+    ``sklearn.metrics.roc_auc_score`` would do the same, but it validates and
+    copies its inputs on every call and the gate runs at each retrain; the
+    rank formula is enough for tens of rows and keeps the dependency surface
+    unchanged.
+    """
+    scores = np.asarray(scores, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+    finite = np.isfinite(scores)
+    if not finite.all():
+        scores, labels = scores[finite], labels[finite]
+    positives = int(labels.sum())
+    negatives = int(labels.size - positives)
+    if positives == 0 or negatives == 0:
+        return None
+    order = np.argsort(scores, kind="mergesort")
+    ranks = np.empty(scores.size, dtype=float)
+    ranks[order] = np.arange(1, scores.size + 1, dtype=float)
+    ordered = scores[order]
+    start = 0
+    for i in range(1, scores.size + 1):
+        if i == scores.size or ordered[i] != ordered[start]:
+            if i - start > 1:
+                ranks[order[start:i]] = float(np.mean(ranks[order[start:i]]))
+            start = i
+    rank_sum = float(ranks[labels == 1].sum())
+    return (rank_sum - positives * (positives + 1) / 2.0) / (
+        positives * negatives
+    )
+
+
+def _kind_label(kind: str) -> str:
+    """Noun for the log line, so a classifier is not reported as a model."""
+    return "classifier" if kind == "classification" else "model"
+
+
 def _quality_label(quality: dict[str, Any]) -> str:
-    """Format a fit report for the log line, tolerating an unreported R2."""
+    """Format a fit report for the log line, tolerating an unreported metric."""
+    if quality.get("kind") == "classification":
+        auc = quality.get("auc")
+        auc_text = "n/a" if auc is None else f"{float(auc):.3f}"
+        return (
+            f"pooled AUC={auc_text}, ok={quality.get('ok')}, "
+            f"reason={quality.get('reason')}"
+        )
     r2 = quality.get("r2")
     r2_text = "n/a" if r2 is None else f"{float(r2):.3f}"
     return (
@@ -185,6 +230,11 @@ def _quality_label(quality: dict[str, Any]) -> str:
 #: Magnitude ``_finite_float`` substitutes for an infinite improvement, and the
 #: marker used to recognise those rows when target scaling is estimated.
 _INF_CLAMP = 1e6
+
+#: Improvement strictly above this counts as "the operator helped". Zero and
+#: negative improvements share the "no gain" class: for selection what matters
+#: is whether trying this operator was worth it.
+_CLASSIFICATION_THRESHOLD = 0.0
 
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
@@ -574,6 +624,29 @@ class MLOperatorSelector:
             dims[op_type] = offset
         self._param_specs_by_op = specs_by_op
         self._param_feature_dim = dims
+        # Resolve the switches once, at construction. Training and prediction
+        # must agree on the feature width; reading the config on every call
+        # would let a mid-run edit silently change the width under a fitted
+        # scaler.
+        requested = bool(getattr(ALNSConfig, "ML_OPERATOR_PARAM_FEATURES", True))
+        has_tuner = self.param_tuner is not None
+        repair_requested = bool(
+            getattr(ALNSConfig, "ML_REPAIR_PARAM_FEATURES", False)
+        )
+        self._param_features_enabled = {
+            "destroy": requested and has_tuner,
+            "repair": requested and has_tuner and repair_requested,
+        }
+        for op_type, enabled in self._param_features_enabled.items():
+            if not enabled:
+                self._param_feature_dim[op_type] = 0
+        #: Which target each fitted model predicts. Prediction branches on this
+        #: rather than on the model class, so a stub or wrapper model behaves
+        #: exactly like the estimator it replaced.
+        self.model_kind: dict[str, str] = {
+            "destroy": "regression",
+            "repair": "regression",
+        }
 
     def _ensure_parameterless_tuner_operators(self):
         """Register missing no-parameter operators in the optional tuner.
@@ -818,13 +891,12 @@ class MLOperatorSelector:
         that could interrupt the main workflow.
         """
         op_map = self.destroy_op_map if op_type == "destroy" else self.repair_op_map
-        # Without a tuner the parameters never move, so the slots would be the
-        # same constant in every row: pure collinearity with the one-hot. Keep
-        # the ``ml`` mode byte-for-byte equivalent to the old encoding and add
-        # the interaction only where it can carry information.
-        use_params = bool(
-            getattr(ALNSConfig, "ML_OPERATOR_PARAM_FEATURES", True)
-        ) and self.param_tuner is not None
+        # The switch is resolved at construction: without a tuner the parameters
+        # never move (constant columns, pure collinearity with the one-hot), and
+        # the repair side measured no gain from the slots at all. Resolving it
+        # per call would let a config edit change the width under a fitted
+        # scaler.
+        use_params = bool(self._param_features_enabled.get(op_type, False))
         dim = int(self._param_feature_dim.get(op_type, 0)) if use_params else 0
         encoding = np.zeros(len(op_map) + dim, dtype=float)
         idx = op_map.get(op_name)
@@ -977,20 +1049,22 @@ class MLOperatorSelector:
             )
             if X is not None and len(y) >= self.min_samples:
                 try:
-                    model, scaler, quality = self._fit_operator_model(
-                        X, y, "destroy"
+                    kind, model, scaler, quality = self._fit_for_target(
+                        "destroy", X, y
                     )
                     self.destroy_scaler = scaler
                     self.destroy_model = model
+                    self.model_kind["destroy"] = kind
                     self.model_quality["destroy"] = quality
                     print(
-                        f"[ML] Destroy-operator model trained with {len(X)} samples "
-                        f"({_quality_label(quality)})"
+                        f"[ML] Destroy-operator {_kind_label(kind)} trained with "
+                        f"{len(X)} samples ({_quality_label(quality)})"
                     )
                     trained_destroy = True
                 except PREDICTION_ERRORS as exc:
                     self.destroy_model = None
                     self.destroy_scaler = None
+                    self.model_kind["destroy"] = "regression"
                     self.model_quality["destroy"] = {"ok": False, "r2": None}
                     print(
                         f"[ML] Destroy-operator model training failed: {exc}; "
@@ -1005,20 +1079,22 @@ class MLOperatorSelector:
             )
             if X is not None and len(y) >= self.min_samples:
                 try:
-                    model, scaler, quality = self._fit_operator_model(
-                        X, y, "repair"
+                    kind, model, scaler, quality = self._fit_for_target(
+                        "repair", X, y
                     )
                     self.repair_scaler = scaler
                     self.repair_model = model
+                    self.model_kind["repair"] = kind
                     self.model_quality["repair"] = quality
                     print(
-                        f"[ML] Repair-operator model trained with {len(X)} samples "
-                        f"({_quality_label(quality)})"
+                        f"[ML] Repair-operator {_kind_label(kind)} trained with "
+                        f"{len(X)} samples ({_quality_label(quality)})"
                     )
                     trained_repair = True
                 except PREDICTION_ERRORS as exc:
                     self.repair_model = None
                     self.repair_scaler = None
+                    self.model_kind["repair"] = "regression"
                     self.model_quality["repair"] = {"ok": False, "r2": None}
                     print(
                         f"[ML] Repair-operator model training failed: {exc}; "
@@ -1044,6 +1120,186 @@ class MLOperatorSelector:
             max_depth=getattr(ALNSConfig, "ML_RF_MAX_DEPTH", 10),
             random_state=int(self.rng.integers(0, 10_000)),
         )
+
+    # ------------------------------------------------------------------
+    # Target selection
+    # ------------------------------------------------------------------
+    def _target_kind(self, op_type: str) -> str:
+        """Which target this side predicts: ``"classification"`` or ``"regression"``.
+
+        The repair side defaults to classification because the magnitude of a
+        repair's improvement is not learnable at these sample sizes while
+        "did it improve at all" is (see ``ML_REPAIR_TARGET``). The destroy side
+        keeps regression: its magnitude did pass the R2 gate in several runs,
+        and no measurement yet shows a classifier would do better there.
+        """
+        if op_type == "repair":
+            mode = str(getattr(ALNSConfig, "ML_REPAIR_TARGET", "classification"))
+            if mode.strip().lower() == "classification":
+                return "classification"
+        return "regression"
+
+    def _fit_for_target(
+        self,
+        op_type: str,
+        X: np.ndarray,
+        y: np.ndarray,
+    ) -> tuple[str, Any, Any, dict[str, Any]]:
+        """Fit the estimator the configured target asks for."""
+        kind = self._target_kind(op_type)
+        if kind == "classification":
+            model, scaler, quality = self._fit_classifier(X, y, op_type)
+        else:
+            model, scaler, quality = self._fit_operator_model(X, y, op_type)
+        return kind, model, scaler, quality
+
+    def _make_classifier(self):
+        """Return an unfitted logistic classifier for the improvement target."""
+        return LogisticRegression(
+            C=float(getattr(ALNSConfig, "ML_CLASSIFIER_C", 1.0)),
+            max_iter=1000,
+            solver="lbfgs",
+        )
+
+    def _fit_classifier(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        op_type: str,
+    ) -> tuple[Any, Any, dict[str, Any]]:
+        """Fit a "will this operator improve" classifier and report its AUC.
+
+        A single chronological holdout scores only ``n * 0.25`` rows here (11 at
+        n=45) and swung between AUC 0.54 and 0.86 on identical configurations.
+        Contiguous time blocks are therefore used and their out-of-fold
+        probabilities pooled, so every row is scored once and the gate reads a
+        number with usable variance. The deployed model is then refitted on all
+        rows: blocking is a measurement device, not a training restriction.
+        """
+        labels = (np.asarray(y, dtype=float) > _CLASSIFICATION_THRESHOLD).astype(int)
+        n = int(labels.size)
+        min_auc = float(getattr(ALNSConfig, "ML_CLASSIFIER_MIN_AUC", 0.55))
+        floor = int(getattr(ALNSConfig, "ML_CLASSIFIER_MIN_SAMPLES", 24))
+
+        if n < max(floor, int(getattr(ALNSConfig, "ML_MODEL_MIN_TRAIN_SAMPLES", 8))):
+            # Too few rows for a blocked estimate to mean anything: 12 rows over
+            # 3 folds produced AUC 0.056 on an untrained model. Refuse instead
+            # of publishing a number that looks like a result.
+            return None, None, {
+                "ok": False,
+                "reason": "too_few_samples",
+                "kind": "classification",
+                "auc": None,
+                "accuracy": None,
+                "n": n,
+                "min_auc": min_auc,
+                "positive_rate": float(labels.mean()) if n else None,
+            }
+
+        if int(labels.min()) == int(labels.max()):
+            return None, None, {
+                "ok": False,
+                "reason": "single_class",
+                "kind": "classification",
+                "auc": None,
+                "accuracy": None,
+                "n": n,
+                "min_auc": min_auc,
+                "positive_rate": float(labels.mean()),
+            }
+
+        folds = int(getattr(ALNSConfig, "ML_CLASSIFIER_CV_FOLDS", 5))
+        folds = max(2, min(folds, n // 4 or 2))
+        probabilities, scored = self._out_of_fold_probabilities(X, labels, folds)
+        if probabilities is None or scored < max(8, n // 2):
+            return None, None, {
+                "ok": False,
+                "reason": "too_few_samples",
+                "kind": "classification",
+                "auc": None,
+                "accuracy": None,
+                "n": n,
+                "min_auc": min_auc,
+                "positive_rate": float(labels.mean()),
+            }
+
+        auc = _rank_auc(probabilities, labels)
+        finite = np.isfinite(probabilities)
+        accuracy = (
+            float(((probabilities[finite] >= 0.5) == labels[finite]).mean())
+            if finite.any()
+            else 0.0
+        )
+        majority = float(max(labels.mean(), 1.0 - labels.mean()))
+        if auc is None:
+            ok, reason = False, "single_class"
+        else:
+            ok = bool(auc >= min_auc)
+            reason = "ok" if ok else "low_auc"
+
+        # Refit on every row whether or not the gate passed: the regression
+        # path keeps a fitted model and lets ``_quality_ok`` refuse takeover, so
+        # doing otherwise here would make "model present" mean different things
+        # per side in the run statistics.
+        scaler = StandardScaler().fit(X)
+        model = self._make_classifier().fit(scaler.transform(X), labels)
+
+        return model, scaler, {
+            "ok": ok,
+            "reason": reason,
+            "kind": "classification",
+            "auc": auc,
+            "accuracy": accuracy,
+            "majority_accuracy": majority,
+            "folds": folds,
+            "n": n,
+            "min_auc": min_auc,
+            "positive_rate": float(labels.mean()),
+        }
+
+    def _out_of_fold_probabilities(
+        self,
+        X: np.ndarray,
+        labels: np.ndarray,
+        folds: int,
+    ) -> tuple[np.ndarray | None, int]:
+        """Pooled out-of-fold positive probabilities over contiguous blocks.
+
+        Blocks are contiguous in time, so each fold is scored by a model that
+        only saw older (and, for later folds, newer) rows — the same "no future
+        leakage" intent as the chronological holdout, but using every row.
+        """
+        n = int(labels.size)
+        boundaries = np.linspace(0, n, folds + 1, dtype=int)
+        probabilities = np.full(n, np.nan, dtype=float)
+        for k in range(folds):
+            start, stop = int(boundaries[k]), int(boundaries[k + 1])
+            if stop <= start:
+                continue
+            test = np.arange(start, stop)
+            train = np.setdiff1d(np.arange(n), test)
+            if train.size < 4:
+                continue
+            train_labels = labels[train]
+            if int(train_labels.min()) == int(train_labels.max()):
+                # One class only: the honest out-of-fold score is the training
+                # prevalence, which is what a model with no signal predicts.
+                probabilities[test] = float(train_labels.mean())
+                continue
+            try:
+                scaler = StandardScaler().fit(X[train])
+                model = self._make_classifier().fit(
+                    scaler.transform(X[train]), train_labels
+                )
+                probabilities[test] = model.predict_proba(
+                    scaler.transform(X[test])
+                )[:, 1]
+            except PREDICTION_ERRORS as exc:
+                record_swallowed("ml_operator_selector.cv_fold", exc)
+        scored = int(np.isfinite(probabilities).sum())
+        if scored == 0:
+            return None, 0
+        return probabilities, scored
 
     def _fit_operator_model(
         self,
@@ -1217,6 +1473,17 @@ class MLOperatorSelector:
             "feature_cache_misses": int(self.feature_cache_misses),
             "destroy_quality": dict(self.model_quality.get("destroy", {})),
             "repair_quality": dict(self.model_quality.get("repair", {})),
+            # What each side is *configured* to predict, and what the model
+            # currently fitted actually predicts. They differ before the first
+            # fit, and a failed fit resets the second to the regression default.
+            "target_kind": {
+                side: self._target_kind(side) for side in ("destroy", "repair")
+            },
+            "fitted_kind": dict(self.model_kind),
+            "param_features": dict(self._param_features_enabled),
+            "repair_feature_width": (
+                len(self.repair_op_map) + int(self._param_feature_dim.get("repair", 0))
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -1305,6 +1572,7 @@ class MLOperatorSelector:
         unusable row still only removes its own candidate. Non-finite
         predictions become ``None`` (never a silent NaN in the sort key).
         """
+        kind = self.model_kind.get(op_type, "regression")
         try:
             rows = np.vstack(
                 [
@@ -1314,9 +1582,7 @@ class MLOperatorSelector:
                     for name in candidates
                 ]
             )
-            raw = np.asarray(
-                model.predict(scaler.transform(rows)), dtype=float
-            ).reshape(-1)
+            raw = self._predict_scores(model, scaler.transform(rows), kind)
             if raw.size != len(candidates):
                 raise ValueError(
                     f"model returned {raw.size} predictions for {len(candidates)} candidates"
@@ -1331,7 +1597,9 @@ class MLOperatorSelector:
                 row = np.concatenate(
                     [state_features, self.encode_operator(name, op_type)]
                 ).reshape(1, -1)
-                raw_prediction = float(model.predict(scaler.transform(row))[0])
+                raw_prediction = float(
+                    self._predict_scores(model, scaler.transform(row), kind)[0]
+                )
                 predictions.append(
                     raw_prediction if math.isfinite(raw_prediction) else None
                 )
@@ -1341,6 +1609,23 @@ class MLOperatorSelector:
                 record_swallowed("ml_operator_selector.predict_candidate", exc)
                 predictions.append(None)
         return predictions
+
+    @staticmethod
+    def _predict_scores(model: Any, X: Any, kind: str) -> np.ndarray:
+        """Uniform 1-D score vector for a regression or classification model.
+
+        Both are used only to *rank* candidates, so the classifier's positive
+        probability is the natural score: it is monotone in "more likely to
+        help", which is exactly the ordering selection needs.
+        """
+        if kind == "classification":
+            probabilities = np.asarray(model.predict_proba(X), dtype=float)
+            if probabilities.ndim != 2 or probabilities.shape[1] < 2:
+                raise ValueError(
+                    "classifier returned no positive-class probability column"
+                )
+            return probabilities[:, 1].reshape(-1)
+        return np.asarray(model.predict(X), dtype=float).reshape(-1)
 
     def select_best_operator(
         self,

@@ -407,11 +407,16 @@ def test_operator_encoding_carries_normalised_parameters(monkeypatch) -> None:
     other = selector.encode_operator("period_range_removal", "destroy")
     assert not np.any((low[len(op_map) :] != 0) & (other[len(op_map) :] != 0))
 
-    # The A/B switch restores the pure one-hot width.
+    # The A/B switch restores the pure one-hot width. It is resolved when the
+    # selector is built, so a fresh instance is what a config edit produces;
+    # this also stops a mid-run edit from changing the width under a scaler.
     monkeypatch.setattr(ALNSConfig, "ML_OPERATOR_PARAM_FEATURES", False)
-    flat = selector.encode_operator(name, "destroy")
+    flat_selector = MLOperatorSelector(tuner, np.random.default_rng(42))
+    flat = flat_selector.encode_operator(name, "destroy")
     assert len(flat) == len(op_map)
     assert flat[op_map[name]] == 1.0
+    # The already-built selector keeps its construction-time width.
+    assert selector.encode_operator(name, "destroy").size == len(op_map) + dim
 
 
 def test_target_winsorising_protects_quality_from_extreme_labels(monkeypatch) -> None:
@@ -434,6 +439,137 @@ def test_target_winsorising_protects_quality_from_extreme_labels(monkeypatch) ->
     assert raw["clip"] is None
     assert clipped["r2"] is not None and clipped["r2"] > 0.0
     assert raw["r2"] is not None and raw["r2"] < 0.0
+
+
+# ---------------------------------------------------------------------------
+# Repair-side classification target
+# ---------------------------------------------------------------------------
+def _fill_repair_buffers(selector: MLOperatorSelector, n: int, seed: int) -> None:
+    """Give the selector ``n`` repair rows whose outcome follows a state column."""
+    rng = np.random.default_rng(seed)
+    names = list(REPAIR_OPERATOR_NAMES)
+    state = rng.normal(size=(n, 4))
+    features, targets = [], []
+    for i in range(n):
+        encoding = selector.encode_operator(names[i % len(names)], "repair")
+        features.append(np.concatenate([state[i], encoding]))
+        # A learnable rule with an unbalanced outcome, like the real buffers.
+        targets.append(2.0 if state[i, 0] + 0.3 * state[i, 1] > 0.2 else -0.5)
+    selector.repair_features = features
+    selector.repair_performances = targets
+
+
+def test_repair_side_trains_a_classifier_and_reports_auc() -> None:
+    """The repair target is "did it improve", so the gate must read an AUC.
+
+    Regression on the improvement magnitude produced R2 from -0.3 to -1.8e7 on
+    real buffers; a classifier on the same rows reached AUC 0.65-0.77.
+    """
+    selector = MLOperatorSelector(None, np.random.default_rng(61))
+    _fill_repair_buffers(selector, 60, seed=3)
+
+    selector.train_models(force=True)
+
+    quality = selector.model_quality["repair"]
+    assert selector.model_kind["repair"] == "classification"
+    assert quality["kind"] == "classification"
+    assert "r2" not in quality
+    assert quality["auc"] is not None and quality["auc"] > 0.55
+    assert quality["ok"] is True
+    assert selector.repair_model is not None
+    # The destroy side keeps its regression target.
+    assert selector._target_kind("destroy") == "regression"
+
+
+def test_classifier_gate_rejects_when_auc_is_below_threshold(monkeypatch) -> None:
+    """A fitted classifier is still refused unless it beats chance."""
+    selector = MLOperatorSelector(None, np.random.default_rng(62))
+    _fill_repair_buffers(selector, 60, seed=4)
+    monkeypatch.setattr(ALNSConfig, "ML_CLASSIFIER_MIN_AUC", 0.999)
+
+    selector.train_models(force=True)
+
+    quality = selector.model_quality["repair"]
+    assert quality["ok"] is False
+    assert quality["reason"] == "low_auc"
+    # The model is still fitted and reported, exactly like the regression path;
+    # the gate is what refuses takeover.
+    assert selector.repair_model is not None
+    assert selector.should_use_ml(_load_state(), "repair") is False
+
+
+def test_classifier_refuses_to_report_auc_on_too_few_rows(monkeypatch) -> None:
+    """A 12-row / 3-fold estimate was measured at AUC 0.056: not a result."""
+    selector = MLOperatorSelector(None, np.random.default_rng(66))
+    _fill_repair_buffers(selector, 12, seed=6)
+
+    selector.train_models(force=True)
+
+    quality = selector.model_quality["repair"]
+    assert quality["ok"] is False
+    assert quality["reason"] == "too_few_samples"
+    assert quality["auc"] is None
+    assert selector.repair_model is None
+
+
+def test_classifier_predictions_use_the_positive_probability() -> None:
+    """Selection ranks candidates by P(improves), not by a raw class label."""
+
+    class _ProbaOnly:
+        def predict(self, _X):  # noqa: D401 - must not be used
+            raise AssertionError("regression path used for a classifier")
+
+        def predict_proba(self, X):
+            positive = np.linspace(0.1, 0.9, num=len(X))
+            return np.column_stack([1.0 - positive, positive])
+
+    from sklearn.preprocessing import StandardScaler
+
+    selector = MLOperatorSelector(None, np.random.default_rng(63))
+    selector.model_kind["repair"] = "classification"
+    candidates = ["greedy_repair", "local_search_repair", "sequential_repair"]
+    width = 4 + len(selector.repair_op_map)
+    scaler = StandardScaler().fit(np.zeros((4, width)))
+
+    scores = selector._batched_predictions(
+        _ProbaOnly(), scaler, np.zeros(4), "repair", candidates
+    )
+
+    assert len(scores) == len(candidates)
+    assert scores == sorted(scores)
+    assert scores[0] is not None and 0.0 < scores[0] < 1.0
+    assert scores[-1] is not None and scores[-1] < 1.0
+
+
+def test_repair_features_keep_parameter_slots_with_a_tuner() -> None:
+    """A logistic repair model needs the parameter value in its input row.
+
+    Dropping the slots on the same seed took the gate's AUC from 0.722 to 0.546
+    (s42) and 0.784 to 0.341 (s11), so they are kept.
+    """
+    selector = MLOperatorSelector(_DummyTuner(), np.random.default_rng(64))
+
+    encoding = selector.encode_operator("regret_based_repair", "repair")
+
+    assert len(encoding) > len(selector.repair_op_map)
+    assert selector._param_features_enabled["repair"] is True
+    assert selector._param_features_enabled["destroy"] is True
+    stats = selector.get_statistics()
+    assert stats["target_kind"]["repair"] == "classification"
+    assert stats["fitted_kind"]["repair"] == "regression"  # nothing fitted yet
+    assert stats["param_features"]["repair"] is True
+
+
+def test_repair_target_can_be_switched_back_to_regression(monkeypatch) -> None:
+    """``ML_REPAIR_TARGET`` keeps the old behaviour available for A/B runs."""
+    monkeypatch.setattr(ALNSConfig, "ML_REPAIR_TARGET", "regression")
+    selector = MLOperatorSelector(None, np.random.default_rng(65))
+
+    assert selector._target_kind("repair") == "regression"
+    _fill_repair_buffers(selector, 40, seed=5)
+    selector.train_models(force=True)
+    assert selector.model_quality["repair"].get("kind") != "classification"
+    assert selector.model_kind["repair"] == "regression"
 
 
 # ---------------------------------------------------------------------------
