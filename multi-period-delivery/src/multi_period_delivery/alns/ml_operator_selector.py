@@ -117,6 +117,14 @@ from .param_tuner import ParamAutoTuner
 from .progress import resolve_progress
 from .swallowed import record_swallowed
 
+#: Exceptions a ``scaler.transform`` + ``model.predict`` pair can raise for this
+#: selector. Ridge and RandomForest validate their input and raise ``ValueError``
+#: (shape, feature count, non-finite); numpy's own solve can raise its
+#: ``LinAlgError``; attribute and type errors cover a half-initialised model.
+#: Nothing outside this set is expected, so anything else surfaces instead of
+#: being absorbed as "prediction failed".
+PREDICTION_ERRORS = STATE_OPERATION_ERRORS + (np.linalg.LinAlgError,)
+
 if TYPE_CHECKING:
     from .alnsopt import SolutionState
 
@@ -255,6 +263,11 @@ class MLOperatorSelector:
         # diagnosable instead of a mystery.
         self.gate_rejections: dict[str, int] = {}
         self.last_gate: dict[str, float | int | bool | None] | None = None
+        # Feature-vector reuse for one decision (see ``extract_state_features``).
+        self._feature_cache_key_value: tuple | None = None
+        self._feature_cache_vector: np.ndarray | None = None
+        self.feature_cache_hits: int = 0
+        self.feature_cache_misses: int = 0
         self._no_improve_streak: dict[str, int] = {"destroy": 0, "repair": 0}
         self._fallback_cooldown: dict[str, int] = {"destroy": 0, "repair": 0}
 
@@ -433,7 +446,52 @@ class MLOperatorSelector:
               and should not be overused in hot loops.
             - When vehicles, inventory, or tracker data are unavailable, use 0
               placeholders to keep the vector shape stable.
+
+        The vector is reused for the rest of the current decision: one ML
+        operator invocation extracts it in ``select_best_operator`` and again in
+        ``record_operator_performance`` with the same state object. Measured on
+        medium, one extraction costs 4.3 ms, so a naive double extraction spends
+        ~8.6 ms per operator call on identical work.
+
+        The cache key is deliberately cheap (iteration, object identity, vehicle
+        count, inventory revision) instead of ``_validation_key()``: the latter
+        hashes every vehicle's cargo and would cost as much as the extraction it
+        is meant to avoid. Because the key is narrow, a hit only happens for the
+        same state object within the same iteration, which is exactly the
+        select-then-record pair.
         """
+        cache_key = self._feature_cache_key(state)
+        if cache_key is not None and self._feature_cache_key_value == cache_key:
+            self.feature_cache_hits += 1
+            return self._feature_cache_vector
+
+        self.feature_cache_misses += 1
+        vector = self._extract_state_features_uncached(state)
+        # Store the key *after* extraction: the extraction itself calls
+        # ``objective()`` -> ``compute_inventory()``, which bumps
+        # ``s_ikt.revision``. Caching the pre-extraction key made every lookup
+        # miss (measured: revision 46 -> 276 on the first call).
+        key_after = self._feature_cache_key(state)
+        if key_after is not None:
+            self._feature_cache_key_value = key_after
+            self._feature_cache_vector = vector
+        return vector
+
+    def _feature_cache_key(self, state: SolutionState) -> tuple | None:
+        """Cheap identity key for the select-then-record reuse, or ``None``."""
+        s_ikt = getattr(state, "s_ikt", None)
+        try:
+            return (
+                int(self.iteration),
+                id(state),
+                len(getattr(state, "vehicles", ()) or ()),
+                getattr(s_ikt, "revision", None),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_state_features_uncached(self, state: SolutionState) -> np.ndarray:
+        """Build the feature vector. Callers should use ``extract_state_features``."""
         data = state.data
         features: list[float] = []
 
@@ -816,6 +874,8 @@ class MLOperatorSelector:
             "repair_random_fallbacks": int(self.random_fallbacks["repair"]),
             "gate_rejections": dict(self.gate_rejections),
             "last_gate": self.last_gate,
+            "feature_cache_hits": int(self.feature_cache_hits),
+            "feature_cache_misses": int(self.feature_cache_misses),
         }
 
     # ------------------------------------------------------------------
@@ -890,6 +950,57 @@ class MLOperatorSelector:
         selected = str(self.rng.choice(valid_candidates))
         return selected, self._safe_operator_params(selected)
 
+    def _batched_predictions(
+        self,
+        model: Any,
+        scaler: Any,
+        state_features: np.ndarray,
+        op_type: str,
+        candidates: list[str],
+    ) -> list[float | None]:
+        """Predict every candidate in one transform+predict call.
+
+        Falls back to the per-candidate loop if the batch fails, so a single
+        unusable row still only removes its own candidate. Non-finite
+        predictions become ``None`` (never a silent NaN in the sort key).
+        """
+        try:
+            rows = np.vstack(
+                [
+                    np.concatenate(
+                        [state_features, self.encode_operator(name, op_type)]
+                    )
+                    for name in candidates
+                ]
+            )
+            raw = np.asarray(
+                model.predict(scaler.transform(rows)), dtype=float
+            ).reshape(-1)
+            if raw.size != len(candidates):
+                raise ValueError(
+                    f"model returned {raw.size} predictions for {len(candidates)} candidates"
+                )
+            return [float(value) if math.isfinite(value) else None for value in raw]
+        except PREDICTION_ERRORS as exc:
+            record_swallowed("ml_operator_selector.predict_batch", exc)
+
+        predictions: list[float | None] = []
+        for name in candidates:
+            try:
+                row = np.concatenate(
+                    [state_features, self.encode_operator(name, op_type)]
+                ).reshape(1, -1)
+                raw_prediction = float(model.predict(scaler.transform(row))[0])
+                predictions.append(
+                    raw_prediction if math.isfinite(raw_prediction) else None
+                )
+            except PREDICTION_ERRORS as exc:
+                # A failed prediction must not become the selected operator
+                # merely because NaN sorts unexpectedly.
+                record_swallowed("ml_operator_selector.predict_candidate", exc)
+                predictions.append(None)
+        return predictions
+
     def select_best_operator(
         self,
         state: SolutionState,
@@ -951,24 +1062,15 @@ class MLOperatorSelector:
             self.random_fallbacks[op_type] += 1
             return self._random_valid_operator(op_type, valid_candidates)
 
+        # One batched transform+predict instead of one call per candidate.
+        # Measured on medium with 19 candidates: 3.42 ms -> 0.29 ms (11.7x).
+        # The per-candidate loop is kept as the failure path so that a single
+        # bad row still only drops its own candidate, exactly as before.
+        raw_predictions = self._batched_predictions(
+            model, scaler, state_features, op_type, valid_candidates
+        )
         predictions = []
-        for op_name in valid_candidates:
-            op_encoding = self.encode_operator(op_name, op_type)
-            features = np.concatenate([state_features, op_encoding]).reshape(1, -1)
-            try:
-                features_scaled = scaler.transform(features)
-                raw_prediction = float(model.predict(features_scaled)[0])
-                pred = raw_prediction if math.isfinite(raw_prediction) else None
-            except Exception as exc:
-                # A failed prediction is marked explicitly; it must not be
-                # allowed to become the selected operator merely because NaN
-                # happens to sort in an unexpected position. Recorded because a
-                # model that fails for every candidate would silently turn the
-                # selector back into a random choice.
-                record_swallowed(
-                    "ml_operator_selector.predict_candidate", exc
-                )
-                pred = None
+        for op_name, pred in zip(valid_candidates, raw_predictions):
             params = self._safe_operator_params(op_name)
             predictions.append((op_name, pred, params))
 

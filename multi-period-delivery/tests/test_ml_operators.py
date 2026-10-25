@@ -461,6 +461,67 @@ def test_feedback_during_a_cooldown_does_not_rearm_it() -> None:
     assert selector.should_force_fallback("destroy") is False
 
 
+def test_batched_predictions_match_the_per_candidate_loop() -> None:
+    """Batching is an optimisation only: the numbers must be identical."""
+    selector = MLOperatorSelector(None, np.random.default_rng(11))
+    names = list(_DESTROY_OPERATORS)
+    features = np.zeros(selector.encode_operator(names[0], "destroy").size + 3)
+
+    class _Marker:
+        """Model whose prediction depends on the row it receives."""
+
+        def predict(self, rows: np.ndarray) -> np.ndarray:
+            return np.asarray(rows, dtype=float).sum(axis=1)
+
+    batched = selector._batched_predictions(
+        _Marker(), _IdentityScaler(), features, "destroy", names
+    )
+    loop = []
+    for name in names:
+        row = np.concatenate(
+            [features, selector.encode_operator(name, "destroy")]
+        ).reshape(1, -1)
+        loop.append(float(_Marker().predict(_IdentityScaler().transform(row))[0]))
+
+    np.testing.assert_allclose(batched, loop, rtol=0, atol=1e-12)
+
+
+def test_batched_predictions_fall_back_to_the_loop_on_batch_failure() -> None:
+    selector = MLOperatorSelector(None, np.random.default_rng(12))
+    names = list(_DESTROY_OPERATORS)
+    features = np.zeros(selector.encode_operator(names[0], "destroy").size + 3)
+
+    class _BatchBroken:
+        """Fails for stacked input, works for a single row."""
+
+        def predict(self, rows: np.ndarray) -> np.ndarray:
+            if rows.shape[0] > 1:
+                raise RuntimeError("batch path broken")
+            return np.zeros(1)
+
+    out = selector._batched_predictions(
+        _BatchBroken(), _IdentityScaler(), features, "destroy", names
+    )
+    assert len(out) == len(names)
+    assert all(value == 0.0 for value in out)
+
+
+def test_feature_cache_reuses_the_vector_for_the_same_decision() -> None:
+    """One ML operator call extracts features twice; the second must be free."""
+    selector = MLOperatorSelector(None, np.random.default_rng(13))
+    state = _load_state()
+
+    first = selector.extract_state_features(state)
+    second = selector.extract_state_features(state)
+    assert first is second
+    assert selector.feature_cache_hits == 1
+    assert selector.feature_cache_misses == 1
+
+    # A new iteration invalidates the vector: tracker-derived features change.
+    selector.set_iteration(selector.iteration + 1, 100)
+    third = selector.extract_state_features(state)
+    assert third is not first
+    assert selector.feature_cache_misses == 2
 def test_ml_only_mode_builds_a_selector_without_a_tuner(
     monkeypatch, tmp_path
 ) -> None:
