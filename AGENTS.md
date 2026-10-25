@@ -76,9 +76,16 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-25 17:50   HEAD = deae493   641 passed / 42 deselected
-覆盖率 65.97%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
-CI 40182320638 success（文档基线 993aa36）
+2026-10-25 22:25   HEAD = 3109bb5   644 passed / 42 deselected
+覆盖率 65.98%（门禁 56%）   ruff 干净   盲 except Exception 113（原 249）
+M50 让 ML 接管真正替换轮盘（NoOpAwareSegmentedRouletteWheel 的 takeover 钩子，
+is_ready 无副作用与会消耗冷却的 should_use_ml 分离）。107 轮里 79 轮接管、
+模型决策 106 次、随机回退 0；ml 81.9 轮 vs basic 72.8 轮，开销不再拖慢。
+消融（medium/45s，5 种子，两轮交替）：basic 802.32、tuner 804.92、ml 804.64、
+full 804.34；配对差 +2.60/+2.32/+2.02（|t|≤1.33）。full < ml < tuner 已达成，
+但仍略逊 basic。新线索：种子跨度 basic 11.01 vs ml 2.90 / tuner 1.16，
+接管压低了搜索多样性。待批准：模型质量门（留出集 R²）、top-k 多样性保留。
+tuner 接线正确、仅慢 4%，但 7/11 破坏算子只调 degree（M43 已证无效）。
 M49 按预算重标定 ML 门禁：样本门槛 80→40、小实例 120→60、首次拟合 25→12、
 重训间隔 80→25、冷却 30→5；并隔离 warm-up 采样对选择反馈的污染。
 效果：warm-up 占比 37%→15%，模型选择 2→20（最多 38），冷却拒绝 51→0。
