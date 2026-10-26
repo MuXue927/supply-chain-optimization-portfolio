@@ -85,8 +85,8 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-27   HEAD = M67 代码提交（含 M64.0 88cd9e5）   729 passed / 42 deselected
-覆盖率 67.11% 本地（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-27   HEAD = 25c4e71 (M67; data 5e9abd2, M64.0 88cd9e5)   729 passed / 42 deselected
+覆盖率 67.11% 本地 / 64.64% CI（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
 M66 regret N1（可信缓存基线）落地：objective(trust_inventory_cache=True) 公式不变、只跳过
 validate→compute_inventory 前置段。等价：0 分歧（2,651+407 次）、末解与指纹逐位相同（120/360 轮 + large）。
 速度：objective 6.769 → 1.265 s（−81%）；端到端 medium 120 轮 1.040×、360 轮 1.035×；
