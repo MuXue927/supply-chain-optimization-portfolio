@@ -76,7 +76,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M57 代码提交   673 passed / 42 deselected
+2026-10-26   HEAD = aa73806   673 passed / 42 deselected
 覆盖率 66.92%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
 M57 消除哈希顺序依赖（alns/stable_order.py，3 处集合序进入搜索）：
 同种子下 PYTHONHASHSEED=0/1 三模式终解逐位相同（802.09/804.70/804.32）。
