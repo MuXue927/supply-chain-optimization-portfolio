@@ -148,6 +148,8 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         prior_k: float = 2.0,
         progress_segments: int = 0,
         takeover=None,
+        weight_hook=None,
+        feedback_hook=None,
     ):
         if normalisation not in ("sum", "mean", "shrunk"):
             raise ValueError(
@@ -173,6 +175,14 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         #: capped its influence at 1/11 of the iterations, because the wheel
         #: had to draw it (measured: 0.13 draws per iteration, so ~9%).
         self._takeover = takeover
+        #: Optional ``(best, curr) -> (destroy_mult, repair_mult)`` hook that
+        #: *tilts* the wheel instead of replacing it. Multiplying for a single
+        #: draw keeps the wheel's own credit authoritative and makes an
+        #: uninformed bandit exactly neutral.
+        self._weight_hook = weight_hook
+        #: Optional ``(d_idx, r_idx, outcome, cand) -> None`` called after each
+        #: iteration so the bandit learns from the outcome the search assigned.
+        self._feedback_hook = feedback_hook
         self.takeover_used = 0
         self.takeover_failures = 0
         super().__init__(
@@ -192,6 +202,39 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
         self._r_seg_weights[r_idx] += self._scores[int(repair_outcome)]
         self._d_seg_calls[d_idx] += 1
         self._r_seg_calls[r_idx] += 1
+        if self._feedback_hook is not None:
+            try:
+                self._feedback_hook(d_idx, r_idx, outcome, cand)
+            except STATE_OPERATION_ERRORS as exc:
+                record_swallowed("alns_optimizer.feedback_hook", exc)
+
+    def _draw(self, rng, best, curr):
+        """Draw from the wheel, applying the optional bandit tilt for one draw.
+
+        The tilt is applied to a *copy* of the weights and undone immediately,
+        so the bandit's opinion never compounds into the credit the wheel is
+        accumulating from actual outcomes.
+        """
+        if self._weight_hook is None:
+            return RouletteWheel.__call__(self, rng, best, curr)
+        try:
+            d_mult, r_mult = self._weight_hook(best, curr)
+        except STATE_OPERATION_ERRORS as exc:
+            record_swallowed("alns_optimizer.weight_hook", exc)
+            return RouletteWheel.__call__(self, rng, best, curr)
+        if d_mult is None and r_mult is None:
+            return RouletteWheel.__call__(self, rng, best, curr)
+        saved_d = self._d_weights
+        saved_r = self._r_weights
+        try:
+            if d_mult is not None:
+                self._d_weights = saved_d * d_mult
+            if r_mult is not None:
+                self._r_weights = saved_r * r_mult
+            return RouletteWheel.__call__(self, rng, best, curr)
+        finally:
+            self._d_weights = saved_d
+            self._r_weights = saved_r
 
     def _reset_segment_weights(self):
         super()._reset_segment_weights()
@@ -256,11 +299,14 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
                     self._r_seg_weights, self._r_seg_calls
                 )
                 self._reset_segment_weights()
-            return RouletteWheel.__call__(self, rng, best, curr)
+            return self._draw(rng, best, curr)
 
         if self._normalisation == "sum":
             # Unchanged path: let the library do exactly what it did before.
-            return super().__call__(rng, best, curr)
+            if self._weight_hook is None:
+                return super().__call__(rng, best, curr)
+            self._iter += 1
+            return self._draw(rng, best, curr)
 
         self._iter += 1
         if self._iter % self._seg_length == 0:
@@ -276,7 +322,7 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
 
         # Skip the parent's segment bookkeeping: it was just done above, and
         # letting it run would apply a second, unnormalised update.
-        return RouletteWheel.__call__(self, rng, best, curr)
+        return self._draw(rng, best, curr)
 
 
 class _NoOpFlagPreservingRepair:
@@ -1074,6 +1120,82 @@ class ALNSOptimizer:
             logger.error(f"Failed to register repair operators: {e}")
             raise
 
+    def _make_ml_bandit(self, alns: ALNS):
+        """Return ``(weight_hook, feedback_hook)`` for the contextual bandit.
+
+        The bandit *tilts* the roulette rather than replacing it: the wheel's
+        accumulated credit stays authoritative and an uninformed bandit is
+        exactly neutral, so the worst case is the baseline instead of something
+        worse than it.
+        """
+        if not self.is_ml_enabled():
+            return None, None
+        runtime = float(getattr(ALNSConfig, "MAX_RUNTIME", 0) or 0)
+        floor = float(getattr(ALNSConfig, "ML_BANDIT_MIN_RUNTIME_SECONDS", 90.0))
+        # Point 4 of the redesign: on budgets too short to learn, behave exactly
+        # like basic instead of paying for a model that cannot pay back.
+        if runtime < floor:
+            return None, None
+
+        from .bandit_selector import ContextualThompsonBandit, reward_from_outcome
+
+        destroy_names = list(alns._d_ops)
+        repair_names = list(alns._r_ops)
+        prior = float(getattr(ALNSConfig, "ML_BANDIT_PRIOR", 4.0))
+        min_trials = int(getattr(ALNSConfig, "ML_BANDIT_MIN_TRIALS", 30))
+        rng = getattr(self, "rng", None)
+        if rng is None:
+            return None, None
+        destroy_bandit = ContextualThompsonBandit(
+            len(destroy_names), rng, prior_strength=prior, min_samples=min_trials
+        )
+        repair_bandit = ContextualThompsonBandit(
+            len(repair_names), rng, prior_strength=prior, min_samples=min_trials
+        )
+        state = {"cell": 0}
+        self.ml_bandits = {
+            "destroy": destroy_bandit,
+            "repair": repair_bandit,
+        }
+
+        def _cell_for(current) -> int:
+            progress = resolve_progress((current,))
+            pressure = 0.5
+            try:
+                shipped = current.compute_shipped() or {}
+                demands = current.data.demands
+                total = sum(float(v) for v in demands.values()) if demands else 0.0
+                met = sum(float(v) for v in shipped.values()) if shipped else 0.0
+                if total > 0:
+                    pressure = max(0.0, min(1.0, 1.0 - met / total))
+            except STATE_OPERATION_ERRORS:
+                pressure = 0.5
+            return ContextualThompsonBandit.cell(progress, pressure)
+
+        def weight_hook(best, curr):
+            current = curr if curr is not None else best
+            if current is None:
+                return None, None
+            cell = _cell_for(current)
+            state["cell"] = cell
+            return destroy_bandit.weights(cell), repair_bandit.weights(cell)
+
+        def feedback_hook(d_idx, r_idx, outcome, cand):
+            reward = reward_from_outcome(
+                outcome, noop=bool(getattr(cand, "_destroy_noop", False))
+            )
+            cell = state["cell"]
+            destroy_bandit.update(cell, int(d_idx), reward)
+            repair_bandit.update(
+                cell,
+                int(r_idx),
+                reward_from_outcome(
+                    outcome, noop=bool(getattr(cand, "_repair_noop", False))
+                ),
+            )
+
+        return weight_hook, feedback_hook
+
     def _make_ml_takeover(self, alns: ALNS):
         """Return the hook that lets ML *replace* the roulette.
 
@@ -1234,7 +1356,18 @@ class ALNSOptimizer:
             # Use actual registration counts instead of hard-coded values.
             num_destroy = getattr(self, "_num_registered_destroy_ops", 7) or 7
             num_repair = getattr(self, "_num_registered_repair_ops", 6) or 6
-            takeover = self._make_ml_takeover(alns)
+            # Point 2 of the redesign: the bandit tilts the wheel; the
+            # supervised path keeps its (worse-performing) takeover behaviour
+            # behind an explicit switch.
+            selector_kind = str(
+                getattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised")
+            ).strip().lower()
+            weight_hook = feedback_hook = None
+            takeover = None
+            if selector_kind == "bandit":
+                weight_hook, feedback_hook = self._make_ml_bandit(alns)
+            else:
+                takeover = self._make_ml_takeover(alns)
             select = NoOpAwareSegmentedRouletteWheel(
                 scores=getattr(ALNSConfig, "ROULETTE_SCORES", [1.0]),
                 decay=getattr(ALNSConfig, "ROULETTE_DECAY", 0.9),
@@ -1249,6 +1382,8 @@ class ALNSOptimizer:
                     getattr(ALNSConfig, "ROULETTE_PROGRESS_SEGMENTS", 0)
                 ),
                 takeover=takeover,
+                weight_hook=weight_hook,
+                feedback_hook=feedback_hook,
             )
             self._operator_selector = select
             self.log_printer.print(f"Step 4 elapsed: {time.time() - t0:.2f}s")

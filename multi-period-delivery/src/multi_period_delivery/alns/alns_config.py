@@ -524,6 +524,25 @@ class ALNSConfig:
     # through a single noisy estimate while still dropping a model that has
     # genuinely degraded. 0 disables hysteresis (old behaviour: one miss exits).
     ML_QUALITY_EXIT_MISSES: int = 2
+    # Which decision rule ML uses.
+    #
+    # ``"supervised"`` keeps the Ridge / logistic ranking that shipped through
+    # M57. ``"bandit"`` switches to the contextual Thompson sampler in
+    # ``bandit_selector.py``, which tilts the roulette instead of replacing it.
+    # The supervised path measured worse than no model at all
+    # (ml - basic = +9.18, t = 1.92), so the bandit is the intended replacement;
+    # it stays opt-in until it has been measured on the same clean protocol.
+    ML_SELECTOR_KIND: str = "supervised"
+    # Pseudo-observations behind the bandit's shrinkage towards each arm's
+    # global success rate. Higher keeps sparse cells closer to the arm mean.
+    ML_BANDIT_PRIOR: float = 4.0
+    # Trials before the bandit may tilt the wheel at all. Below this it returns
+    # neutral weights, so an information-free bandit cannot distort the search.
+    ML_BANDIT_MIN_TRIALS: int = 30
+    # Wall-clock budget below which the bandit is not used at all: on short runs
+    # it cannot collect enough trials to pay for itself, and the honest action is
+    # to behave exactly like basic.
+    ML_BANDIT_MIN_RUNTIME_SECONDS: float = 90.0
     # Inverse L2 strength for the repair classifier.
     ML_CLASSIFIER_C: float = 1.0
     # Repair side uses the operator-parameter interaction slots.
