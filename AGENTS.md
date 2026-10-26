@@ -76,8 +76,16 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = f39cded   665 passed / 42 deselected
-覆盖率 66.70%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-26   HEAD = M57 代码提交   673 passed / 42 deselected
+覆盖率 66.92%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M57 消除哈希顺序依赖（alns/stable_order.py，3 处集合序进入搜索）：
+同种子下 PYTHONHASHSEED=0/1 三模式终解逐位相同（802.09/804.70/804.32）。
+从此跨进程对照才有意义。M49–M56 的跨进程消融数字需按此打折。
+M57 质量门迟滞 ML_QUALITY_EXIT_MISSES=2：机制生效（接管次数 84→74），
+但终解完全不变 —— 迟滞=2 与 =0 配对差一字不差（+9.18/+8.49/−0.69）。对解中性。
+确定性代码上 ML 更差：ml−basic +9.18（t=1.92，1/5 更好）、full−basic +8.49、full−ml −0.69。
+观测：5 个种子里 3 次落在 804.60，目标函数有强吸引域，均值比较功效低。
+下一步方向（待定夺）：ML 决策器改为分层 Thompson 采样 bandit，ML 只做 roulette 乘性修正。
 M56 固定迭代数成对试验（medium/120 轮/5 种子×2 哈希种子）：
 ml−basic +4.88（t=+2.10，3/10 更好）、full−basic +2.66（t=+0.97）、full−ml −2.21（7/10）。
 结论：ML 无正收益且略差；"full 优于 ml"稳定，但两者都没超过 basic。

@@ -611,6 +611,64 @@ def test_failed_fit_is_recorded_as_such() -> None:
     assert selector.quality_history["repair"] == []
 
 
+def test_quality_hysteresis_survives_one_noisy_fit(monkeypatch) -> None:
+    """One bad retrain must not switch a working model off.
+
+    Measured: 79 repair fits passed 58 times, and inside one run the AUC went
+    0.639 -> 0.528 -> 0.434 -> 0.462, so takeover flipped four times.
+    """
+    monkeypatch.setattr(ALNSConfig, "ML_QUALITY_EXIT_MISSES", 2)
+    selector = MLOperatorSelector(None, np.random.default_rng(81))
+
+    selector._record_quality("repair", {"ok": True, "reason": "ok", "auc": 0.64})
+    assert selector._quality_ok("repair") is True
+
+    selector._record_quality("repair", {"ok": False, "reason": "low_auc", "auc": 0.43})
+    assert selector._quality_ok("repair") is True, "one miss must not exit"
+    assert selector.quality_latch_state()["repair"]["consecutive_misses"] == 1
+
+    selector._record_quality("repair", {"ok": False, "reason": "low_auc", "auc": 0.46})
+    assert selector._quality_ok("repair") is False, "two consecutive misses exit"
+    assert selector.quality_latch_state()["repair"]["latched"] is False
+
+
+def test_quality_hysteresis_cannot_admit_a_side_that_never_passed() -> None:
+    """Hysteresis keeps a working model alive; it must not create one."""
+    selector = MLOperatorSelector(None, np.random.default_rng(82))
+
+    for _ in range(5):
+        selector._record_quality(
+            "repair", {"ok": False, "reason": "low_auc", "auc": 0.40}
+        )
+
+    assert selector._quality_ok("repair") is False
+    assert selector.quality_latch_state()["repair"]["latched"] is False
+
+
+def test_quality_hysteresis_resets_misses_after_a_pass(monkeypatch) -> None:
+    monkeypatch.setattr(ALNSConfig, "ML_QUALITY_EXIT_MISSES", 2)
+    selector = MLOperatorSelector(None, np.random.default_rng(83))
+
+    selector._record_quality("repair", {"ok": True, "reason": "ok", "auc": 0.6})
+    selector._record_quality("repair", {"ok": False, "reason": "low_auc", "auc": 0.4})
+    selector._record_quality("repair", {"ok": True, "reason": "ok", "auc": 0.7})
+    assert selector.quality_latch_state()["repair"]["consecutive_misses"] == 0
+
+    selector._record_quality("repair", {"ok": False, "reason": "low_auc", "auc": 0.4})
+    assert selector._quality_ok("repair") is True
+
+
+def test_zero_exit_misses_restores_the_old_behaviour(monkeypatch) -> None:
+    """The switch must allow the pre-M56 one-miss exit for A/B runs."""
+    monkeypatch.setattr(ALNSConfig, "ML_QUALITY_EXIT_MISSES", 0)
+    selector = MLOperatorSelector(None, np.random.default_rng(84))
+
+    selector._record_quality("repair", {"ok": True, "reason": "ok", "auc": 0.6})
+    selector._record_quality("repair", {"ok": False, "reason": "low_auc", "auc": 0.4})
+
+    assert selector._quality_ok("repair") is False
+
+
 # ---------------------------------------------------------------------------
 # Model quality gate
 # ---------------------------------------------------------------------------

@@ -342,6 +342,15 @@ class MLOperatorSelector:
             "destroy": [],
             "repair": [],
         }
+        #: Whether each side is currently *established*: it passed the gate and
+        #: has not yet accumulated enough consecutive misses to be dropped.
+        #: Without this latch a single noisy retrain flipped takeover off, which
+        #: the fit history showed happening four times in one run.
+        self._quality_latched: dict[str, bool] = {
+            "destroy": False,
+            "repair": False,
+        }
+        self._quality_misses: dict[str, int] = {"destroy": 0, "repair": 0}
         # Feature-vector reuse for one decision (see ``extract_state_features``).
         self._feature_cache_key_value: tuple | None = None
         self._feature_cache_vector: np.ndarray | None = None
@@ -1450,7 +1459,25 @@ class MLOperatorSelector:
         return lo, hi
 
     def _quality_ok(self, op_type: str) -> bool:
+        """Whether this side may take over, honouring the hysteresis latch.
+
+        The latch is what turns "passed the gate once" into "is in service".
+        A side that never passed still needs the current fit to pass, so a bad
+        model cannot be admitted by simply waiting.
+        """
+        if bool(self._quality_latched.get(op_type, False)):
+            return True
         return bool(self.model_quality.get(op_type, {}).get("ok", False))
+
+    def quality_latch_state(self) -> dict[str, dict[str, Any]]:
+        """Latch and miss counters, for run statistics and tests."""
+        return {
+            side: {
+                "latched": bool(self._quality_latched.get(side, False)),
+                "consecutive_misses": int(self._quality_misses.get(side, 0)),
+            }
+            for side in ("destroy", "repair")
+        }
 
     def _record_quality(self, op_type: str, quality: dict[str, Any]) -> None:
         """Append one fit's verdict to the bounded history."""
@@ -1471,6 +1498,27 @@ class MLOperatorSelector:
         limit = int(getattr(ALNSConfig, "ML_QUALITY_HISTORY_SIZE", 20))
         if limit > 0 and len(history) > limit:
             del history[: len(history) - limit]
+        self._update_quality_latch(op_type, bool(quality.get("ok", False)))
+
+    def _update_quality_latch(self, op_type: str, passed: bool) -> None:
+        """Apply the hysteresis rule to one side.
+
+        A pass establishes (or keeps) service; a miss only counts while the side
+        is established, and it takes ``ML_QUALITY_EXIT_MISSES`` consecutive
+        misses to withdraw. A non-positive limit restores the old one-miss exit.
+        """
+        if passed:
+            self._quality_latched[op_type] = True
+            self._quality_misses[op_type] = 0
+            return
+        if not self._quality_latched.get(op_type, False):
+            return
+        misses = int(self._quality_misses.get(op_type, 0)) + 1
+        self._quality_misses[op_type] = misses
+        limit = int(getattr(ALNSConfig, "ML_QUALITY_EXIT_MISSES", 2))
+        if limit <= 0 or misses >= limit:
+            self._quality_latched[op_type] = False
+            self._quality_misses[op_type] = 0
 
     def get_statistics(self) -> dict[str, Any]:
         """Return counters proving how the selector actually decided.
@@ -1512,6 +1560,7 @@ class MLOperatorSelector:
                 side: list(entries)
                 for side, entries in self.quality_history.items()
             },
+            "quality_latch": self.quality_latch_state(),
             # What each side is *configured* to predict, and what the model
             # currently fitted actually predicts. They differ before the first
             # fit, and a failed fit resets the second to the regression default.

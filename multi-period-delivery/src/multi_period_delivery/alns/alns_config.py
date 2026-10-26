@@ -515,6 +515,15 @@ class ALNSConfig:
     # measurement; a gate that passes once and fails every other time would look
     # identical in "last fit" statistics.
     ML_QUALITY_HISTORY_SIZE: int = 20
+    # Consecutive failed fits that end an *established* takeover.
+    #
+    # Without hysteresis every retrain re-votes: measured over 30 fixed-iteration
+    # runs, 79 repair fits passed 58 times (73%), and inside a single run the
+    # AUC went 0.639 -> 0.528 -> 0.434 -> 0.462, so takeover switched on and off
+    # four times. Two consecutive misses (not one) keeps a side in service
+    # through a single noisy estimate while still dropping a model that has
+    # genuinely degraded. 0 disables hysteresis (old behaviour: one miss exits).
+    ML_QUALITY_EXIT_MISSES: int = 2
     # Inverse L2 strength for the repair classifier.
     ML_CLASSIFIER_C: float = 1.0
     # Repair side uses the operator-parameter interaction slots.

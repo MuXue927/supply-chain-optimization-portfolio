@@ -97,6 +97,7 @@ from .repair_utils import (
     select_vehicle_type_for_volume,
     veh_loading,
 )
+from .stable_order import stable_skus_by_size, stable_vehicle_types
 from .swallowed import record_swallowed
 from .vehicle import Vehicle
 
@@ -616,10 +617,10 @@ def fill_minimum_load_repair(
         if deficit <= 1e-9 or veh.capacity <= 0:
             continue
 
-        route_skus = sorted(
-            supply_chain.get((veh.fact_id, veh.dealer_id), set()),
-            key=lambda sku_id: float(data.sku_sizes.get(sku_id, 0.0)),
-            reverse=True,
+        # Size ties must not fall back to set order: that is hash order, and it
+        # differs between processes (see ``stable_order``).
+        route_skus = stable_skus_by_size(
+            data, supply_chain.get((veh.fact_id, veh.dealer_id), set())
         )
         for sku_id in route_skus:
             if deficit <= 1e-9:
@@ -1179,9 +1180,10 @@ def local_search_repair(
             current_load = state.compute_veh_load(veh)  # Current total load.
             cost = data.veh_type_cost[veh.type]  # Current vehicle-type cost.
 
-            for veh_type in list(
-                data.all_veh_types
-            ):  # Try every vehicle type except the current one.
+            # Try every vehicle type except the current one, in a reproducible
+            # order: the first acceptable type wins, so set order would decide
+            # the outcome differently in every process.
+            for veh_type in stable_vehicle_types(data):
                 if veh_type == veh.type:
                     continue
 
@@ -1656,13 +1658,10 @@ def regret_based_repair(
     horizons = getattr(data, "horizons", 0)
     veh_type_cost = getattr(data, "veh_type_cost", {})
     sku_sizes = getattr(data, "sku_sizes", {})
-    veh_types_list = list(getattr(data, "all_veh_types", []))
-    try:
-        veh_types_sorted_global = sorted(
-            veh_types_list, key=lambda x: data.veh_type_cap[x], reverse=True
-        )
-    except (KeyError, TypeError):
-        veh_types_sorted_global = veh_types_list
+    # Largest capacity first, identifier as tie-break. The previous
+    # ``sorted(..., reverse=True)`` was stable, so equal-capacity types kept
+    # their *set* order, which is hash order and differs between processes.
+    veh_types_sorted_global = stable_vehicle_types(data, largest_first=True)
     resource_pool_get = None
 
     prev_obj_saved = None
