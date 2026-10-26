@@ -40,12 +40,20 @@ jobs:
       # to the two tests/ directories. Coverage is measured over the two
       # packages only, and --cov-branch reports branch coverage as well as
       # statements: a line that runs but whose decision is never seen to go the
-      # other way no longer counts as covered. The threshold is the measured CI
-      # baseline (57.20%, with the four CPLEX tests skipping themselves)
-      # rounded down to 56, so
-      # ordinary refactoring does not trip it - it is there to catch a real
-      # drop. The Gurobi-backed modules still cannot run without a licence, so
-      # those paths stay uncovered by design rather than being mocked.
+      # other way no longer counts as covered.
+      #
+      # Threshold: 64, from the CI baseline measured on run 40360689993
+      # (2026-10-27): 64.56%, minus 0.5pp of headroom, rounded down to the
+      # nearest 0.5. The gap is deliberately under 1pp so the gate still has
+      # signal - the previous value (56) had been left 11pp below the measured
+      # baseline since 05e71b0, which meant deleting an entire test file would
+      # not have turned CI red.
+      #
+      # Take the baseline from **CI**, not from a local run: CI skips four
+      # CPLEX tests and measures ~2pp lower than a local Windows run, so a
+      # local number here would leave the gate too slack to catch anything.
+      # The Gurobi-backed modules still cannot run without a licence, so those
+      # paths stay uncovered by design rather than being mocked.
       - name: Test with coverage
         run: |
           .venv/bin/python -m pytest -q \
@@ -53,4 +61,4 @@ jobs:
             --cov=single_period_delivery \
             --cov-branch \
             --cov-report=term-missing \
-            --cov-fail-under=56
+            --cov-fail-under=64

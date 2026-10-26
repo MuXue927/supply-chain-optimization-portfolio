@@ -53,9 +53,18 @@
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q --cov=multi_period_delivery `
-  --cov=single_period_delivery --cov-branch --cov-report=term --cov-fail-under=56
+  --cov=single_period_delivery --cov-branch --cov-report=term --cov-fail-under=64
 .\.venv\Scripts\python.exe -m ruff check multi-period-delivery single-period-delivery
 ```
+
+**覆盖率门禁常设规则**：每轮收尾核对"CI 实测基线 − 门禁 ≤ 1pp"。
+超出即**当轮**抬门（新门禁 = CI 实测 − 0.5pp，向下取 0.5 的整数倍），
+三处同步：`ci.yml` 的 `--cov-fail-under`、`ci.yml` 注释块、本节的命令。
+
+- 基准取 **CI** 实测值，不取本地：CI 跳过 4 个 CPLEX 测试，比本地 Windows 低约 2pp，
+  用本地值会让门禁重新变松。
+- 为什么必须 ≤1pp：门禁离基线太远就失去信号——2026-10-27 之前的 56 比当时实测
+  低 11pp，删掉整个测试文件 CI 也不会红。
 
 ## 6. 改动流程（仅在允许改代码时）
 
