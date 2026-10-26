@@ -76,7 +76,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M56 代码提交   665 passed / 42 deselected
+2026-10-26   HEAD = f39cded   665 passed / 42 deselected
 覆盖率 66.70%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
 M56 固定迭代数成对试验（medium/120 轮/5 种子×2 哈希种子）：
 ml−basic +4.88（t=+2.10，3/10 更好）、full−basic +2.66（t=+0.97）、full−ml −2.21（7/10）。
