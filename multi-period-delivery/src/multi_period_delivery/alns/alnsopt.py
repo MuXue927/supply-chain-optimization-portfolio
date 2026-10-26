@@ -596,13 +596,21 @@ class SolutionState:
 
         return is_feasible, violations
 
-    def objective(self) -> float:
+    def objective(self, trust_inventory_cache: bool = False) -> float:
         """
         Return the cached search objective used by ALNS guidance and acceptance.
 
         The value starts from the actual objective and adds search-time guidance
         penalties for unmet demand, fleet size, and underloaded vehicles. This is
         not the external evaluation metric; use ``actual_objective()`` for that.
+
+        ``trust_inventory_cache`` is an optimisation for callers that have *just*
+        written ``s_ikt`` themselves (``veh_loading(commit=True)`` does), so the
+        ``validate()`` -> ``compute_inventory()`` preamble would only re-derive
+        the same numbers. **Precondition: the state is feasible.** The hard
+        violation check is part of the skipped preamble, so an infeasible state
+        must be evaluated through the default path - otherwise it would return a
+        finite number instead of ``inf`` (a unit test pins exactly that).
         """
         # Return the cached value when it is still valid.
         if (not self.objective_dirty) and (self.last_objective is not None):
@@ -610,24 +618,25 @@ class SolutionState:
 
         scale_factor = float(getattr(ALNSConfig, "SCALE_FACTOR", 1e-3))
 
-        # validate() triggers compute_inventory() when needed.
-        feasibility, violations = self.validate()
-        hard_violation = bool(
-            violations.get("negative_inventory")
-            or violations.get("veh_over_load")
-            or violations.get("plant_inv_exceed")
-            or violations.get("cargo_day_mismatch")
-            # An incomplete check leaves the state unverified, so treat it as
-            # physical uncertainty rather than as guidance.
-            or violations.get("check_error")
-        )
-        # A destroyed state may be temporarily short of demand. It is still a
-        # useful search candidate because the demand penalty below is finite.
-        # Physical violations, by contrast, must never be accepted.
-        if hard_violation:
-            self.last_objective = float("inf")
-            self.objective_dirty = False
-            return self.last_objective
+        if not trust_inventory_cache:
+            # validate() triggers compute_inventory() when needed.
+            feasibility, violations = self.validate()
+            hard_violation = bool(
+                violations.get("negative_inventory")
+                or violations.get("veh_over_load")
+                or violations.get("plant_inv_exceed")
+                or violations.get("cargo_day_mismatch")
+                # An incomplete check leaves the state unverified, so treat it as
+                # physical uncertainty rather than as guidance.
+                or violations.get("check_error")
+            )
+            # A destroyed state may be temporarily short of demand. It is still a
+            # useful search candidate because the demand penalty below is finite.
+            # Physical violations, by contrast, must never be accepted.
+            if hard_violation:
+                self.last_objective = float("inf")
+                self.objective_dirty = False
+                return self.last_objective
 
         data = self.data
 

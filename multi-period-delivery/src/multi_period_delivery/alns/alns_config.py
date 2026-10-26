@@ -663,6 +663,16 @@ class ALNSConfig:
     # it the baseline keeps moving on every lucky iteration, so the parameter
     # "converges" only when the run ends. 0 disables the cap.
     TUNER_MAX_ADJUSTMENTS: int = 12
+    # Regret: trust that ``veh_loading(commit=True)`` has already brought
+    # ``s_ikt`` up to date, so recomputing the search objective does not need to
+    # re-run ``validate()``/``compute_inventory()`` first.
+    #
+    # M64 measured one full search objective per pass, 7.56 s of a 40.18 s call.
+    # The formula is unchanged - only the redundant inventory re-derivation is
+    # skipped - and every use is verified against a full ``objective()`` by
+    # ``local-only/probes/_m66_equivalence.py`` (zero disagreements required).
+    # ``False`` restores the pre-M66 behaviour.
+    REGRET_TRUST_CACHED_OBJECTIVE: bool = True
 
     # --------------------------
     # Operator defaults (params + ranges)

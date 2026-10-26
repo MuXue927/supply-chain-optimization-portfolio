@@ -1711,6 +1711,16 @@ def regret_based_repair(
     # the historical "run until time_limit" behaviour.
     _max_commits = int(getattr(ALNSConfig, "REGRET_MAX_COMMITS_PER_CALL", 0) or 0)
     _commits = 0
+    # Carried across passes: ``veh_loading(commit=True)`` already brought
+    # ``s_ikt`` up to date, so re-validating it to rebuild the search objective
+    # was repeating the same traversal every pass (M64 measured 7.56 s of a
+    # 40.18 s call, ~1 full objective per pass). The formula is unchanged; only
+    # the inventory re-derivation is skipped. ``_m66_equivalence`` verifies every
+    # such use against a full ``objective()`` and requires zero disagreements.
+    _trust_cached_obj = bool(
+        getattr(ALNSConfig, "REGRET_TRUST_CACHED_OBJECTIVE", True)
+    )
+    prev_obj_carried: float | None = None
     while (
         time.time() - t0 < time_limit
         and (deadline is None or time.monotonic() < deadline)
@@ -1721,9 +1731,13 @@ def regret_based_repair(
             break
         # evaluate candidates against the current repaired state snapshot
         try:
-            prev_obj = state.objective()
+            if _trust_cached_obj and prev_obj_carried is not None:
+                prev_obj = state.objective(trust_inventory_cache=True)
+            else:
+                prev_obj = state.objective()
         except (AttributeError, RuntimeError, TypeError, ValueError):
             prev_obj = None
+        prev_obj_carried = prev_obj
         regret_list = []
 
         # Cache the supply-chain map and build the resource pool once to avoid
