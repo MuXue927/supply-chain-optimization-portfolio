@@ -24,8 +24,10 @@ import pytest
 from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
 from multi_period_delivery.alns.progress import (
     elapsed_progress,
+    iteration_progress,
     progress_from_elapsed,
     resolve_progress,
+    search_progress,
 )
 
 
@@ -132,3 +134,53 @@ def test_resolve_returns_zero_before_the_search_starts() -> None:
     """No tracker means no budget has been consumed yet."""
     assert resolve_progress(()) == 0.0
     assert resolve_progress((SimpleNamespace(),)) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Iteration basis (fixed-iteration experiments only)
+# ---------------------------------------------------------------------------
+
+
+def test_iteration_basis_counts_iterations_not_seconds(monkeypatch) -> None:
+    """Capping iterations alone still leaks wall clock; this removes the leak.
+
+    Under the runtime basis two modes at the same iteration have different
+    progress if their per-iteration cost differs, which moves the SA cooling,
+    the phase gates and the ML takeover threshold. The iteration basis makes the
+    schedule identical for the same iteration count.
+    """
+    monkeypatch.setattr(ALNSConfig, "PROGRESS_BASIS", "iteration")
+    fast = SimpleNamespace(iteration=50, max_iterations=200)
+    slow = SimpleNamespace(iteration=50, max_iterations=200)
+
+    assert search_progress(fast) == pytest.approx(0.25)
+    assert search_progress(slow) == pytest.approx(0.25)
+    assert resolve_progress((SimpleNamespace(tracker=slow),)) == pytest.approx(0.25)
+
+    monkeypatch.setattr(ALNSConfig, "PROGRESS_BASIS", "runtime")
+    timed = _tracker(elapsed=float(ALNSConfig.MAX_RUNTIME) * 0.9)
+    assert search_progress(timed) == pytest.approx(0.9, abs=0.02)
+    assert iteration_progress(fast) == pytest.approx(0.25)
+
+
+def test_iteration_basis_clamps_and_rejects_bad_budgets(monkeypatch) -> None:
+    monkeypatch.setattr(ALNSConfig, "PROGRESS_BASIS", "iteration")
+
+    assert iteration_progress(
+        SimpleNamespace(iteration=500, max_iterations=200)
+    ) == 1.0
+    assert iteration_progress(
+        SimpleNamespace(iteration=-3, max_iterations=200)
+    ) == 0.0
+    with pytest.raises(ValueError, match="positive planned iteration"):
+        iteration_progress(SimpleNamespace(iteration=1, max_iterations=0))
+    with pytest.raises(AttributeError, match="tracker.iteration"):
+        iteration_progress(SimpleNamespace())
+
+
+def test_unknown_progress_basis_is_a_configuration_error(monkeypatch) -> None:
+    """Falling back would silently redefine every progress threshold."""
+    monkeypatch.setattr(ALNSConfig, "PROGRESS_BASIS", "walltime")
+
+    with pytest.raises(ValueError, match="PROGRESS_BASIS"):
+        search_progress(SimpleNamespace(iteration=1, max_iterations=10))

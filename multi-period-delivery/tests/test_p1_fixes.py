@@ -128,6 +128,29 @@ def test_zeroed_dynamic_knobs_disable_widening(zeroed: str) -> None:
     assert cap == max(config.MAX_ITERATIONS, config.MAX_RUNTIME)
 
 
+def test_hard_iteration_budget_pins_the_ceiling() -> None:
+    """A pinned iteration budget must not be widened by the runtime budget.
+
+    Without this a fixed-iteration paired experiment cannot be expressed: the
+    runtime budget both raises the ceiling and acts as a stop, so a slow mode
+    silently executes fewer iterations than the fast one.
+    """
+    config = SimpleNamespace(
+        MAX_RUNTIME=100_000,
+        MAX_ITERATIONS=120,
+        DYNAMIC_MAX_ITERATIONS_PER_SECOND=5.0,
+        DYNAMIC_MAX_ITERATION_SAFETY_FACTOR=1.5,
+        DYNAMIC_MAX_ITERATION_BUFFER=200,
+        HARD_ITERATION_BUDGET=True,
+    )
+
+    assert compute_dynamic_iteration_cap(config) == 120
+
+    # Off (the default) keeps the historical widening behaviour.
+    config.HARD_ITERATION_BUDGET = False
+    assert compute_dynamic_iteration_cap(config) > 120
+
+
 # ---------------------------------------------------------------------------
 # CPLEX status handling (audit item C2)
 # ---------------------------------------------------------------------------

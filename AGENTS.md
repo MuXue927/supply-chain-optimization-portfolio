@@ -76,8 +76,17 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = 718e569   659 passed / 42 deselected
+2026-10-26   HEAD = M56 代码提交   665 passed / 42 deselected
 覆盖率 66.70%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M56 固定迭代数成对试验（medium/120 轮/5 种子×2 哈希种子）：
+ml−basic +4.88（t=+2.10，3/10 更好）、full−basic +2.66（t=+0.97）、full−ml −2.21（7/10）。
+结论：ML 无正收益且略差；"full 优于 ml"稳定，但两者都没超过 basic。
+**复现性缺陷（重要）**：未固定 PYTHONHASHSEED 时同种子同配置两次运行不同
+（basic 791.74 vs 795.43），根因是字符串哈希随机化改变集合遍历顺序。
+固定后逐位相同。⇒ M49–M55 的跨进程消融结论要打折；同进程内对照仍有效。
+实验开关（默认关闭）：PROGRESS_BASIS="iteration"、HARD_ITERATION_BUDGET=True。
+分类目标复核：状态特征 9/9 优于算子身份（均值 +0.14），但门槛抖动
+（79 次拟合通过 58 次，AUC 0.168–0.944）。下一步候选：质量门迟滞（待批准）。
 M55 修复侧目标改为二分类（是否改进）：质量门 = 五块连续时间块的 pooled AUC≥0.55。
 修复侧通过质量门 0/6 → 8/10；repair_model_selections == repair_selections（每轮模型决策）。
 消融（medium/45s，5 种子）：basic 804.15、ml 801.17（−2.98, t=−1.20）、full 803.59（−0.56, t=−0.51）。
@@ -152,6 +161,11 @@ M43 结论：search 内部调参已收口。收尾跨期整合可改进移动 0�
 本地跑 pytest 时不要并发：pytest.ini 固定 --basetemp=.pytest_tmp，
 第二个会话会删掉第一个的目录树并在 Windows 上留下 WinError 5 的残留。
 需要并跑就传唯一的 --basetemp=tmp\pytest-<task>。
+
+性能/消融实验必须固定 PYTHONHASHSEED。搜索会遍历字符串键集合，哈希随机化让
+同种子同配置两次运行走出不同轨迹（实测 basic 791.74 vs 795.43）。跨进程对照
+不固定时测到的是哈希顺序噪声；同一进程内多模式对照不受影响。
+local-only/probes/_m56_fixed_iteration_ab.py 自带守卫，新探针请照做。
 ```
 
 ## 9. 失败也要记录

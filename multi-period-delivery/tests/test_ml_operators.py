@@ -572,6 +572,45 @@ def test_repair_target_can_be_switched_back_to_regression(monkeypatch) -> None:
     assert selector.model_kind["repair"] == "regression"
 
 
+def test_quality_history_keeps_every_fit_verdict(monkeypatch) -> None:
+    """One fit is one measurement; the gate must be judged over several.
+
+    A classifier that passes on iteration 25 and fails on 50, 75, 100 would look
+    identical in "last fit" statistics, so each verdict is kept.
+    """
+    monkeypatch.setattr(ALNSConfig, "ML_QUALITY_HISTORY_SIZE", 3)
+    selector = MLOperatorSelector(None, np.random.default_rng(71))
+    _fill_repair_buffers(selector, 60, seed=7)
+
+    for iteration in (10, 20, 30, 40):
+        selector.set_iteration(iteration, 100)
+        selector.train_models(force=True)
+
+    history = selector.get_statistics()["quality_history"]["repair"]
+    assert len(history) == 3  # bounded, newest kept
+    assert [entry["iteration"] for entry in history] == [20, 30, 40]
+    assert all(entry["kind"] == "classification" for entry in history)
+    assert all(entry["metric"] is not None for entry in history)
+
+
+def test_failed_fit_is_recorded_as_such() -> None:
+    """A crash must appear in the history instead of vanishing from it."""
+    selector = MLOperatorSelector(None, np.random.default_rng(72))
+
+    class _Broken(MLOperatorSelector):
+        def _fit_for_target(self, op_type, X, y):
+            raise ValueError("boom")
+
+    broken = _Broken(None, np.random.default_rng(73))
+    _fill_repair_buffers(broken, 40, seed=8)
+    broken.train_models(force=True)
+
+    history = broken.get_statistics()["quality_history"]["repair"]
+    assert history[-1]["reason"] == "fit_failed"
+    assert history[-1]["ok"] is False
+    assert selector.quality_history["repair"] == []
+
+
 # ---------------------------------------------------------------------------
 # Model quality gate
 # ---------------------------------------------------------------------------

@@ -68,6 +68,29 @@ class ALNSConfig:
     # Hard iteration cap. The dynamic cap below may raise it further; whichever
     # of runtime and iteration limits fires first stops the search.
     MAX_ITERATIONS: int = 1000
+    # What "how far through the run are we" measures.
+    #
+    # ``"runtime"`` is the production default: elapsed seconds / MAX_RUNTIME, so
+    # a threshold fires at the same point of the wall clock on any machine.
+    #
+    # ``"iteration"`` is for **fixed-iteration experiments only**. A paired test
+    # that only caps MAX_ITERATIONS still leaks wall clock: the slower mode (more
+    # per-iteration work) reaches a higher progress value at the same iteration,
+    # which moves the SA cooling, the phase thresholds, the roulette segments and
+    # the ML takeover gate. Measuring progress by iteration removes that leak.
+    # It is not a better production measure - throughput is machine-specific, so
+    # no iteration-based threshold means the same thing everywhere.
+    PROGRESS_BASIS: str = "runtime"
+    # Make ``MAX_ITERATIONS`` the only stopping condition.
+    #
+    # Off by default. When on, ``compute_dynamic_iteration_cap`` stops widening
+    # the ceiling from the runtime budget, so a run stops at exactly
+    # ``MAX_ITERATIONS`` iterations; ``MAX_RUNTIME`` must then be set high enough
+    # not to bind. This exists because a fixed-iteration paired experiment is
+    # otherwise impossible: today the runtime budget both raises the iteration
+    # ceiling and acts as a stop, so "run exactly N iterations" cannot be
+    # expressed. Production runs leave it off and keep the runtime budget.
+    HARD_ITERATION_BUDGET: bool = False
     # Upper bound on iterations per second, used only to keep the dynamic
     # iteration ceiling from being absurdly small.
     #
@@ -488,6 +511,10 @@ class ALNSConfig:
     # a run whose model was simply untrained: reporting that as a metric invites
     # reading noise as a result.
     ML_CLASSIFIER_MIN_SAMPLES: int = 24
+    # Fits kept per side in the diagnostic history. One retrain is a single
+    # measurement; a gate that passes once and fails every other time would look
+    # identical in "last fit" statistics.
+    ML_QUALITY_HISTORY_SIZE: int = 20
     # Inverse L2 strength for the repair classifier.
     ML_CLASSIFIER_C: float = 1.0
     # Repair side uses the operator-parameter interaction slots.

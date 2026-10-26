@@ -25,6 +25,12 @@ An iteration-based measure was tried and removed: it needs an assumed
 throughput, and throughput is both machine- and instance-specific (measured on
 one host: 0.1-40 iterations/second), so no constant can be correct everywhere.
 
+It is still available behind ``PROGRESS_BASIS = "iteration"`` for one purpose:
+**fixed-iteration paired experiments**. Capping ``MAX_ITERATIONS`` alone does not
+remove wall clock from the comparison, because the slower mode then has a higher
+elapsed/``MAX_RUNTIME`` value at the same iteration. The switch is off by
+default and must not be turned on for production runs.
+
 **One clock, one origin.** ``tracker.start_time`` is the only origin, recorded
 on the monotonic clock (``time.perf_counter``) so neither a wall-clock step nor
 a second origin can shift the schedule. ``ALNSTracker`` sets it when the run
@@ -86,6 +92,56 @@ def elapsed_progress(tracker: Any) -> float:
     return progress_from_elapsed(time.perf_counter() - start)
 
 
+def iteration_progress(tracker: Any) -> float:
+    """Progress of ``tracker`` as completed iterations / planned iterations.
+
+    Only meaningful when the run has a real iteration budget: with a runtime
+    stop the planned count is an upper bound, so this measure would never reach
+    1.0. ``PROGRESS_BASIS = "iteration"`` exists for fixed-iteration paired
+    experiments, where the alternative - elapsed / ``MAX_RUNTIME`` - gives the
+    slower mode a higher progress value at the same iteration and lets wall
+    clock back into a comparison meant to exclude it.
+    """
+    completed = getattr(tracker, "iteration", None)
+    planned = getattr(tracker, "max_iterations", None)
+    if completed is None or planned is None:
+        # A silent 0.0 would switch every progress-gated policy off, which is
+        # worse than failing: the run would look fine and behave differently.
+        raise AttributeError(
+            "PROGRESS_BASIS='iteration' needs tracker.iteration and "
+            f"tracker.max_iterations; got {type(tracker).__name__}"
+        )
+    planned_int = int(planned)
+    if planned_int <= 0:
+        raise ValueError(
+            "PROGRESS_BASIS='iteration' needs a positive planned iteration "
+            f"count; got {planned!r}"
+        )
+    return max(0.0, min(1.0, float(completed) / float(planned_int)))
+
+
+def basis_name() -> str:
+    """The configured progress basis, validated.
+
+    An unknown value is a configuration error: falling back would silently
+    change what every threshold in the table above means.
+    """
+    basis = str(getattr(ALNSConfig, "PROGRESS_BASIS", "runtime")).strip().lower()
+    if basis not in {"runtime", "iteration"}:
+        raise ValueError(
+            "PROGRESS_BASIS must be 'runtime' or 'iteration'; got "
+            f"{ALNSConfig.PROGRESS_BASIS!r}"
+        )
+    return basis
+
+
+def search_progress(tracker: Any) -> float:
+    """Progress of ``tracker`` under the configured basis."""
+    if basis_name() == "iteration":
+        return iteration_progress(tracker)
+    return elapsed_progress(tracker)
+
+
 def resolve_progress(states: Any = (), *, tracker: Any = None) -> float:
     """
     Progress for the current search state.
@@ -98,9 +154,9 @@ def resolve_progress(states: Any = (), *, tracker: Any = None) -> float:
     happens before the search starts, when no budget has been consumed yet.
     """
     if tracker is not None:
-        return elapsed_progress(tracker)
+        return search_progress(tracker)
     for state in states or ():
         found = getattr(state, "tracker", None)
         if found is not None:
-            return elapsed_progress(found)
+            return search_progress(found)
     return 0.0

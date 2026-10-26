@@ -455,6 +455,11 @@ def compute_dynamic_iteration_cap(config: Any = None) -> int:
     config = ALNSConfig if config is None else config
     runtime_budget = float(getattr(config, "MAX_RUNTIME", 900))
     base_iter_cap = int(getattr(config, "MAX_ITERATIONS", 300))
+    if bool(getattr(config, "HARD_ITERATION_BUDGET", False)):
+        # The caller pinned the iteration budget, so widening it from the
+        # runtime budget would both break the pin and re-introduce wall clock
+        # into a comparison that is meant to exclude it.
+        return max(1, base_iter_cap)
     iter_per_second = float(
         getattr(config, "DYNAMIC_MAX_ITERATIONS_PER_SECOND", 5.0)
     )

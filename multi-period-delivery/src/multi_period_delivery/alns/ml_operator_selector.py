@@ -335,6 +335,13 @@ class MLOperatorSelector:
         # diagnosable instead of a mystery.
         self.gate_rejections: dict[str, int] = {}
         self.last_gate: dict[str, float | int | bool | None] | None = None
+        #: Recent fit quality per side, newest last. One retrain is a single
+        #: measurement: a gate that passes once and fails every other time is
+        #: not a working gate, and the toggle was invisible in the statistics.
+        self.quality_history: dict[str, list[dict[str, Any]]] = {
+            "destroy": [],
+            "repair": [],
+        }
         # Feature-vector reuse for one decision (see ``extract_state_features``).
         self._feature_cache_key_value: tuple | None = None
         self._feature_cache_vector: np.ndarray | None = None
@@ -1056,6 +1063,7 @@ class MLOperatorSelector:
                     self.destroy_model = model
                     self.model_kind["destroy"] = kind
                     self.model_quality["destroy"] = quality
+                    self._record_quality("destroy", quality)
                     print(
                         f"[ML] Destroy-operator {_kind_label(kind)} trained with "
                         f"{len(X)} samples ({_quality_label(quality)})"
@@ -1066,6 +1074,9 @@ class MLOperatorSelector:
                     self.destroy_scaler = None
                     self.model_kind["destroy"] = "regression"
                     self.model_quality["destroy"] = {"ok": False, "r2": None}
+                    self._record_quality(
+                        "destroy", {"ok": False, "reason": "fit_failed"}
+                    )
                     print(
                         f"[ML] Destroy-operator model training failed: {exc}; "
                         "falling back to exploration"
@@ -1086,6 +1097,7 @@ class MLOperatorSelector:
                     self.repair_model = model
                     self.model_kind["repair"] = kind
                     self.model_quality["repair"] = quality
+                    self._record_quality("repair", quality)
                     print(
                         f"[ML] Repair-operator {_kind_label(kind)} trained with "
                         f"{len(X)} samples ({_quality_label(quality)})"
@@ -1096,6 +1108,9 @@ class MLOperatorSelector:
                     self.repair_scaler = None
                     self.model_kind["repair"] = "regression"
                     self.model_quality["repair"] = {"ok": False, "r2": None}
+                    self._record_quality(
+                        "repair", {"ok": False, "reason": "fit_failed"}
+                    )
                     print(
                         f"[ML] Repair-operator model training failed: {exc}; "
                         "falling back to exploration"
@@ -1437,6 +1452,26 @@ class MLOperatorSelector:
     def _quality_ok(self, op_type: str) -> bool:
         return bool(self.model_quality.get(op_type, {}).get("ok", False))
 
+    def _record_quality(self, op_type: str, quality: dict[str, Any]) -> None:
+        """Append one fit's verdict to the bounded history."""
+        history = self.quality_history.setdefault(op_type, [])
+        history.append(
+            {
+                "iteration": int(self.iteration),
+                "kind": str(quality.get("kind", "regression")),
+                "metric": (
+                    quality.get("auc")
+                    if quality.get("kind") == "classification"
+                    else quality.get("r2")
+                ),
+                "ok": bool(quality.get("ok", False)),
+                "reason": str(quality.get("reason", "")),
+            }
+        )
+        limit = int(getattr(ALNSConfig, "ML_QUALITY_HISTORY_SIZE", 20))
+        if limit > 0 and len(history) > limit:
+            del history[: len(history) - limit]
+
     def get_statistics(self) -> dict[str, Any]:
         """Return counters proving how the selector actually decided.
 
@@ -1473,6 +1508,10 @@ class MLOperatorSelector:
             "feature_cache_misses": int(self.feature_cache_misses),
             "destroy_quality": dict(self.model_quality.get("destroy", {})),
             "repair_quality": dict(self.model_quality.get("repair", {})),
+            "quality_history": {
+                side: list(entries)
+                for side, entries in self.quality_history.items()
+            },
             # What each side is *configured* to predict, and what the model
             # currently fitted actually predicts. They differ before the first
             # fit, and a failed fit resets the second to the regression default.
