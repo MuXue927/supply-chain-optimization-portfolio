@@ -30,6 +30,16 @@ class ALNSConfig:
     # Master switch for the online parameter tuner (ParamAutoTuner). The CLI
     # flag --enable-param-tuner sets it; the optimizer reads it through
     # is_param_tuner_enabled() and registers the ALNS-T / ALNS-F variants.
+    # Tuner is **off** by default, and the stop-loss criterion for this line has
+    # been triggered: on the deterministic protocol (medium, 120 iterations,
+    # 15 paired seeds, pinned hash seed) tuner-only scored **+3.95** against
+    # basic (95% CI [-1.77, +9.66], 5 wins / 9 losses / 1 tie) - no improvement,
+    # point estimate worse. Per that criterion the tuner is default-disabled and
+    # ``full`` is, in measured effect, equal to ``ml``.
+    #
+    # The mechanism is kept (implementation intact, switches available) so the
+    # measurement can be reproduced; enabling it should be treated as an
+    # experiment, not a performance option.
     ENABLE_PARAM_TUNER: bool = False
     # Master switch for machine-learning operator selection
     # (MLOperatorSelector). The CLI flag --enable-ml-operators sets it; the

@@ -762,7 +762,17 @@ class ALNSOptimizer:
             use_ml = self.is_supervised_ml()
             if use_tuner:
                 self.log_printer.print("Initializing parameter auto-tuner...")
-                self.param_tuner = ParamAutoTuner(self.data, self.rng)
+                # A dedicated stream for the tuner. Sharing the search RNG meant
+                # every exploration sample also advanced the search's random
+                # state, so "tuner vs basic" mixed two effects: the parameter
+                # intervention (which necessarily forks the trajectory) and a
+                # pure stream displacement (the whole random sequence shifted by
+                # one draw). With separate streams the only difference left is
+                # the intervention itself, which is what the stop-loss criterion
+                # for the tuner line is about.
+                self.param_tuner = ParamAutoTuner(
+                    self.data, rnd.default_rng(resolve_run_seed() * 53 + 7)
+                )
 
                 # Attach the parameter tuner.
                 state.set_param_tuner(self.param_tuner)
