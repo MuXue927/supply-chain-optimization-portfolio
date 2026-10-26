@@ -75,6 +75,60 @@ def reward_from_outcome(outcome: Any, *, noop: bool = False) -> float:
     return value
 
 
+def dense_reward(
+    outcome: Any,
+    *,
+    reference: float | None = None,
+    candidate: float | None = None,
+    noop: bool = False,
+    magnitude_weight: float = 0.3,
+) -> float:
+    """Blend the outcome ladder with how much the objective actually moved.
+
+    The outcome alone is too sparse to learn from here. Measured on a 60-iteration
+    bandit run: 60 trials, and the winning arms accumulated 0.9 wins in total -
+    i.e. almost every outcome was ``rejected`` (0.0), so every draw was pure
+    prior noise. Worse, a rejected move that still reduced the objective teaches
+    nothing, even though it is exactly the kind of step a repair operator should
+    be credited for.
+
+    The magnitude term is a soft, scale-free function of the relative change:
+
+        magnitude = 0.5 + 0.5 * tanh(rel_gain / scale)
+
+    centred on 0.5 at "no change", so a neutral move is not rewarded or punished
+    and the bandit sees a spread of values every iteration instead of a column of
+    zeros. Acceptance is applied as a *scaling* of that term rather than as an
+    additive offset:
+
+        reward = magnitude * (1 - w + w * ladder)
+
+    An additive blend was tried first and rejected: with ``rejected = 0`` the
+    no-change point landed at 0.25 instead of the midpoint, so the bandit read
+    "nothing happened" as a poor result and learned to avoid whatever it was
+    doing when the search stalled. Scaling keeps the midpoint meaningful while
+    still ranking "best" above "accepted" above "rejected" at equal magnitude.
+    """
+    base = reward_from_outcome(outcome, noop=noop)
+    if reference is None or candidate is None:
+        return base
+    try:
+        ref = float(reference)
+        cand = float(candidate)
+    except (TypeError, ValueError):
+        return base
+    if not (math.isfinite(ref) and math.isfinite(cand)):
+        return base
+    scale = max(abs(ref), 1.0)
+    rel_gain = (ref - cand) / scale
+    if not math.isfinite(rel_gain):
+        return base
+    # 1% relative change is already a strong signal on this objective.
+    magnitude = 0.5 + 0.5 * math.tanh(rel_gain / 0.01)
+    weight = min(0.9, max(0.0, float(magnitude_weight)))
+    return min(1.0, max(0.0, magnitude * (1.0 - weight + weight * base)))
+
+
 class ContextualThompsonBandit:
     """Beta-Bernoulli Thompson sampling over (context cell, operator) cells.
 

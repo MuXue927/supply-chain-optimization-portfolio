@@ -76,8 +76,14 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = aa73806   673 passed / 42 deselected
-覆盖率 66.92%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-26   HEAD = M58 代码提交   685 passed / 42 deselected
+覆盖率 66.80%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M58 分层 Thompson bandit（alns/bandit_selector.py）+ 轮盘乘性修正：
+bandit 模式不再付监督式的双份开销（147s → 76s，basic 90s）。
+判据（medium/120轮/5种子/确定性）：bandit ml−basic +8.28（t=1.33，1/5）、
+full−basic +9.71（t=1.71，0/5）；监督式同协议 +9.18/+8.49。两套决策器一样差。
+差异集中在 s123/s99：basic 787.23/777.82，两种 ML 停 805 附近 ⇒ 奖励近视，不是估计器问题。
+ML_SELECTOR_KIND 默认仍为 supervised；ML_BANDIT_MIN_RUNTIME_SECONDS=90 使短预算退化为 basic。
 M57 消除哈希顺序依赖（alns/stable_order.py，3 处集合序进入搜索）：
 同种子下 PYTHONHASHSEED=0/1 三模式终解逐位相同（802.09/804.70/804.32）。
 从此跨进程对照才有意义。M49–M56 的跨进程消融数字需按此打折。

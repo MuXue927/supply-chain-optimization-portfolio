@@ -7,6 +7,7 @@ import pytest
 
 from multi_period_delivery.alns.bandit_selector import (
     ContextualThompsonBandit,
+    dense_reward,
     reward_from_outcome,
 )
 
@@ -109,5 +110,76 @@ def test_sampling_is_reproducible_for_a_seed() -> None:
 
 
 def test_zero_arms_is_rejected() -> None:
+
     with pytest.raises(ValueError, match="num_arms"):
         ContextualThompsonBandit(0, np.random.default_rng(0))
+
+
+# ---------------------------------------------------------------------------
+# Dense reward
+# ---------------------------------------------------------------------------
+
+
+def test_dense_reward_is_centred_at_no_change() -> None:
+    """A neutral move must sit at the midpoint, not at zero.
+
+    The outcome-only reward was measured at ~0 for almost every trial (60
+    trials, 0.9 total wins), so every draw was prior noise.
+    """
+    same = dense_reward("rejected", reference=100.0, candidate=100.0)
+    better = dense_reward("rejected", reference=100.0, candidate=99.0)
+    worse = dense_reward("rejected", reference=100.0, candidate=101.0)
+
+    # Centred near the midpoint (acceptance scales it down slightly), so a
+    # neutral move does not read as a failure.
+    assert 0.3 < same < 0.5
+    assert better > same > worse
+    assert 0.0 <= worse and better <= 1.0
+
+
+def test_dense_reward_keeps_acceptance_information() -> None:
+    """Equal magnitude, better outcome must still score higher."""
+    rejected = dense_reward("rejected", reference=100.0, candidate=99.0)
+    accepted = dense_reward("accepted", reference=100.0, candidate=99.0)
+    best = dense_reward("best", reference=100.0, candidate=99.0)
+
+    assert best >= accepted >= rejected
+
+
+def test_dense_reward_falls_back_to_the_ladder_without_a_reference() -> None:
+    assert dense_reward("best") == reward_from_outcome("best")
+    assert dense_reward("rejected", reference=None, candidate=1.0) == 0.0
+    # Non-finite inputs must not poison the posterior.
+    assert dense_reward("accepted", reference=float("nan"), candidate=1.0) == (
+        reward_from_outcome("accepted")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wiring: bandit mode must not pay for the supervised machinery
+# ---------------------------------------------------------------------------
+
+
+def test_bandit_mode_does_not_build_the_supervised_selector(monkeypatch) -> None:
+    """Otherwise the run pays twice: idle model training plus a dead candidate.
+
+    Measured on the first bandit smoke run: 147 s wall for a 120-iteration job
+    that takes ~80 s on basic.
+    """
+    from multi_period_delivery.alns.alns_config import default_config as ALNSConfig
+    from multi_period_delivery.alns.alns_optimizer import ALNSOptimizer
+
+    optimizer = object.__new__(ALNSOptimizer)
+
+    monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", True)
+    monkeypatch.setattr(ALNSConfig, "ML_SELECTOR_KIND", "bandit")
+    assert optimizer.is_ml_enabled() is True
+    assert optimizer.is_supervised_ml() is False
+
+    monkeypatch.setattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised")
+    assert optimizer.is_supervised_ml() is True
+
+    # ML off wins over the kind: no selector, no bandit.
+    monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", False)
+    monkeypatch.setattr(ALNSConfig, "ML_SELECTOR_KIND", "bandit")
+    assert optimizer.is_supervised_ml() is False

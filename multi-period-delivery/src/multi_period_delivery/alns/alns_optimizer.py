@@ -610,6 +610,22 @@ class ALNSOptimizer:
     def is_ml_enabled(self) -> bool:
         return bool(getattr(ALNSConfig, "ENABLE_ML_OPERATORS", False))
 
+    def is_supervised_ml(self) -> bool:
+        """Whether the *supervised* ML path is the active decision rule.
+
+        ``ML_SELECTOR_KIND = "bandit"`` switches the decision to the contextual
+        Thompson sampler, which tilts the roulette directly. Keeping the
+        supervised machinery alive in that mode would mean paying twice: the
+        ``ml_based_*`` operators stay registered as wheel candidates and the
+        selector keeps training models in the background that nothing reads.
+        Measured on the first bandit smoke run: 147 s wall for a 120-iteration
+        job that takes ~80 s on basic.
+        """
+        if not self.is_ml_enabled():
+            return False
+        kind = str(getattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised"))
+        return kind.strip().lower() != "bandit"
+
     def increment_iteration(self) -> int:
         self._iteration = int(getattr(self, "_iteration", 0)) + 1
         return self._iteration
@@ -719,7 +735,10 @@ class ALNSOptimizer:
             # falls back to the configured parameter defaults - and is what
             # makes an ablation of the two contributions possible.
             use_tuner = self.is_param_tuner_enabled()
-            use_ml = self.is_ml_enabled()
+            # In bandit mode the selector object is not built at all: the
+            # roulette tilt needs no feature buffers and no retraining, and
+            # building it would keep the background trainer alive for nothing.
+            use_ml = self.is_supervised_ml()
             if use_tuner:
                 self.log_printer.print("Initializing parameter auto-tuner...")
                 self.param_tuner = ParamAutoTuner(self.data, self.rng)
@@ -851,7 +870,7 @@ class ALNSOptimizer:
             # Add the ML destroy operator when the selector is enabled. The
             # tuner is optional here: with ``ENABLE_PARAM_TUNER=False`` the
             # selector still works and operators use configured defaults.
-            if self.is_ml_enabled() and self.ml_selector:
+            if self.is_supervised_ml() and self.ml_selector:
                 self.log_printer.print("Registering ML-enhanced destroy operator...")
                 ml_destroy_op = self._create_named_partial(
                     ml_based_destroy,
@@ -998,8 +1017,8 @@ class ALNSOptimizer:
         self.log_printer.print("Registering repair operators...")
 
         try:
-            # Add the ML repair operator when the selector is enabled.
-            if self.is_ml_enabled() and self.ml_selector:
+            # Add the ML repair operator when the *supervised* selector is on.
+            if self.is_supervised_ml() and self.ml_selector:
                 self.log_printer.print("Registering ML-enhanced repair operator...")
                 ml_repair_op = self._create_named_partial(
                     ml_based_repair,
@@ -1137,7 +1156,7 @@ class ALNSOptimizer:
         if runtime < floor:
             return None, None
 
-        from .bandit_selector import ContextualThompsonBandit, reward_from_outcome
+        from .bandit_selector import ContextualThompsonBandit, dense_reward
 
         destroy_names = list(alns._d_ops)
         repair_names = list(alns._r_ops)
@@ -1178,19 +1197,40 @@ class ALNSOptimizer:
                 return None, None
             cell = _cell_for(current)
             state["cell"] = cell
+            # Reference objective for the dense reward: the incumbent *before*
+            # this iteration's move. Captured here because the feedback hook runs
+            # after acceptance and no longer sees the pre-move value.
+            try:
+                state["reference"] = float(current.objective())
+            except STATE_OPERATION_ERRORS:
+                state["reference"] = None
             return destroy_bandit.weights(cell), repair_bandit.weights(cell)
 
         def feedback_hook(d_idx, r_idx, outcome, cand):
-            reward = reward_from_outcome(
-                outcome, noop=bool(getattr(cand, "_destroy_noop", False))
-            )
+            reference = state.get("reference")
+            try:
+                candidate = float(cand.objective()) if cand is not None else None
+            except STATE_OPERATION_ERRORS:
+                candidate = None
             cell = state["cell"]
-            destroy_bandit.update(cell, int(d_idx), reward)
+            destroy_bandit.update(
+                cell,
+                int(d_idx),
+                dense_reward(
+                    outcome,
+                    reference=reference,
+                    candidate=candidate,
+                    noop=bool(getattr(cand, "_destroy_noop", False)),
+                ),
+            )
             repair_bandit.update(
                 cell,
                 int(r_idx),
-                reward_from_outcome(
-                    outcome, noop=bool(getattr(cand, "_repair_noop", False))
+                dense_reward(
+                    outcome,
+                    reference=reference,
+                    candidate=candidate,
+                    noop=bool(getattr(cand, "_repair_noop", False)),
                 ),
             )
 
@@ -1210,7 +1250,7 @@ class ALNSOptimizer:
         side, so a ready destroy model can take over while the repair model is
         still warming up.
         """
-        if not self.is_ml_enabled():
+        if not self.is_supervised_ml():
             return None
         try:
             destroy_index = list(alns._d_ops).index("ml_based_destroy")
