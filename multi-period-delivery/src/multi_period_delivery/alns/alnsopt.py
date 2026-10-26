@@ -660,6 +660,7 @@ class SolutionState:
                         self.data.veh_type_cost.get(veh.type, 0.0)
                     )
         actual_base = fixed_cost + minimum_load_penalty
+        actual_base += self._inventory_holding_cost()
 
         # Use phase-dependent weights: compress fleet size early and return to
         # the composite cost later.
@@ -799,12 +800,33 @@ class SolutionState:
 
         return fixed_cost, underload_vehicle_count, underload_gap_penalty
 
+    def _inventory_holding_cost(self) -> float:
+        """Return the optional end-of-period inventory holding cost.
+
+        The default rate is zero.  Keeping the zero-rate check before the loop
+        means archived instances pay neither a changed objective nor an extra
+        ``s_ikt`` traversal.
+        """
+        rate = float(getattr(ALNSConfig, "INVENTORY_HOLDING_COST", 0.0) or 0.0)
+        if rate <= 0.0:
+            return 0.0
+
+        sku_sizes = getattr(self.data, "sku_sizes", {})
+        total_volume_days = 0.0
+        for (plant, sku_id, day), quantity in self.s_ikt.items():
+            if day <= 0 or quantity <= 0:
+                continue
+            total_volume_days += float(quantity) * float(sku_sizes.get(sku_id, 0.0))
+        return rate * total_volume_days
+
     def actual_objective(self) -> float:
         """
         Return the objective aligned with the ILP evaluation metric.
 
-        The value equals vehicle fixed cost plus the minimum-load penalty. By
-        default, the penalty follows the thesis formula
+        The value equals vehicle fixed cost plus the minimum-load penalty and,
+        only when ``INVENTORY_HOLDING_COST`` is positive, an end-of-period
+        inventory holding term. By default, the minimum-load penalty follows
+        the thesis formula
         ``alpha * vehicle_cost`` for every used vehicle whose load is below its
         minimum shipment quantity. ``param_pun_objective`` remains available as
         a legacy override when explicitly configured.
@@ -827,7 +849,11 @@ class SolutionState:
                     punishment_cost += float(self.data.param_alpha) * float(
                         self.data.veh_type_cost.get(veh.type, 0.0)
                     )
-        return float(fixed_cost + punishment_cost)
+        return float(
+            fixed_cost
+            + punishment_cost
+            + self._inventory_holding_cost()
+        )
 
     def calculate_cost(self) -> float:
         """Backward-compatible alias for the Gurobi-aligned actual objective."""

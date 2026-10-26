@@ -968,6 +968,20 @@ class ALNSConfig:
     SCALE_FACTOR: float = 1.0
 
     # --------------------------
+    # Inventory holding cost
+    # --------------------------
+    # Optional model term for the tight-capacity variant family.  It is charged
+    # once per standard-size unit held at the end of a positive period:
+    #
+    #     rate * sum_{plant, sku, day>0} max(0, s_ikt) * sku_size
+    #
+    # The default is exactly zero, so archived instances keep their historical
+    # objective and the extra traversal is skipped entirely.  Enable a positive
+    # value only on the tight-capacity variants; it changes the meaning of the
+    # objective and therefore invalidates comparisons with the archived family.
+    INVENTORY_HOLDING_COST: float = 0.0
+
+    # --------------------------
     # Large-jump destroy operator tuning
     # (cross_period_dealer_removal)
     # --------------------------

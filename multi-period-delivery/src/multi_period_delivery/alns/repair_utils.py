@@ -1411,8 +1411,18 @@ def compute_improvement_fast_add_vehicle(
         except STATE_OPERATION_ERRORS:
             min_load_penalty = 0.0
 
+    # Shipping qty reduces every closing balance from ``day`` through the
+    # horizon by qty.  When a positive holding rate is configured, the
+    # candidate earns that saving; omitting it would rank candidates against a
+    # different objective than the one the search evaluates exactly.
+    holding_rate = float(getattr(ALNSConfig, "INVENTORY_HOLDING_COST", 0.0) or 0.0)
+    holding_saving = 0.0
+    if holding_rate > 0.0:
+        periods_held = max(0, int(data.horizons) - int(day) + 1)
+        holding_saving = holding_rate * load_volume * periods_held
+
     # Estimate the unscaled improvement, where positive means improvement.
-    impro_unscaled = benefit - veh_cost - min_load_penalty
+    impro_unscaled = benefit - veh_cost - min_load_penalty + holding_saving
 
     # Convert to the objective's scaled units.
     impro_scaled = impro_unscaled * scale
@@ -1432,6 +1442,7 @@ def compute_improvement_delta(
     sku_id: str,
     qty: int,
     veh_type: str,
+    day: int | None = None,
 ):
     """
     Best-effort incremental delta computation for adding a single-SKU vehicle.
@@ -1447,7 +1458,8 @@ def compute_improvement_delta(
       - The candidate is a single-SKU load described by (dealer, sku_id, qty, veh_type)
 
     The incremental model:
-      delta_unscaled = veh_cost + min_load_penalty_of_added_vehicle - demand_penalty_reduction
+      delta_unscaled = veh_cost + min_load_penalty_of_added_vehicle
+                       - demand_penalty_reduction - holding_cost_reduction
       new_obj = prev_obj + delta_unscaled * scale_factor
       improvement = prev_obj - new_obj
 
@@ -1507,7 +1519,25 @@ def compute_improvement_delta(
                 min_load - loaded_vol
             )
 
-        delta_unscaled = vehicle_cost + min_load_penalty - demand_penalty_reduction
+        holding_rate = float(
+            getattr(ALNSConfig, "INVENTORY_HOLDING_COST", 0.0) or 0.0
+        )
+        if holding_rate > 0.0 and day is None:
+            # Without the shipment day the holding change cannot be computed;
+            # falling back to exact simulation is safer than ranking with an
+            # incomplete delta.
+            return None, 0.0, False
+        holding_saving = 0.0
+        if holding_rate > 0.0:
+            periods_held = max(0, int(data.horizons) - int(day) + 1)
+            holding_saving = holding_rate * loaded_vol * periods_held
+
+        delta_unscaled = (
+            vehicle_cost
+            + min_load_penalty
+            - demand_penalty_reduction
+            - holding_saving
+        )
         delta_scaled = delta_unscaled * scale_factor
 
         new_obj = float(prev_obj + delta_scaled)

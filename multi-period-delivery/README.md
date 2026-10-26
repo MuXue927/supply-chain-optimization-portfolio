@@ -28,6 +28,19 @@ The main methods are:
   benchmark.
 - `experiments`: reproducible thesis experiment pipeline.
 
+The checked-in CSV files under `datasets/multiple-periods/` are the
+authoritative benchmark source. The shared generator has drifted from these
+files, so regenerating with the documented seed is not a reproducible way to
+reconstruct a historical dataset. Tight-capacity variants are derived from the
+archived CSVs without changing any other input field.
+
+`INVENTORY_HOLDING_COST` is an optional ALNS objective term, defaulting to
+`0.0`. At a positive value it charges
+`rate * sum(max(0, s_ikt) * sku_size)` for positive periods. The default keeps
+archived objectives bit-for-bit unchanged; use a positive value only with the
+tight-capacity variants, where it creates the cost signal that the surplus
+inventory operator was designed to respond to.
+
 The ALNS implementation includes 10 destroy operators, 9 repair operators,
 plus a minimum-load fill post-processing pass,
 adaptive operator weights, parameter tuning, feasibility repair, and

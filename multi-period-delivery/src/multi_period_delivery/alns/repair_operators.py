@@ -2034,9 +2034,16 @@ def regret_based_repair(
                         # Try a cheap delta computation path that avoids any copy/compute_inventory
                         # when state caches are valid (most beneficial optimization path).
                         try:
-                            # compute_improvement_delta(state, prev_obj, dealer, sku_id, qty, veh_type)
+                            # Include the shipment day: positive holding cost
+                            # changes the day..H inventory saving.
                             _newobj_d, _impr_d, _ok_d = compute_improvement_delta(
-                                state, prev_obj, dealer, sku_id, est_qty, veh_type
+                                state,
+                                prev_obj,
+                                dealer,
+                                sku_id,
+                                est_qty,
+                                veh_type,
+                                day=day,
                             )
                             if bool(_ok_d):
                                 # Accept the delta estimate and memoize it;

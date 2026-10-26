@@ -680,8 +680,10 @@ def _vehicle_cost_for_volume(volume, veh_type, data) -> float:
     """Cost of moving ``volume`` with vehicles of one type.
 
     A load is split into ``ceil(volume / capacity)`` vehicles, and the last one
-    pays ``param_alpha * veh_type_cost`` when it lands below the minimum load -
-    the same two terms ``SolutionState.actual_objective`` uses.
+    pays ``param_alpha * veh_type_cost`` when it lands below the minimum load.
+    These are the two vehicle terms used by ``SolutionState.actual_objective``;
+    the optional inventory holding term is evaluated once the complete state
+    exists and is deliberately not part of this per-load vehicle choice.
     """
     cap = float(data.veh_type_cap.get(veh_type, 0.0))
     if cap <= 0:
