@@ -407,6 +407,39 @@ small, deterministic summaries and the command that regenerates them.
 - the summary has a stable schema;
 - the report builder can regenerate the comparison table.
 
+### 2.4 Archived data and its generator drift
+
+**Symptom:** Re-running the documented generator seed for the medium
+multi-period benchmark produces a different instance: the archived
+`dataset_13` has three vehicle types and more order/production rows than a
+fresh `--seed 20260408` run. Historical objectives therefore cannot be
+reconstructed by regenerating the CSV files.
+
+**Root cause:** The generator's random draws and allocation logic changed after
+the benchmark files were archived. The seed alone is not a complete provenance
+record: it identifies a random stream, not the code and parameters that
+consumed that stream. The repository had no warning that the archived files and
+the current generator were different versions.
+
+**Remediation:** Treat the checked-in CSV files as the authoritative benchmark
+instances. Do not regenerate an archived dataset for a comparison run. Derive
+new variants mechanically from the archived files (for example, copy every file
+byte-for-byte and rewrite only `plant_size_upper_limit.csv`), and record the
+source hashes and the single changed field. If a generator-produced family is
+ever needed, version the generator and archive the generated files together
+with the exact command, not just the seed.
+
+**Evidence required:**
+
+- a documented seed regenerates byte-identical copies of every archived file,
+  or the generator is marked as non-authoritative;
+- every derived variant has a manifest of unchanged-file hashes and the one
+  changed field;
+- a baseline comparison names the archived CSV directory, not a regeneration
+  command;
+- newly generated data has its own baseline; it is never mixed with archived
+  baselines.
+
 ---
 
 ## 3. CI and quality lessons

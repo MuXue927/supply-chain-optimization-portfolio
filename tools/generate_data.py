@@ -1,5 +1,12 @@
 # Shared dataset generator for the supply-chain optimization portfolio.
 #
+# WARNING: This generator has drifted from the archived benchmark CSV files.
+# Regenerating with the documented seed (20260408) does not reproduce the
+# checked-in medium dataset (different vehicle types and row counts).  The
+# archived CSVs under multi-period-delivery/datasets/ are the only
+# authoritative benchmark source.  Do not use this script to regenerate
+# benchmark instances without re-baselining every experiment.
+#
 # Examples:
 #   python tools/generate_data.py --problem single --scale small --count 3
 #   python tools/generate_data.py --problem multi --periods 5 --scale small --count 3

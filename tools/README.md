@@ -7,6 +7,18 @@ and multi-period generators share the same instance-generation logic.
 Using one generator keeps the generated data format consistent and avoids
 maintaining two near-identical copies.
 
+## Archived Data Is Authoritative
+
+The checked-in benchmark CSV files are the authoritative instances. The
+generator has drifted from them: regenerating the documented medium seed
+`20260408` produces a different vehicle-type set and different row counts.
+Do not regenerate a benchmark dataset and expect the historical results to
+remain comparable.
+
+Tight-capacity variants are derived from the archived CSV files with
+`tools/make_tight_capacity_variants.py`. That script copies every non-capacity
+file byte-for-byte and changes only `plant_size_upper_limit.csv`.
+
 ## Generate Single-period Data
 
 ```powershell
