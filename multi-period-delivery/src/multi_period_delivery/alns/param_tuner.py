@@ -202,6 +202,10 @@ class ParamAutoTuner:
         # Historical parameter snapshots used to compute
         # direction = value - prev_value.
         self._prev_params: dict[str, dict[str, Any]] = {}
+        #: How many times each operator's baseline has actually moved. Used by
+        #: ``TUNER_MAX_ADJUSTMENTS`` to let a parameter settle instead of
+        #: wandering for the whole run.
+        self._adjust_counts: dict[str, int] = {}
         # Most recent execution-time parameter snapshot recorded by
         # get_operator_params, used to compute the used minus baseline direction.
         self._last_used: dict[str, dict[str, Any]] = {}
@@ -460,7 +464,15 @@ class ParamAutoTuner:
             return ret
 
         # Exploration: random perturbation without writing back to op.params
-        if self.rng.random() < self.exploration_rate:
+        gate = int(getattr(ALNSConfig, "TUNER_EXPLORATION_GATE_USES", 12))
+        exploring = self.rng.random() < self.exploration_rate
+        if gate > 0 and op.usage_count >= gate:
+            # Past the seeding phase a random sample is pure noise: it is never
+            # written back, so it cannot teach anything, and because the
+            # directional update reads ``used - baseline`` it also drags the
+            # baseline in a random direction.
+            exploring = False
+        if exploring:
             sampled = op.params.copy()
             sample_scale = 1.0
             if self.small_instance:
@@ -526,6 +538,14 @@ class ParamAutoTuner:
         if history_len < min_history:
             return
 
+        max_adjust = int(getattr(ALNSConfig, "TUNER_MAX_ADJUSTMENTS", 12))
+        if max_adjust > 0:
+            adjustments = int(getattr(self, "_adjust_counts", {}).get(name, 0))
+            if adjustments >= max_adjust:
+                # The baseline has had its chances; further moves would only
+                # chase noise. Freezing is what lets the parameter settle.
+                return
+
         recent_window = min(20, history_len)
         avg_perf = op.get_avg_performance(window=recent_window)
         if avg_perf <= 0 and history_len < min_history * 2:
@@ -546,6 +566,7 @@ class ParamAutoTuner:
             max_rel_step *= 0.75
 
         used_params = self._last_used.get(name, None)
+        changed = False
         for param_name, value in op.params.items():
             if param_name not in op.ranges:
                 continue
@@ -588,12 +609,16 @@ class ParamAutoTuner:
                 continue
 
             op.params[param_name] = new_value
+            changed = True
 
             if getattr(ALNSConfig, "TUNER_DEBUG", False):
                 print(
                     f"[TUNER] {name}.{param_name}: {value} -> {new_value} "
                     f"(used={used_val}, imp={improvement:.4f}, avg={avg_perf:.4f}, conf={confidence:.2f})"
                 )
+
+        if changed:
+            self._adjust_counts[name] = int(self._adjust_counts.get(name, 0)) + 1
 
         # Save the current parameters for later reference
         if name not in self._prev_params:

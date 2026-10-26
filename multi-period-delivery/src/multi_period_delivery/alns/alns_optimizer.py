@@ -618,6 +618,8 @@ class ALNSOptimizer:
         self.acceptance = None
         self._background_executor: Any = None
         self._ml_retrain_future: Any = None
+        #: Acceptance-aggressiveness bandit (``AcceptanceController``) or None.
+        self.acceptance_bandit: Any = None
         self._incumbent_state_snapshot: SolutionState | None = None
 
     def get_iteration(self) -> int:
@@ -1158,6 +1160,34 @@ class ALNSOptimizer:
             logger.error(f"Failed to register repair operators: {e}")
             raise
 
+    def _make_acceptance_controller(self):
+        """Build the acceptance-aggressiveness bandit, or ``None`` to keep the
+        production annealing schedule untouched."""
+        if not self.is_ml_enabled():
+            return None
+        if not bool(getattr(ALNSConfig, "ML_ACCEPT_ENABLED", True)):
+            return None
+        runtime = float(getattr(ALNSConfig, "MAX_RUNTIME", 0) or 0)
+        floor = float(getattr(ALNSConfig, "ML_BANDIT_MIN_RUNTIME_SECONDS", 90.0))
+        if runtime < floor:
+            # Same rule as operator selection: on budgets too short to collect
+            # evidence, behave exactly like the baseline.
+            return None
+        from .bandit_selector import AcceptanceController
+
+        seed = resolve_run_seed()
+        return AcceptanceController(
+            rnd.default_rng(seed * 137 + 29),
+            multipliers=tuple(
+                float(m)
+                for m in getattr(
+                    ALNSConfig, "ML_ACCEPT_MULTIPLIERS", (0.5, 1.0, 2.0)
+                )
+            ),
+            interval=int(getattr(ALNSConfig, "ML_ACCEPT_INTERVAL", 15)),
+            min_epochs=int(getattr(ALNSConfig, "ML_ACCEPT_MIN_EPOCHS", 3)),
+        )
+
     def _make_ml_bandit(self, alns: ALNS):
         """Return ``(weight_hook, feedback_hook)`` for the contextual bandit.
 
@@ -1532,8 +1562,15 @@ class ALNSOptimizer:
                 start_temperature = max(
                     end_temperature, start_relative * max(reference, 0.0)
                 )
+                self.acceptance_bandit = self._make_acceptance_controller()
                 sa_accept = ProgressCooledAnnealing(
-                    start_temperature, end_temperature
+                    start_temperature,
+                    end_temperature,
+                    multiplier_provider=(
+                        self.acceptance_bandit.multiplier
+                        if self.acceptance_bandit is not None
+                        else None
+                    ),
                 )
                 self.log_printer.print(
                     "Acceptance: progress-cooled annealing "

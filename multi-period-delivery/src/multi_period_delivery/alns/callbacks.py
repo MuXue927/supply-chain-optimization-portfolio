@@ -1646,6 +1646,20 @@ def make_callback_on_iteration(
             except Exception:
                 logger.exception("ML selector handling failed in callback")
 
+            # Acceptance-aggressiveness bandit: one decision per epoch, paid
+            # with the incumbent's gain over that window. Stepped here because
+            # this is the only place that sees both the progress measure and the
+            # current best.
+            controller = getattr(optimizer, "acceptance_bandit", None)
+            if controller is not None:
+                try:
+                    progress = resolve_progress((state,))
+                    objective = state.objective()
+                except STATE_OPERATION_ERRORS as exc:
+                    record_swallowed("callbacks.acceptance_bandit", exc)
+                else:
+                    controller.step(progress=progress, best_objective=objective)
+
             # Finally delegate to tracker.on_iteration when present.
             try:
                 if optimizer.tracker is not None and hasattr(

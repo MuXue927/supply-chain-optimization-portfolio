@@ -260,6 +260,20 @@ class ContextualThompsonBandit:
         """Whether enough trials exist for the weights to mean anything."""
         return self._total >= self._min_samples
 
+    def draws(self, cell: int) -> np.ndarray:
+        """One Beta draw per arm, in arm order."""
+        out = np.empty(self._num_arms, dtype=float)
+        for arm in range(self._num_arms):
+            alpha, beta = self._params(cell, arm)
+            out[arm] = float(self._rng.beta(alpha, beta))
+        return out
+
+    def sample_arm(self, cell: int) -> int | None:
+        """Thompson-sample an arm (``None`` while there is no information)."""
+        if not self.is_ready():
+            return None
+        return int(np.argmax(self.draws(cell)))
+
     # ------------------------------------------------------------------
     # Learning
     # ------------------------------------------------------------------
@@ -433,4 +447,109 @@ class NStepCreditor:
             "bonus": round(self._bonus, 3),
             "credited_improvements": int(self.credited),
             "pending": len(self._pending),
+        }
+
+
+class AcceptanceController:
+    """Bandit over how aggressive the acceptance criterion should be.
+
+    Operator selection was the wrong place to spend learning. A chosen operator
+    affects one iteration and then its influence decays; measured across nine
+    seeds at a fixed 120 iterations the best that reached was "no worse than
+    basic". Acceptance aggressiveness is different: the temperature governs how
+    far the incumbent is allowed to wander, and that effect persists for many
+    iterations, so evidence accumulated about it stays usable.
+
+    Decisions are made at **epochs**, not every iteration: the controller samples
+    a temperature multiplier, holds it for ``interval`` iterations, then pays the
+    arm with the incumbent's improvement over that window. One decision therefore
+    gets one clean, multi-step reward instead of a stream of one-step noise.
+
+    Arms are multipliers on the annealing temperature (hotter accepts more
+    worsening moves). The middle arm is 1.0, so an uninformed controller leaves
+    the production schedule exactly untouched.
+    """
+
+    __slots__ = (
+        "_bandit",
+        "_multipliers",
+        "_interval",
+        "_counter",
+        "_epoch_start",
+        "_arm",
+        "_cell",
+        "_decisions",
+        "_rewards",
+    )
+
+    def __init__(
+        self,
+        rng: np.random.Generator,
+        *,
+        multipliers: tuple[float, ...] = (0.5, 1.0, 2.0),
+        interval: int = 15,
+        prior_strength: float = 4.0,
+        min_epochs: int = 3,
+    ) -> None:
+        values = tuple(float(m) for m in multipliers)
+        if len(values) < 2 or any(not (m > 0.0) for m in values):
+            raise ValueError(
+                f"multipliers must be >= 2 positive values; got {multipliers!r}"
+            )
+        self._multipliers = values
+        self._interval = max(1, int(interval))
+        self._bandit = ContextualThompsonBandit(
+            len(values),
+            rng,
+            prior_strength=prior_strength,
+            min_samples=max(1, int(min_epochs)),
+            tilt_range=(0.5, 2.0),
+        )
+        self._counter = 0
+        self._epoch_start: float | None = None
+        self._arm = values.index(1.0) if 1.0 in values else len(values) // 2
+        self._cell = 0
+        self._decisions = 0
+        self._rewards: list[float] = []
+
+    def multiplier(self) -> float:
+        """The multiplier to apply until the next epoch boundary."""
+        return self._multipliers[self._arm]
+
+    def step(self, *, progress: float, best_objective: float | None) -> float:
+        """Advance one iteration and possibly make a new decision."""
+        self._counter += 1
+        self._cell = ContextualThompsonBandit.cell(progress, 0.5)
+        if best_objective is None:
+            return self.multiplier()
+        if self._epoch_start is None:
+            self._epoch_start = float(best_objective)
+            return self.multiplier()
+        if self._counter % self._interval != 0:
+            return self.multiplier()
+
+        # Close the epoch: pay the arm for what the incumbent achieved meanwhile.
+        start = self._epoch_start
+        end = float(best_objective)
+        scale = max(abs(start), 1.0)
+        gain = (start - end) / scale
+        reward = 0.5 + 0.5 * math.tanh(gain / 0.005) if math.isfinite(gain) else 0.5
+        self._bandit.update(self._cell, self._arm, reward)
+        self._rewards.append(round(float(reward), 4))
+        self._decisions += 1
+
+        chosen = self._bandit.sample_arm(self._cell)
+        if chosen is not None:
+            self._arm = chosen
+        self._epoch_start = end
+        return self.multiplier()
+
+    def statistics(self) -> dict[str, Any]:
+        return {
+            "multipliers": list(self._multipliers),
+            "interval": self._interval,
+            "decisions": self._decisions,
+            "current_multiplier": self.multiplier(),
+            "recent_rewards": self._rewards[-10:],
+            "bandit": self._bandit.statistics(),
         }

@@ -577,6 +577,26 @@ class ALNSConfig:
     # progress, any tilt is pure interference; once it stalls, a nudge is the
     # only thing that can help. 0 disables the trigger (tilt whenever ready).
     ML_BANDIT_STAGNATION_TRIGGER: int = 0
+    # Acceptance-aggressiveness bandit (a second action space, not a retune of
+    # operator selection).
+    #
+    # Operator choice affects one iteration and then decays. The annealing
+    # temperature governs how far the incumbent may wander, so its effect lasts
+    # for many iterations - evidence about it stays useful, which is what an
+    # online learner needs. Decisions are taken once per ``interval`` iterations
+    # and paid with the incumbent's gain over that window.
+    #
+    # ``ML_ACCEPT_ENABLED=False`` keeps the production schedule bit-identical.
+    #
+    # Measured OFF vs ON on the same four seeds at a fixed 120 iterations:
+    # ON cost +3.23 / +4.28 / +10.60 / +19.50 (worse on 4 of 4). The mechanism
+    # works (decisions are taken and paid per epoch) but the search it steers is
+    # already well served by the production schedule. Kept implemented, default
+    # off, so the measurement can be reproduced with one switch.
+    ML_ACCEPT_ENABLED: bool = False
+    ML_ACCEPT_INTERVAL: int = 15
+    ML_ACCEPT_MULTIPLIERS: tuple[float, float, float] = (0.5, 1.0, 2.0)
+    ML_ACCEPT_MIN_EPOCHS: int = 3
     # Inverse L2 strength for the repair classifier.
     ML_CLASSIFIER_C: float = 1.0
     # Repair side uses the operator-parameter interaction slots.
@@ -619,6 +639,20 @@ class ALNSConfig:
     TUNER_STAGNATION_BOOST_THRESHOLD: int = 35
     # Size of that stagnation boost.
     TUNER_STAGNATION_BOOST_FACTOR: float = 0.35
+    # Evidence gate for random parameter exploration.
+    #
+    # Exploration sampled parameters for 35-50% of operator calls for the whole
+    # run, and those samples were **never written back**, so they taught the
+    # tuner nothing - they only injected parameter noise into the search. Worse,
+    # the directional update reads ``used - baseline``, so a random sample also
+    # drags the baseline in a random direction. Exploration is now limited to the
+    # first N uses of an operator, which is when it can actually seed evidence.
+    # 0 disables the gate (old behaviour).
+    TUNER_EXPLORATION_GATE_USES: int = 12
+    # Cap on how many times one operator's baseline may be re-adjusted. Without
+    # it the baseline keeps moving on every lucky iteration, so the parameter
+    # "converges" only when the run ends. 0 disables the cap.
+    TUNER_MAX_ADJUSTMENTS: int = 12
 
     # --------------------------
     # Operator defaults (params + ranges)

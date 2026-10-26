@@ -76,8 +76,15 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M59 代码提交   696 passed / 42 deselected
-覆盖率 66.86%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-26   HEAD = M60 代码提交   705 passed / 42 deselected
+覆盖率 67.04%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M60 两项机制都实现、都无净收益：
+① AcceptanceController（bandit 控退火温度倍率，按 epoch 决策）实测 4/4 变差
+   （+3.23/+4.28/+10.60/+19.50），ML_ACCEPT_ENABLED 默认 False。
+② tuner 修正（探索只在前 12 次使用、基线最多调整 12 次）：同 4 种子 +0.57 → −5.02，
+   扩到 9 种子 +3.04（sd 15.6，4 好 4 坏）。
+共同规律：变差的种子正是 basic 找到深盆地（777/783/786）的那几个 ——
+任何偏离默认轨迹的改动都会把它们推出去；改动只在"浅盆地"种子上有效。
 M59 查出并修复两个真实 bug（ML 由 +9.18 改善到 +1.74）：
 ① bandit 曾与搜索共用 RNG ⇒ 每次抽样都把搜索随机流后移，"同种子对照"失效；
 ② 倾斜钩子走 RouletteWheel.__call__ 而非 SegmentedRouletteWheel.__call__，

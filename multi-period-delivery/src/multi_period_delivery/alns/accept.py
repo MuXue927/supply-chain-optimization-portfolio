@@ -148,7 +148,12 @@ class ProgressCooledAnnealing:
     exactly when the budget is exhausted, independent of the iteration count.
     """
 
-    def __init__(self, start_temperature: float, end_temperature: float):
+    def __init__(
+        self,
+        start_temperature: float,
+        end_temperature: float,
+        multiplier_provider=None,
+    ):
         start = float(start_temperature)
         end = float(end_temperature)
         if start <= 0 or end <= 0:
@@ -159,6 +164,10 @@ class ProgressCooledAnnealing:
             )
         self._start = start
         self._end = end
+        #: Optional ``() -> float`` scaling the schedule for the current epoch.
+        #: Used by ``bandit_selector.AcceptanceController`` to make the search
+        #: hotter or colder; ``None`` leaves the production schedule untouched.
+        self._multiplier_provider = multiplier_provider
 
     @property
     def start_temperature(self) -> float:
@@ -171,7 +180,16 @@ class ProgressCooledAnnealing:
     def temperature(self, progress: float) -> float:
         """Geometric interpolation from the start to the end temperature."""
         fraction = min(1.0, max(0.0, float(progress)))
-        return self._start * (self._end / self._start) ** fraction
+        base = self._start * (self._end / self._start) ** fraction
+        if self._multiplier_provider is None:
+            return base
+        try:
+            scale = float(self._multiplier_provider())
+        except (TypeError, ValueError):
+            return base
+        if not np.isfinite(scale) or scale <= 0.0:
+            return base
+        return base * scale
 
     def __call__(self, rng, best, current, candidate) -> bool:
         progress = resolve_progress((current, candidate, best))

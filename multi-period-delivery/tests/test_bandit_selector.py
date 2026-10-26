@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from multi_period_delivery.alns.bandit_selector import (
+    AcceptanceController,
     ContextualThompsonBandit,
     NStepCreditor,
     dense_reward,
@@ -224,6 +225,68 @@ def test_tilt_range_is_enforced() -> None:
 def test_tilt_range_must_bracket_one() -> None:
     with pytest.raises(ValueError, match="tilt_range"):
         ContextualThompsonBandit(3, np.random.default_rng(0), tilt_range=(2.0, 3.0))
+
+
+# ---------------------------------------------------------------------------
+# Acceptance-aggressiveness controller
+# ---------------------------------------------------------------------------
+
+
+def test_acceptance_controller_starts_neutral() -> None:
+    """Before any evidence the multiplier must be 1.0, not an arbitrary arm."""
+    controller = AcceptanceController(
+        np.random.default_rng(1), multipliers=(0.5, 1.0, 2.0), interval=5
+    )
+
+    assert controller.multiplier() == 1.0
+    assert controller.statistics()["decisions"] == 0
+
+
+def test_acceptance_controller_decides_once_per_epoch() -> None:
+    """One decision per interval, paid with the window's gain, not per step."""
+    controller = AcceptanceController(
+        np.random.default_rng(2), multipliers=(0.5, 1.0, 2.0), interval=5,
+        min_epochs=1,
+    )
+    objective = 100.0
+    for _ in range(4):
+        controller.step(progress=0.1, best_objective=objective)
+    assert controller.statistics()["decisions"] == 0
+
+    controller.step(progress=0.1, best_objective=objective)
+    assert controller.statistics()["decisions"] == 1
+
+
+def test_acceptance_controller_prefers_the_arm_that_improves() -> None:
+    """"Hot" (2.0) keeps winning when only hot epochs produce improvements."""
+    controller = AcceptanceController(
+        np.random.default_rng(3), multipliers=(0.5, 1.0, 2.0), interval=1,
+        min_epochs=1, prior_strength=1.0,
+    )
+    # Drive one arm at a time by forcing the current arm through the bandit.
+    for arm, gain in ((2, 5.0), (0, 0.0), (1, 0.0)) * 6:
+        controller._arm = arm
+        controller.step(progress=0.5, best_objective=100.0)  # seed epoch start
+        controller.step(progress=0.5, best_objective=100.0 - gain)
+
+    stats = controller.statistics()["bandit"]
+    assert stats["global_rate"][2] > stats["global_rate"][0]
+
+
+def test_acceptance_multiplier_scales_the_temperature() -> None:
+    """The annealing schedule must actually see the multiplier."""
+    from multi_period_delivery.alns.accept import ProgressCooledAnnealing
+
+    scale = {"value": 1.0}
+    baseline = ProgressCooledAnnealing(100.0, 1.0)
+    scaled = ProgressCooledAnnealing(100.0, 1.0, multiplier_provider=lambda: scale["value"])
+
+    assert scaled.temperature(0.3) == pytest.approx(baseline.temperature(0.3))
+    scale["value"] = 2.0
+    assert scaled.temperature(0.3) == pytest.approx(2.0 * baseline.temperature(0.3))
+    # A broken provider must fall back, never poison the temperature.
+    scale["value"] = float("nan")
+    assert scaled.temperature(0.3) == pytest.approx(baseline.temperature(0.3))
 
 
 # ---------------------------------------------------------------------------
