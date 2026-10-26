@@ -44,6 +44,7 @@ penalty for a no-op. It is deliberately not the raw improvement.
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Any
 
 import numpy as np
@@ -157,6 +158,8 @@ class ContextualThompsonBandit:
         "_cell_wins",
         "_cell_trials",
         "_total",
+        "_tilt_low",
+        "_tilt_high",
         "sampled",
     )
 
@@ -167,6 +170,7 @@ class ContextualThompsonBandit:
         *,
         prior_strength: float = 4.0,
         min_samples: int = 0,
+        tilt_range: tuple[float, float] = (0.25, 4.0),
     ) -> None:
         if int(num_arms) <= 0:
             raise ValueError(f"num_arms must be positive; got {num_arms!r}")
@@ -174,6 +178,14 @@ class ContextualThompsonBandit:
         self._rng = rng
         self._prior = max(0.0, float(prior_strength))
         self._min_samples = max(0, int(min_samples))
+        low, high = float(tilt_range[0]), float(tilt_range[1])
+        if not (0.0 < low <= 1.0 <= high):
+            raise ValueError(
+                "tilt_range must bracket 1.0 with positive bounds; got "
+                f"{tilt_range!r}"
+            )
+        self._tilt_low = low
+        self._tilt_high = high
         self._global_wins = np.zeros(self._num_arms, dtype=float)
         self._global_trials = np.zeros(self._num_arms, dtype=float)
         self._cell_wins: dict[tuple[int, int], np.ndarray] = {}
@@ -241,7 +253,7 @@ class ContextualThompsonBandit:
             return self.sampled
         weights = draws / mean
         # A hard ceiling keeps one lucky draw from monopolising the wheel.
-        self.sampled = np.clip(weights, 0.25, 4.0)
+        self.sampled = np.clip(weights, self._tilt_low, self._tilt_high)
         return self.sampled
 
     def is_ready(self) -> bool:
@@ -291,4 +303,134 @@ class ContextualThompsonBandit:
             "global_wins": [float(v) for v in self._global_wins],
             "global_rate": [round(self._rate(a), 4) for a in range(self._num_arms)],
             "sampled": [round(float(v), 4) for v in self.sampled],
+        }
+
+
+class NStepCreditor:
+    """Credit the steps that *led* somewhere, not just the step that arrived.
+
+    Every single-step reward tried so far is myopic: it asks "did this operator
+    pay off immediately". That is the wrong question when the best sequences in
+    this search are chains - a destroy that removes an awkward cluster only pays
+    off two or three placements later. Measured evidence for the mismatch: at a
+    fixed 120 iterations, basic reached 787.23 and 777.82 on two seeds while both
+    supervised ML and the single-step bandit stalled around 805. The ML variants
+    were not failing to *learn*; they were learning the wrong thing, and their
+    preference then blocked the road that led deeper.
+
+    This class keeps a short window of recent decisions. When the search reaches
+    a new global best, every decision still in the window receives a decayed
+    share of the credit, with the most recent step weighted highest.
+
+    Parameters
+    ----------
+    horizon:
+        How many recent decisions can share credit for one improvement.
+    decay:
+        Geometric factor per step back (``decay ** age``).
+    bonus:
+        Peak credit granted to the step that directly produced the best. Kept
+        below 1.0 because these are extra trials layered on the dense reward.
+    min_relative_gain:
+        Improvement (relative to the incumbent) below which nothing is credited.
+        Prevents "best improved by 1e-9" from flooding the posterior with wins.
+    """
+
+    __slots__ = ("_pending", "_horizon", "_decay", "_bonus", "_min_gain", "credited")
+
+    def __init__(
+        self,
+        *,
+        horizon: int = 6,
+        decay: float = 0.6,
+        bonus: float = 0.6,
+        min_relative_gain: float = 1e-4,
+    ) -> None:
+        self._horizon = max(1, int(horizon))
+        self._decay = min(1.0, max(0.0, float(decay)))
+        self._bonus = min(1.0, max(0.0, float(bonus)))
+        self._min_gain = max(0.0, float(min_relative_gain))
+        self._pending: deque[tuple[int, int, int, float, float]] = deque(
+            maxlen=self._horizon
+        )
+        #: How many improvements have been distributed (diagnostics).
+        self.credited = 0
+
+    def push(
+        self,
+        cell: int,
+        destroy_idx: int,
+        repair_idx: int,
+        destroy_reward: float,
+        repair_reward: float,
+    ) -> None:
+        """Remember one decision in case a later step capitalises on it."""
+        self._pending.append(
+            (
+                int(cell),
+                int(destroy_idx),
+                int(repair_idx),
+                float(destroy_reward),
+                float(repair_reward),
+            )
+        )
+
+    def bonus_for(
+        self,
+        bandits: dict[str, ContextualThompsonBandit],
+        *,
+        reference: float | None,
+        candidate: float | None,
+    ) -> float:
+        """Distribute credit if ``candidate`` is a large enough improvement.
+
+        Returns the peak bonus applied (0.0 when nothing was credited), which
+        the caller reports so the mechanism is visible in run statistics.
+        """
+        if reference is None or candidate is None:
+            return 0.0
+        try:
+            ref = float(reference)
+            cand = float(candidate)
+        except (TypeError, ValueError):
+            return 0.0
+        if not (math.isfinite(ref) and math.isfinite(cand)):
+            return 0.0
+        scale = max(abs(ref), 1.0)
+        gain = (ref - cand) / scale
+        if not math.isfinite(gain) or gain < self._min_gain:
+            return 0.0
+
+        destroy_bandit = bandits.get("destroy")
+        repair_bandit = bandits.get("repair")
+        if destroy_bandit is None or repair_bandit is None:
+            return 0.0
+        # Saturation: a huge improvement is not worth proportionally more credit
+        # than a solid one, or one lucky leap would dominate the whole posterior.
+        strength = min(1.0, gain / 0.02)
+        peak = self._bonus * strength
+        entries = list(self._pending)
+        for age, (cell, d_idx, r_idx, d_reward, r_reward) in enumerate(
+            reversed(entries)
+        ):
+            share = peak * (self._decay**age)
+            if share <= 0.0:
+                continue
+            destroy_bandit.update(
+                cell, d_idx, min(1.0, max(0.0, d_reward + share))
+            )
+            repair_bandit.update(
+                cell, r_idx, min(1.0, max(0.0, r_reward + share))
+            )
+        if peak > 0.0:
+            self.credited += 1
+        return peak
+
+    def statistics(self) -> dict[str, Any]:
+        return {
+            "horizon": self._horizon,
+            "decay": round(self._decay, 3),
+            "bonus": round(self._bonus, 3),
+            "credited_improvements": int(self.credited),
+            "pending": len(self._pending),
         }

@@ -1071,6 +1071,8 @@ def test_ml_only_mode_builds_a_selector_without_a_tuner(
     """The optimizer must build ML-only mode with no ``ParamAutoTuner``."""
     monkeypatch.setattr(ALNSConfig, "ENABLE_PARAM_TUNER", False)
     monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", True)
+    # This exercises the supervised path; the bandit builds no selector.
+    monkeypatch.setattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised")
     monkeypatch.setattr(ALNSConfig, "MAX_ITERATIONS", 1)
     monkeypatch.setattr(ALNSConfig, "DYNAMIC_MAX_ITERATIONS_PER_SECOND", 0.0)
     monkeypatch.setattr(ALNSConfig, "DYNAMIC_MAX_ITERATION_BUFFER", 0)

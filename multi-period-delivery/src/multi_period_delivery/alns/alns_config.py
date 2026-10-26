@@ -532,7 +532,7 @@ class ALNSConfig:
     # The supervised path measured worse than no model at all
     # (ml - basic = +9.18, t = 1.92), so the bandit is the intended replacement;
     # it stays opt-in until it has been measured on the same clean protocol.
-    ML_SELECTOR_KIND: str = "supervised"
+    ML_SELECTOR_KIND: str = "bandit"
     # Pseudo-observations behind the bandit's shrinkage towards each arm's
     # global success rate. Higher keeps sparse cells closer to the arm mean.
     ML_BANDIT_PRIOR: float = 4.0
@@ -543,6 +543,40 @@ class ALNSConfig:
     # it cannot collect enough trials to pay for itself, and the honest action is
     # to behave exactly like basic.
     ML_BANDIT_MIN_RUNTIME_SECONDS: float = 90.0
+    # How far the bandit may pull each operator's weight away from the wheel's
+    # own value. 1.0 on either side means "no opinion for this operator".
+    #
+    # The first bandit used (0.25, 4.0) - a 16x spread - and lost to basic by
+    # +8.28 on five seeds. Diagnosis: the tilt was strong enough to override the
+    # wheel's accumulated credit, which is what allows the search to walk the
+    # deep chains (basic reached 787/778 on two seeds; every ML variant stalled
+    # near 805). A nudge keeps the wheel authoritative and lets the bandit only
+    # break near-ties.
+    ML_BANDIT_TILT_LOW: float = 0.75
+    ML_BANDIT_TILT_HIGH: float = 1.33
+    # n-step credit assignment: how many recent decisions may share credit for
+    # one new global best, the geometric decay per step back, and the peak bonus.
+    ML_BANDIT_NSTEP_HORIZON: int = 20
+    ML_BANDIT_NSTEP_DECAY: float = 0.9
+    ML_BANDIT_NSTEP_BONUS: float = 0.6
+    # Progress fraction before the bandit may tilt at all.
+    #
+    # Every losing run so far has the same shape: basic stumbles into a deep
+    # basin (787.23 and 777.82 on two seeds) while every ML variant stalls near
+    # 805. The deep basins are found *early*, when the SA temperature is still
+    # high and the wheel is still nearly uniform; tilting there removes exactly
+    # the diversity that finds them. Restricting the tilt to the late, refining
+    # half of the run keeps the exploration phase identical to basic.
+    ML_BANDIT_MIN_PROGRESS: float = 0.5
+    # Tilt only after this many iterations without a new global best.
+    #
+    # The late-progress gate fixed most of the damage (ml-basic went +8.28 ->
+    # +0.96, winning 3/5 seeds) but one seed still lost 18.4: basic found its
+    # deep basin *late*, so a time-based gate still cut into it. Stagnation is
+    # the actual condition ML should react to: while the search is still making
+    # progress, any tilt is pure interference; once it stalls, a nudge is the
+    # only thing that can help. 0 disables the trigger (tilt whenever ready).
+    ML_BANDIT_STAGNATION_TRIGGER: int = 0
     # Inverse L2 strength for the repair classifier.
     ML_CLASSIFIER_C: float = 1.0
     # Repair side uses the operator-parameter interaction slots.

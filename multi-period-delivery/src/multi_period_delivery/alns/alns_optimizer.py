@@ -208,22 +208,40 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
             except STATE_OPERATION_ERRORS as exc:
                 record_swallowed("alns_optimizer.feedback_hook", exc)
 
-    def _draw(self, rng, best, curr):
+    def _draw(self, rng, best, curr, *, segmented: bool = False):
         """Draw from the wheel, applying the optional bandit tilt for one draw.
 
         The tilt is applied to a *copy* of the weights and undone immediately,
         so the bandit's opinion never compounds into the credit the wheel is
         accumulating from actual outcomes.
+
+        ``segmented`` selects which parent's ``__call__`` performs the draw.
+        That flag is not cosmetic: ``SegmentedRouletteWheel.__call__`` is what
+        advances the iteration counter and refreshes the weights from each
+        segment's accumulated credit. Calling ``RouletteWheel.__call__``
+        directly skips that bookkeeping, so the wheel keeps its initial uniform
+        weights forever. That is exactly what happened when the tilt first
+        shipped: "ml" was not "basic plus a nudge", it was "a frozen uniform
+        wheel plus a nudge", which is why every ML run converged to the same
+        ~805 attractor while basic reached 787 and 778 on two seeds.
         """
+        # ``super()`` without arguments only works lexically inside the method,
+        # not inside a nested lambda, so resolve it here.
+        parent = super()
+        fallback = (
+            (lambda: parent.__call__(rng, best, curr))
+            if segmented
+            else (lambda: RouletteWheel.__call__(self, rng, best, curr))
+        )
         if self._weight_hook is None:
-            return RouletteWheel.__call__(self, rng, best, curr)
+            return fallback()
         try:
             d_mult, r_mult = self._weight_hook(best, curr)
         except STATE_OPERATION_ERRORS as exc:
             record_swallowed("alns_optimizer.weight_hook", exc)
-            return RouletteWheel.__call__(self, rng, best, curr)
+            return fallback()
         if d_mult is None and r_mult is None:
-            return RouletteWheel.__call__(self, rng, best, curr)
+            return fallback()
         saved_d = self._d_weights
         saved_r = self._r_weights
         try:
@@ -231,7 +249,7 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
                 self._d_weights = saved_d * d_mult
             if r_mult is not None:
                 self._r_weights = saved_r * r_mult
-            return RouletteWheel.__call__(self, rng, best, curr)
+            return fallback()
         finally:
             self._d_weights = saved_d
             self._r_weights = saved_r
@@ -299,14 +317,15 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
                     self._r_seg_weights, self._r_seg_calls
                 )
                 self._reset_segment_weights()
-            return self._draw(rng, best, curr)
+            return self._draw(rng, best, curr, segmented=False)
 
         if self._normalisation == "sum":
             # Unchanged path: let the library do exactly what it did before.
             if self._weight_hook is None:
                 return super().__call__(rng, best, curr)
-            self._iter += 1
-            return self._draw(rng, best, curr)
+            # ``super().__call__`` owns the segment bookkeeping *and* the draw;
+            # it must run with the tilt applied, so let it do both.
+            return self._draw(rng, best, curr, segmented=True)
 
         self._iter += 1
         if self._iter % self._seg_length == 0:
@@ -322,7 +341,7 @@ class NoOpAwareSegmentedRouletteWheel(SegmentedRouletteWheel):
 
         # Skip the parent's segment bookkeeping: it was just done above, and
         # letting it run would apply a second, unnormalised update.
-        return self._draw(rng, best, curr)
+        return self._draw(rng, best, curr, segmented=False)
 
 
 class _NoOpFlagPreservingRepair:
@@ -1156,26 +1175,61 @@ class ALNSOptimizer:
         if runtime < floor:
             return None, None
 
-        from .bandit_selector import ContextualThompsonBandit, dense_reward
+        from .bandit_selector import (
+            ContextualThompsonBandit,
+            NStepCreditor,
+            dense_reward,
+        )
 
         destroy_names = list(alns._d_ops)
         repair_names = list(alns._r_ops)
         prior = float(getattr(ALNSConfig, "ML_BANDIT_PRIOR", 4.0))
         min_trials = int(getattr(ALNSConfig, "ML_BANDIT_MIN_TRIALS", 30))
-        rng = getattr(self, "rng", None)
-        if rng is None:
+        tilt_range = (
+            float(getattr(ALNSConfig, "ML_BANDIT_TILT_LOW", 0.75)),
+            float(getattr(ALNSConfig, "ML_BANDIT_TILT_HIGH", 1.33)),
+        )
+        search_rng = getattr(self, "rng", None)
+        if search_rng is None:
             return None, None
+        # A dedicated stream for the bandit. Sharing the search RNG meant every
+        # Thompson draw shifted every subsequent random choice in the search, so
+        # "ml vs basic at the same seed" was never the same trajectory plus a
+        # tilt - the whole path diverged, which is why seed-level differences
+        # were as large as +27 on a single seed. Deriving the stream from the run
+        # seed keeps runs reproducible while leaving the search stream untouched.
+        bandit_rng = rnd.default_rng(resolve_run_seed() * 31 + 17)
         destroy_bandit = ContextualThompsonBandit(
-            len(destroy_names), rng, prior_strength=prior, min_samples=min_trials
+            len(destroy_names),
+            bandit_rng,
+            prior_strength=prior,
+            min_samples=min_trials,
+            tilt_range=tilt_range,
         )
         repair_bandit = ContextualThompsonBandit(
-            len(repair_names), rng, prior_strength=prior, min_samples=min_trials
+            len(repair_names),
+            bandit_rng,
+            prior_strength=prior,
+            min_samples=min_trials,
+            tilt_range=tilt_range,
         )
-        state = {"cell": 0}
+        creditor = NStepCreditor(
+            horizon=int(getattr(ALNSConfig, "ML_BANDIT_NSTEP_HORIZON", 6)),
+            decay=float(getattr(ALNSConfig, "ML_BANDIT_NSTEP_DECAY", 0.6)),
+            bonus=float(getattr(ALNSConfig, "ML_BANDIT_NSTEP_BONUS", 0.6)),
+        )
+        state: dict[str, Any] = {
+            "cell": 0,
+            "reference": None,
+            "best": None,
+            "iter": 0,
+            "last_improve_iter": 0,
+        }
         self.ml_bandits = {
             "destroy": destroy_bandit,
             "repair": repair_bandit,
         }
+        self.ml_creditor = creditor
 
         def _cell_for(current) -> int:
             progress = resolve_progress((current,))
@@ -1195,8 +1249,27 @@ class ALNSOptimizer:
             current = curr if curr is not None else best
             if current is None:
                 return None, None
+            state["iter"] = int(state.get("iter", 0)) + 1
             cell = _cell_for(current)
             state["cell"] = cell
+            # Stay neutral during the exploration phase: a tilt there removes
+            # the diversity that finds the deep basins (measured: basic reaches
+            # 787/778 on seeds where every tilted variant stalls near 805).
+            min_progress = float(
+                getattr(ALNSConfig, "ML_BANDIT_MIN_PROGRESS", 0.0)
+            )
+            if min_progress > 0.0:
+                progress = resolve_progress((current,))
+                if progress < min_progress:
+                    return None, None
+            # While the search is still producing new bests, a tilt is pure
+            # interference: it was measured to block the deep basins that basic
+            # stumbles into. Only a stalled search needs a nudge.
+            trigger = int(getattr(ALNSConfig, "ML_BANDIT_STAGNATION_TRIGGER", 0))
+            if trigger > 0:
+                idle = int(state["iter"]) - int(state["last_improve_iter"])
+                if idle < trigger:
+                    return None, None
             # Reference objective for the dense reward: the incumbent *before*
             # this iteration's move. Captured here because the feedback hook runs
             # after acceptance and no longer sees the pre-move value.
@@ -1204,6 +1277,10 @@ class ALNSOptimizer:
                 state["reference"] = float(current.objective())
             except STATE_OPERATION_ERRORS:
                 state["reference"] = None
+            try:
+                state["best"] = float(best.objective()) if best is not None else None
+            except STATE_OPERATION_ERRORS:
+                state["best"] = None
             return destroy_bandit.weights(cell), repair_bandit.weights(cell)
 
         def feedback_hook(d_idx, r_idx, outcome, cand):
@@ -1213,26 +1290,39 @@ class ALNSOptimizer:
             except STATE_OPERATION_ERRORS:
                 candidate = None
             cell = state["cell"]
+            destroy_reward = dense_reward(
+                outcome,
+                reference=reference,
+                candidate=candidate,
+                noop=bool(getattr(cand, "_destroy_noop", False)),
+            )
+            repair_reward = dense_reward(
+                outcome,
+                reference=reference,
+                candidate=candidate,
+                noop=bool(getattr(cand, "_repair_noop", False)),
+            )
             destroy_bandit.update(
-                cell,
-                int(d_idx),
-                dense_reward(
-                    outcome,
-                    reference=reference,
-                    candidate=candidate,
-                    noop=bool(getattr(cand, "_destroy_noop", False)),
-                ),
+                cell, int(d_idx), destroy_reward
             )
             repair_bandit.update(
-                cell,
-                int(r_idx),
-                dense_reward(
-                    outcome,
-                    reference=reference,
-                    candidate=candidate,
-                    noop=bool(getattr(cand, "_repair_noop", False)),
-                ),
+                cell, int(r_idx), repair_reward
             )
+            # n-step: the decision that *reaches* a new global best rarely did so
+            # alone; the preceding steps set it up. Credit them while they are
+            # still in the window.
+            best_before = state.get("best")
+            if candidate is not None and best_before is not None:
+                if candidate < best_before - abs(best_before) * 1e-6:
+                    creditor_bonus = creditor.bonus_for(
+                        self.ml_bandits,
+                        reference=reference,
+                        candidate=candidate,
+                    )
+                    state["credited_bonus"] = creditor_bonus
+                    state["best"] = candidate
+                    state["last_improve_iter"] = int(state.get("iter", 0))
+            creditor.push(cell, int(d_idx), int(r_idx), destroy_reward, repair_reward)
 
         return weight_hook, feedback_hook
 

@@ -76,8 +76,17 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-26   HEAD = M58 代码提交   685 passed / 42 deselected
-覆盖率 66.80%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-26   HEAD = M59 代码提交   696 passed / 42 deselected
+覆盖率 66.86%（门禁 56%）   ruff 干净   盲 except Exception 110（原 249）
+M59 查出并修复两个真实 bug（ML 由 +9.18 改善到 +1.74）：
+① bandit 曾与搜索共用 RNG ⇒ 每次抽样都把搜索随机流后移，"同种子对照"失效；
+② 倾斜钩子走 RouletteWheel.__call__ 而非 SegmentedRouletteWheel.__call__，
+   跳过分段学分 ⇒ 轮盘权重永远初始均匀。此前 ml 总停在 805.09，basic 能到 787/778。
+修复后 s99 的 full 806.55 → 784.96；关倾斜时 ml 与 basic 逐位相同（796.20）。
+n-step 信用（窗口 20/衰减 0.9）+ 窄倾斜（0.75–1.33）+ 后期门 0.5：
+ml−basic n=9 均值 +1.74（t=0.53，3/9 更好）——持平，不是优势。
+仍未达成 full > ML > tuner > basic；tuner 是 full 的主要拖累。
+默认已切到 bandit 路径（ML_SELECTOR_KIND="bandit"）。
 M58 分层 Thompson bandit（alns/bandit_selector.py）+ 轮盘乘性修正：
 bandit 模式不再付监督式的双份开销（147s → 76s，basic 90s）。
 判据（medium/120轮/5种子/确定性）：bandit ml−basic +8.28（t=1.33，1/5）、
