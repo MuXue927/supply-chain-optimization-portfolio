@@ -616,6 +616,41 @@ Regression tests: `multi-period-delivery/tests/test_inventory_freshness.py`,
 `test_incremental_inventory_check.py`, `test_shipped_cache.py`,
 `test_inventory_cache_helpers.py`, `test_sikt_dict.py`.
 
+### 3.9 Operator attribution needs the operator's ecology and a same-instance control
+
+**Symptom:** An inherited ALNS operator is measured as a 100% no-op, then remains
+inconclusive after the missing cost or data signal is added. Changing capacity
+and enabling a removal operator in the same arm mixes two causal factors.
+
+**Root cause:** The operator's trigger, its economic signal, and the search
+landscape are separate assumptions. `infeasible_removal` requires a search that
+admits infeasible intermediate states; `surplus_inventory_removal` needs both a
+reachable capacity trigger and a holding-cost signal. Supplying the signal makes
+the operator runnable but does not by itself measure its contribution.
+
+**Remediation:** First verify the required framework and objective signal, then
+compare the **same instance and same objective** with the operator registered
+versus omitted from registration. A zero weight is not a disable: it still
+consumes roulette draws. The observation switch used here is
+`DISABLED_DESTROY_OPERATORS`, whose default empty tuple preserves the historical
+registration and trajectory.
+
+**Evidence required:**
+
+- the default switch path reproduces an archived cost, fingerprint, and
+  per-iteration trace bit-for-bit;
+- a disabled operator is absent from the registry and the registered-count;
+- the attribution protocol has paired seeds, fixed iterations, a fixed hash
+  seed, and a pre-registered confidence-interval decision rule;
+- the result is reported on one instance before and after only that operator,
+  never from a combined "tight data plus new objective plus operator" arm.
+
+In the measured medium instance, the omitted operator arm minus the enabled arm
+was `+0.326` with a 95% CI of `[-2.224, +2.876]` (6 wins, 8 losses, 1 tie)
+across 15 paired seeds. With the operator enabled it called 354 times and
+triggered 354 times. The outcome is therefore "reachable but no net benefit",
+not "dead code".
+
 ---
 
 ## 4. Git and repository hygiene lessons
