@@ -897,6 +897,32 @@ class ALNSOptimizer:
         try:
             # Load base parameters.
             destroy_params = ALNSConfig.get_destroy_params()
+            disabled_destroy = frozenset(
+                str(name)
+                for name in (
+                    getattr(ALNSConfig, "DISABLED_DESTROY_OPERATORS", ()) or ()
+                )
+            )
+
+            def register_destroy(operator) -> bool:
+                """Register one destroy operator unless its name is disabled."""
+                name = str(
+                    getattr(
+                        operator,
+                        "__name__",
+                        getattr(operator, "name", type(operator).__name__),
+                    )
+                )
+                if name in disabled_destroy:
+                    self.log_printer.print(
+                        f"Skipping disabled destroy operator: {name}"
+                    )
+                    return False
+                alns.add_destroy_operator(operator)
+                self._num_registered_destroy_ops = (
+                    getattr(self, "_num_registered_destroy_ops", 0) + 1
+                )
+                return True
 
             # Add the ML destroy operator when the selector is enabled. The
             # tuner is optional here: with ``ENABLE_PARAM_TUNER=False`` the
@@ -908,35 +934,23 @@ class ALNSOptimizer:
                     name="ml_based_destroy",
                     min_sample_size=getattr(ALNSConfig, "ML_INITIAL_SAMPLE_SIZE", 20),
                 )
-                alns.add_destroy_operator(ml_destroy_op)
-                self._num_registered_destroy_ops = (
-                    getattr(self, "_num_registered_destroy_ops", 0) + 1
-                )
+                register_destroy(ml_destroy_op)
 
             # Register random removal through a wrapper factory.
             random_removal_op = create_random_removal(
                 destroy_params["random_removal_degree"]
             )
-            alns.add_destroy_operator(random_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(random_removal_op)
 
             # Register Shaw removal through a wrapper factory.
             shaw_removal_op = create_shaw_removal(destroy_params["shaw_removal_degree"])
-            alns.add_destroy_operator(shaw_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(shaw_removal_op)
 
             # Register periodic Shaw removal through its parameterized factory.
             periodic_shaw_removal_op = create_periodic_shaw_removal(
                 **destroy_params.get("periodic_shaw_params", {})
             )
-            alns.add_destroy_operator(periodic_shaw_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(periodic_shaw_removal_op)
 
             # Register remaining parameterized operators through their factories.
             # worst_removal: prefer operator-level default if not provided in DESTROY_DEFAULTS
@@ -948,10 +962,7 @@ class ALNSOptimizer:
                     "worst_removal_degree", worst_defaults.get("degree", 0.25)
                 )
             )
-            alns.add_destroy_operator(worst_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(worst_removal_op)
 
             # surplus_inventory_removal: use operator default fallback
             surplus_defaults = ALNSConfig.get_operator_default(
@@ -963,10 +974,7 @@ class ALNSOptimizer:
                     surplus_defaults.get("degree", 0.25),
                 )
             )
-            alns.add_destroy_operator(surplus_inventory_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(surplus_inventory_removal_op)
 
             # path_removal: use operator default fallback
             path_defaults = ALNSConfig.get_operator_default("path_removal").get(
@@ -977,10 +985,7 @@ class ALNSOptimizer:
                     "path_removal_degree", path_defaults.get("degree", 0.5)
                 )
             )
-            alns.add_destroy_operator(path_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(path_removal_op)
 
             # cross_period_dealer_removal: large-jump neighborhood for cross-period reconstruction
             block_defaults = ALNSConfig.get_operator_default(
@@ -992,10 +997,7 @@ class ALNSOptimizer:
                     block_defaults.get("degree", 0.45),
                 )
             )
-            alns.add_destroy_operator(cross_period_dealer_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(cross_period_dealer_removal_op)
 
             # period_range_removal: contiguous time-window removal
             period_range_defaults = ALNSConfig.get_operator_default(
@@ -1011,16 +1013,10 @@ class ALNSOptimizer:
                     period_range_defaults.get("window_ratio", 0.30),
                 ),
             )
-            alns.add_destroy_operator(period_range_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(period_range_removal_op)
 
             # infeasible_removal takes no parameters; wrap it for compatibility.
-            alns.add_destroy_operator(wrap_operator_no_args(infeasible_removal))
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(wrap_operator_no_args(infeasible_removal))
 
             # inventory_level_removal: remove deliveries around abnormal dealer inventory.
             inv_defaults = ALNSConfig.get_operator_default(
@@ -1032,10 +1028,7 @@ class ALNSOptimizer:
                     inv_defaults.get("degree", 0.25),
                 )
             )
-            alns.add_destroy_operator(inventory_level_removal_op)
-            self._num_registered_destroy_ops = (
-                getattr(self, "_num_registered_destroy_ops", 0) + 1
-            )
+            register_destroy(inventory_level_removal_op)
 
             self.log_printer.print("All destroy operators registered.")
 

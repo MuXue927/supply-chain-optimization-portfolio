@@ -60,6 +60,13 @@ class ALNSConfig:
     QUIET_OPERATOR_LOGS: bool = True
     # Silence the verbose initial-solution construction output.
     QUIET_INITIAL_SOLUTION_LOGS: bool = True
+    # Destroy operators omitted from the roulette entirely, by registration name.
+    # This is stricter than a zero weight: a disabled operator is not registered,
+    # so it neither executes nor consumes a roulette draw. The default is empty,
+    # preserving the historical operator set and trajectory bit-for-bit.
+    # Intended for attribution experiments; supervised ML keeps a static
+    # operator map and is outside this switch's measured scope.
+    DISABLED_DESTROY_OPERATORS: tuple[str, ...] = ()
 
     # --------------------------
     # Dataset defaults (overwritten by the CLI --scale / --dataset-id)

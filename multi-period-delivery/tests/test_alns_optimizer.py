@@ -9,6 +9,8 @@ several tests that then exercise the reporting steps of that same run.
 from __future__ import annotations
 
 import builtins
+import hashlib
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +25,7 @@ from multi_period_delivery.alns.alns_optimizer import (
     safe_state_snapshot,
     suppress_noisy_operator_stdout,
 )
+from multi_period_delivery.alns.alnstrack import ALNSTracker
 from multi_period_delivery.alns.param_tuner import ParamAutoTuner
 
 
@@ -167,6 +170,133 @@ def test_setup_alns_registers_destroy_and_repair_operators(tmp_path: Path) -> No
     assert alns is not None
     assert optimizer._num_registered_destroy_ops > 0
     assert optimizer._num_registered_repair_ops > 0
+
+
+def test_disabled_destroy_operators_defaults_to_empty() -> None:
+    assert ALNSConfig.DISABLED_DESTROY_OPERATORS == ()
+
+
+def test_disabled_destroy_operators_are_not_registered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disabling removes the operator instead of giving it zero weight."""
+    monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", False)
+    monkeypatch.setattr(ALNSConfig, "DISABLED_DESTROY_OPERATORS", ())
+    optimizer = _optimizer(tmp_path / "enabled")
+    optimizer.load_data("dataset_1")
+    enabled = optimizer.setup_alns()
+    enabled_names = [name for name, _ in enabled.destroy_operators]
+    enabled_count = optimizer._num_registered_destroy_ops
+
+    assert "surplus_inventory_removal" in enabled_names
+
+    monkeypatch.setattr(
+        ALNSConfig,
+        "DISABLED_DESTROY_OPERATORS",
+        ("surplus_inventory_removal",),
+    )
+    optimizer = _optimizer(tmp_path / "disabled")
+    optimizer.load_data("dataset_1")
+    disabled = optimizer.setup_alns()
+    disabled_names = [name for name, _ in disabled.destroy_operators]
+
+    assert "surplus_inventory_removal" not in disabled_names
+    assert disabled_names == [
+        name for name in enabled_names if name != "surplus_inventory_removal"
+    ]
+    assert optimizer._num_registered_destroy_ops == enabled_count - 1
+
+
+def _state_fingerprint(state) -> str:
+    digest = hashlib.sha256()
+    for vehicle in state.vehicles:
+        digest.update(
+            json.dumps(
+                [
+                    vehicle.fact_id,
+                    vehicle.dealer_id,
+                    vehicle.type,
+                    int(vehicle.day),
+                    sorted(
+                        [sku, int(day), int(qty)]
+                        for (sku, day), qty in vehicle.cargo.items()
+                    ),
+                ],
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    return digest.hexdigest()
+
+
+def test_default_destroy_registration_preserves_the_legacy_trajectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty disable list must leave the archived small run bit-for-bit intact."""
+    pinned = {
+        "DATASET_TYPE": "small",
+        "DATASET_IDX": 1,
+        "MAX_ITERATIONS": 12,
+        "HARD_ITERATION_BUDGET": True,
+        "MAX_RUNTIME": 900.0,
+        "DYNAMIC_MAX_ITERATIONS_PER_SECOND": 0.0,
+        "DYNAMIC_MAX_ITERATION_BUFFER": 0,
+        "DYNAMIC_MAX_ITERATION_SAFETY_FACTOR": 1.0,
+        "PROGRESS_BASIS": "iteration",
+        "SEED": 42,
+        "ENABLE_PARAM_TUNER": False,
+        "ENABLE_ML_OPERATORS": False,
+        "ENABLE_REPORTS": False,
+        "QUIET_OPERATOR_LOGS": True,
+        "QUIET_INITIAL_SOLUTION_LOGS": True,
+        "INVENTORY_HOLDING_COST": 0.0,
+        "DISABLED_DESTROY_OPERATORS": (),
+    }
+    for name, value in pinned.items():
+        monkeypatch.setattr(ALNSConfig, name, value)
+
+    class _SilentPrinter:
+        def print(self, *_args, **_kwargs):
+            return None
+
+        def print_title(self, *_args, **_kwargs):
+            return None
+
+    optimizer = ALNSOptimizer(
+        input_file_loc=str(_small_dataset_dir()),
+        output_file_loc=str(tmp_path / "legacy"),
+    )
+    optimizer.log_printer = _SilentPrinter()
+    trace: list[float] = []
+    original = ALNSTracker.on_iteration
+
+    def recording(self, state, rng, **kwargs):
+        result = original(self, state, rng, **kwargs)
+        trace.append(round(float(self.best_actual_obj), 6))
+        return result
+
+    monkeypatch.setattr(ALNSTracker, "on_iteration", recording)
+    assert optimizer.run_optimization("dataset_1") is True
+
+    best = optimizer.best_solution
+    assert best is not None
+    assert round(float(best.calculate_cost()), 6) == 41.52
+    assert _state_fingerprint(best) == (
+        "e0377bfd03b99fc4c8f12ccfe7af937114bb1a26da8b94c47e652b43fee9a75d"
+    )
+    assert trace == [
+        51.2,
+        43.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+        41.52,
+    ]
 
 
 # ---------------------------------------------------------------------------
