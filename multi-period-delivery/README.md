@@ -41,6 +41,11 @@ archived objectives bit-for-bit unchanged; use a positive value only with the
 tight-capacity variants, where it creates the cost signal that the surplus
 inventory operator was designed to respond to.
 
+For attribution experiments, `DISABLED_DESTROY_OPERATORS` (default: empty
+tuple) omits named destroy operators from registration. An omitted operator
+does not execute and does not consume a roulette draw; it is not the same as a
+zero weight. The default preserves the historical operator set and trajectory.
+
 The ALNS implementation includes 10 destroy operators, 9 repair operators,
 plus a minimum-load fill post-processing pass,
 adaptive operator weights, parameter tuning, feasibility repair, and
