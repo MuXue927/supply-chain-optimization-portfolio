@@ -115,7 +115,7 @@ from .alns_config import default_config as ALNSConfig
 # =========================
 from .errors import STATE_OPERATION_ERRORS
 from .param_tuner import ParamAutoTuner
-from .progress import resolve_progress
+from .progress import basis_name, resolve_progress
 from .swallowed import record_swallowed
 
 #: Exceptions a ``scaler.transform`` + ``model.predict`` pair can raise for this
@@ -389,7 +389,12 @@ class MLOperatorSelector:
             self._suppress_feedback = previous
 
     def warmup_time_limit_seconds(self) -> float:
-        """Wall-clock budget warm-up sampling may consume in total."""
+        """Wall-clock budget warm-up sampling may consume in total.
+
+        Only the runtime basis uses this. Under ``PROGRESS_BASIS="iteration"``
+        the limit is a fraction of the planned iterations instead, because
+        seconds spent warming up would otherwise depend on the host.
+        """
         fraction = float(getattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.15))
         budget = float(getattr(ALNSConfig, "MAX_RUNTIME", 0) or 0)
         if fraction <= 0.0 or budget <= 0.0:
@@ -397,7 +402,26 @@ class MLOperatorSelector:
         return fraction * budget
 
     def warmup_budget_exhausted(self) -> bool:
-        """Whether warm-up must stop starting new sampling trials."""
+        """Whether warm-up must stop starting new sampling trials.
+
+        Follows ``PROGRESS_BASIS``: the runtime basis keeps the historical
+        accumulated-seconds comparison, the iteration basis stops once warm-up
+        has consumed its share of the planned iterations. Reading only the clock
+        here would let a slow host exhaust a fixed-iteration run's warm-up budget
+        early - the same class of defect as the tuner's destroy-degree schedule.
+        """
+        fraction = float(
+            getattr(ALNSConfig, "ML_WARMUP_BUDGET_FRACTION", 0.15)
+        )
+        if fraction <= 0.0:
+            return True
+        if basis_name() == "iteration":
+            planned = int(getattr(self, "max_iterations", 0) or 0)
+            if planned <= 0:
+                # The run has not told us its iteration budget yet; stopping
+                # here would disable warm-up for the whole run.
+                return False
+            return float(getattr(self, "iteration", 0)) / planned >= fraction
         limit = self.warmup_time_limit_seconds()
         if limit <= 0.0:
             return True

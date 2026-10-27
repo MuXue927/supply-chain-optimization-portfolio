@@ -66,7 +66,11 @@ from .errors import STATE_OPERATION_ERRORS
 # Internal project dependencies
 # =========================
 from .InputDataALNS import DataALNS
-from .progress import progress_from_elapsed
+from .progress import (
+    basis_name,
+    iteration_progress_from_counts,
+    progress_from_elapsed,
+)
 
 
 # ---------------------------------------------------------------------
@@ -681,6 +685,21 @@ class ParamAutoTuner:
             return progress_from_elapsed(float(self._elapsed_clock()))
         return progress_from_elapsed(time.perf_counter() - self.start_time)
 
+    def _search_progress(self) -> float:
+        """Progress under the configured basis.
+
+        ``PROGRESS_BASIS = "iteration"`` exists so a fixed-iteration comparison
+        cannot be moved by the host's speed. A schedule that kept reading the
+        clock would silently undo that: measured in M69, the same full
+        configuration and seed finished at 782.67 and 799.63. The runtime branch
+        is the historical behaviour, unchanged, and remains the default.
+        """
+        if basis_name() == "iteration":
+            return iteration_progress_from_counts(
+                int(self.iteration), int(self.max_iterations)
+            )
+        return self._elapsed_progress()
+
     # -----------------------------------------------------------------
     # Dynamic destroy-strength adjustment
     # -----------------------------------------------------------------
@@ -692,25 +711,27 @@ class ParamAutoTuner:
         """
         Dynamically shrink the destroy ratio as the run progresses.
 
-        - progress is normalized over the first 70% of the runtime budget and
-          then held constant.
+        - progress is normalized over the first 70% of the budget and then held
+          constant.
         - adaptive_value = base_degree * (1 - decay_rate * progress).
         - The result is clipped to [min_degree, max_degree].
 
         This controls perturbation strength during the destroy phase and avoids
         large structural disruptions late in the search.
 
-        The schedule reads the shared progress measure (elapsed runtime against
-        ``MAX_RUNTIME``) rather than iterations against the iteration ceiling, so
-        it does not depend on the host's speed or on how the ceiling was sized.
-        The tuner keeps its own ``start_time`` because it is fed iteration counts
-        instead of a tracker; the measure itself is the same one.
+        The schedule follows ``PROGRESS_BASIS``. Under the default ``"runtime"``
+        basis it reads elapsed seconds against ``MAX_RUNTIME``; under
+        ``"iteration"`` it reads completed/planned iterations, so a
+        fixed-iteration experiment stays independent of how long an iteration
+        took. Reading only the clock here - as this method did until M70 - made
+        the destroy strength depend on host load even when the outer protocol was
+        fixed-iteration, which is what forked otherwise identical runs.
         """
         if self.max_iterations <= 0 or self.iteration <= 0:
             return base_degree
 
         # Normalize over the first 70% of the budget, as before, then hold.
-        progress = min(1.0, self._elapsed_progress() / 0.7)
+        progress = min(1.0, self._search_progress() / 0.7)
         adaptive_value = base_degree * (1 - decay_rate * progress)
 
         stagnation_iters = max(0, int(getattr(self, "no_improve_iters", 0)))

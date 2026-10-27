@@ -12,8 +12,9 @@ late fleet priority     ``LATE_FLEET_HARD_PRIORITY_START_PROGRESS`` = 0.60
 actual-priority accept  ``ACTUAL_PRIORITY_START_PROGRESS`` = 0.70
 elite relinking window  ``ELITE_RELINK_MIN/MAX_PROGRESS`` = 0.15 / 0.95
 ML takeover             ``ML_TAKEOVER_MIN_PROGRESS`` = 0.30
-parameter decay         ``ParamAutoTuner`` (normalized over the first 70%)
+parameter decay         ``ParamAutoTuner.adaptive_degree`` (first 70%)
 epsilon-greedy decay    ``ML_EPSILON_BASE`` / ``..._EARLY_BOOST``
+ML warm-up budget       ``ML_WARMUP_BUDGET_FRACTION`` = 0.15
 ======================  =======================================
 
 A fraction of the budget must mean the same thing on every machine, so progress
@@ -30,6 +31,15 @@ It is still available behind ``PROGRESS_BASIS = "iteration"`` for one purpose:
 remove wall clock from the comparison, because the slower mode then has a higher
 elapsed/``MAX_RUNTIME`` value at the same iteration. The switch is off by
 default and must not be turned on for production runs.
+
+**Every schedule in the table must dispatch through this module.** A schedule
+that keeps its own clock is invisible in the table and reintroduces exactly the
+dependency the switch exists to remove: ``ParamAutoTuner.adaptive_degree`` did
+that until M70, and the same full/seed finished at 782.67 and 799.63 on a
+fixed-iteration protocol. New phase gates or decay schedules should call
+``search_progress`` / ``resolve_progress`` (or, where only iteration counts are
+available, ``iteration_progress_from_counts``) rather than reading
+``time`` directly.
 
 **One clock, one origin.** ``tracker.start_time`` is the only origin, recorded
 on the monotonic clock (``time.perf_counter``) so neither a wall-clock step nor
@@ -111,6 +121,16 @@ def iteration_progress(tracker: Any) -> float:
             "PROGRESS_BASIS='iteration' needs tracker.iteration and "
             f"tracker.max_iterations; got {type(tracker).__name__}"
         )
+    return iteration_progress_from_counts(int(completed), int(planned))
+
+
+def iteration_progress_from_counts(completed: int, planned: int) -> float:
+    """Iteration progress from bare counts, for callers without a tracker.
+
+    ``ParamAutoTuner`` already holds the current and planned iteration counts,
+    so it uses this entry point instead of keeping a second definition of the
+    measure. Same clamping and same error surface as ``iteration_progress``.
+    """
     planned_int = int(planned)
     if planned_int <= 0:
         raise ValueError(
