@@ -644,7 +644,10 @@ class ALNSOptimizer:
         """
         if not self.is_ml_enabled():
             return False
-        kind = str(getattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised"))
+        # Keep this fallback in sync with ALNSConfig.ML_SELECTOR_KIND. A stale
+        # "supervised" fallback would silently spend tuning budget on the retired
+        # path if the attribute were ever missing.
+        kind = str(getattr(ALNSConfig, "ML_SELECTOR_KIND", "bandit"))
         return kind.strip().lower() != "bandit"
 
     def increment_iteration(self) -> int:
@@ -1523,7 +1526,7 @@ class ALNSOptimizer:
             # supervised path keeps its (worse-performing) takeover behaviour
             # behind an explicit switch.
             selector_kind = str(
-                getattr(ALNSConfig, "ML_SELECTOR_KIND", "supervised")
+                getattr(ALNSConfig, "ML_SELECTOR_KIND", "bandit")
             ).strip().lower()
             weight_hook = feedback_hook = None
             takeover = None

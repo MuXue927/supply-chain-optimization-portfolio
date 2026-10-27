@@ -60,6 +60,16 @@ def test_run_seed_is_read_from_the_live_config(
     assert resolve_run_seed() == 7
 
 
+def test_ml_selector_defaults_to_bandit_in_both_places(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert ALNSConfig.ML_SELECTOR_KIND == "bandit"
+    monkeypatch.setattr(ALNSConfig, "ENABLE_ML_OPERATORS", True)
+    monkeypatch.delattr(ALNSConfig, "ML_SELECTOR_KIND")
+    optimizer = object.__new__(ALNSOptimizer)
+    assert optimizer.is_supervised_ml() is False
+
+
 def test_optimizers_created_after_a_seed_change_use_the_new_seed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
