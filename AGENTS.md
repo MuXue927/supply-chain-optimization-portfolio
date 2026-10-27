@@ -85,14 +85,24 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-27   HEAD = M68 docs commit (code da45e84 / docs 7e9662f)
-732 passed / 42 deselected
-覆盖率 67.13% 本地（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-27   HEAD = M69 docs commit (M68 code da45e84; M69 fix 8e40db5)
+733 passed / 42 deselected
+覆盖率 67.14% 本地（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
 small 12 轮默认路径仍为 41.52 / e0377bfd…，原始 medium 360 轮仍为 800.06 / 50bee477…。
 15 种子 × 360 轮：禁用 − 启用 = **+0.326，CI [−2.224,+2.876]**，6 胜/8 负/1 平；
 启用臂 surplus 354/354 调用/触发，禁用臂 0/0。⇒ 第三分支终局：完整生态位内无净收益，
 surplus 调查收口，重启需新的模型语义。
+M69 full 臂（bandit ML + tuner，原始 medium，360 轮 × 15 种子）：
+锚 ml seed42 = 784.11 / 85bbaa90…，与 M62 重建存档逐位一致。
+full 15/15 有效；full−ml = +6.821，CI [−0.166,+13.807]，5 胜/10 负；
+full−basic = +6.365，CI [−2.149,+14.880]。CI 跨零 ⇒ 第三分支：
+无 `full > ML` 排序证据，basic 已在结构天花板。
+深盆地 {99,17,31,123} full−ml +16.82（4/4 变差），浅盆地 +3.18（5 胜/6 负）。
+**新缺陷**：同一 full seed42 在 360 轮/固定哈希下重跑得 782.67 与 799.63；
+`adaptive_degree` 仍按 elapsed/MAX_RUNTIME，即使 PROGRESS_BASIS=iteration，
+iteration=180 时 100s/250s 分别给 0.2234/0.1835 degree。⇒ full 精确罚分不可复现，
+需要另立确定性 tuner 修复后再做 full 终审。15 个正式种子 tuner 实际调整均为 0。
 M66 regret N1（可信缓存基线）落地：objective(trust_inventory_cache=True) 公式不变、只跳过
 validate→compute_inventory 前置段。等价：0 分歧（2,651+407 次）、末解与指纹逐位相同（120/360 轮 + large）。
 速度：objective 6.769 → 1.265 s（−81%）；端到端 medium 120 轮 1.040×、360 轮 1.035×；

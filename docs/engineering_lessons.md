@@ -651,6 +651,37 @@ across 15 paired seeds. With the operator enabled it called 354 times and
 triggered 354 times. The outcome is therefore "reachable but no net benefit",
 not "dead code".
 
+### 3.10 A fixed-iteration protocol only works if every phase clock uses iterations
+
+**Symptom:** Two runs of the same full configuration (bandit selection plus the
+parameter tuner), same seed, same 360-iteration budget, and same hash seed
+finished at 782.67 and 799.63 with different vehicle fingerprints. The
+ml-only arm at the same seed reproduced its archived result exactly.
+
+**Root cause:** The outer protocol measured progress with iteration counts, but
+`ParamAutoTuner.adaptive_degree()` still measured progress as
+`elapsed / MAX_RUNTIME`. That value scales every destroy operator's removal
+degree, so host load changed the search trajectory even when the outer
+iteration budget was fixed. The same run also made 235 tuner adjustment calls
+without a single positive reward, so the observed difference came from early
+exploratory samples and time-scaled degrees, not from a tuned baseline that
+converged.
+
+**Remediation:** A protocol's progress basis must control every phase or
+schedule that can change a decision. Either make `adaptive_degree()` use the
+same iteration progress as `PROGRESS_BASIS`, or make the time-based schedule an
+explicit, separately reported arm. Do not describe an experiment as
+"fixed-iteration" while a secondary scheduler still reads the wall clock.
+
+**Evidence required:**
+
+- two reruns of the same seed and configuration produce identical final state
+  fingerprints, not merely the same iteration count;
+- instrumentation records zero tuner baseline moves when none occurred, and
+  separately reports exploratory samples;
+- a time-based scheduler is named in the protocol and its effect is measured
+  as a distinct variable.
+
 ---
 
 ## 4. Git and repository hygiene lessons
