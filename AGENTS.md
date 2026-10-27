@@ -87,7 +87,7 @@
 ```text
 2026-10-27   HEAD = M69 docs commit (M68 code da45e84; M69 fix 8e40db5)
 733 passed / 42 deselected
-覆盖率 67.14% 本地（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
+覆盖率 67.14% 本地 / 64.66% CI（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
 small 12 轮默认路径仍为 41.52 / e0377bfd…，原始 medium 360 轮仍为 800.06 / 50bee477…。
 15 种子 × 360 轮：禁用 − 启用 = **+0.326，CI [−2.224,+2.876]**，6 胜/8 负/1 平；
