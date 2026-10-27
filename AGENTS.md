@@ -85,9 +85,9 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-27   HEAD = M70 fix commit (M69 docs 5b9f7c0; M69 fix 8e40db5)
+2026-10-27   HEAD = M70 docs commit (code 1d78a27; gate 242a1b3)
 737 passed / 42 deselected
-覆盖率 68.12% 本地 / 65.67% CI（**门禁 65.0**，M70 抬门）   ruff 干净   盲 except Exception 110（原 249）
+覆盖率 68.14% 本地 / 65.66% CI（**门禁 65.0**，M70 抬门）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
 small 12 轮默认路径仍为 41.52 / e0377bfd…，原始 medium 360 轮仍为 800.06 / 50bee477…。
 15 种子 × 360 轮：禁用 − 启用 = **+0.326，CI [−2.224,+2.876]**，6 胜/8 负/1 平；
