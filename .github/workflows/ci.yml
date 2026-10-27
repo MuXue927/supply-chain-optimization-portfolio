@@ -42,12 +42,12 @@ jobs:
       # statements: a line that runs but whose decision is never seen to go the
       # other way no longer counts as covered.
       #
-      # Threshold: 64, from the CI baseline measured on run 40360689993
-      # (2026-10-27): 64.56%, minus 0.5pp of headroom, rounded down to the
+      # Threshold: 65, from the CI baseline measured on run 40478343116
+      # (2026-10-27, M70): 65.67%, minus 0.5pp of headroom, rounded down to the
       # nearest 0.5. The gap is deliberately under 1pp so the gate still has
-      # signal - the previous value (56) had been left 11pp below the measured
-      # baseline since 05e71b0, which meant deleting an entire test file would
-      # not have turned CI red.
+      # signal - the previous values (56, then 64) had been left more than 1pp
+      # below the measured baseline, which meant deleting an entire test file
+      # would not have turned CI red.
       #
       # Take the baseline from **CI**, not from a local run: CI skips four
       # CPLEX tests and measures ~2pp lower than a local Windows run, so a
@@ -61,4 +61,4 @@ jobs:
             --cov=single_period_delivery \
             --cov-branch \
             --cov-report=term-missing \
-            --cov-fail-under=64
+            --cov-fail-under=65

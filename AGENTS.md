@@ -53,7 +53,7 @@
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q --cov=multi_period_delivery `
-  --cov=single_period_delivery --cov-branch --cov-report=term --cov-fail-under=64
+  --cov=single_period_delivery --cov-branch --cov-report=term --cov-fail-under=65
 .\.venv\Scripts\python.exe -m ruff check multi-period-delivery single-period-delivery
 ```
 
@@ -87,7 +87,7 @@
 ```text
 2026-10-27   HEAD = M70 fix commit (M69 docs 5b9f7c0; M69 fix 8e40db5)
 737 passed / 42 deselected
-覆盖率 68.12% 本地（**门禁 64.0**，CI 实测待本轮确认）   ruff 干净   盲 except Exception 110（原 249）
+覆盖率 68.12% 本地 / 65.67% CI（**门禁 65.0**，M70 抬门）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
 small 12 轮默认路径仍为 41.52 / e0377bfd…，原始 medium 360 轮仍为 800.06 / 50bee477…。
 15 种子 × 360 轮：禁用 − 启用 = **+0.326，CI [−2.224,+2.876]**，6 胜/8 负/1 平；
