@@ -85,9 +85,9 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-27   HEAD = M69 docs commit (M68 code da45e84; M69 fix 8e40db5)
-733 passed / 42 deselected
-覆盖率 67.14% 本地 / 64.66% CI（**门禁 64.0**）   ruff 干净   盲 except Exception 110（原 249）
+2026-10-27   HEAD = M70 fix commit (M69 docs 5b9f7c0; M69 fix 8e40db5)
+737 passed / 42 deselected
+覆盖率 68.12% 本地（**门禁 64.0**，CI 实测待本轮确认）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
 small 12 轮默认路径仍为 41.52 / e0377bfd…，原始 medium 360 轮仍为 800.06 / 50bee477…。
 15 种子 × 360 轮：禁用 − 启用 = **+0.326，CI [−2.224,+2.876]**，6 胜/8 负/1 平；
@@ -103,6 +103,16 @@ full−basic = +6.365，CI [−2.149,+14.880]。CI 跨零 ⇒ 第三分支：
 `adaptive_degree` 仍按 elapsed/MAX_RUNTIME，即使 PROGRESS_BASIS=iteration，
 iteration=180 时 100s/250s 分别给 0.2234/0.1835 degree。⇒ full 精确罚分不可复现，
 需要另立确定性 tuner 修复后再做 full 终审。15 个正式种子 tuner 实际调整均为 0。
+M70 修复（**时钟→决策泄漏清零**）：sweep 11 个读取点，1 处坐实（adaptive_degree）、
+1 处协议下休眠（warm-up 门：bandit 不构造 selector，实测 trials=0/stop_reason=null）；
+`adaptive_degree` 与 `warmup_budget_exhausted` 改按 PROGRESS_BASIS dispatch，
+runtime 分支逐位不变（basic/ml/full 120 轮可控时钟：终解/指纹/degree 序列全同）。
+确定性：iteration 口径 full 双跑 + full/ml 50ms 延迟注入全部逐位相同；
+ml 锚 784.11 / 85bbaa90… 与 M62 存档一致。
+M70 重测终审（full 15/15 有效）：full 794.149，full−ml = +6.379，
+95% CI [+0.524,+12.235]，4 胜/11 负 ⇒ **分支 (a)：四臂表定稿，full 行是稳定罚分**；
+full−basic +5.924 (CI [+0.013,+11.835])；深盆地 +15.66 (4/4 变差)，浅盆地 +3.01 (CI 跨零)；
+tuner 基线调整仍 0。
 M66 regret N1（可信缓存基线）落地：objective(trust_inventory_cache=True) 公式不变、只跳过
 validate→compute_inventory 前置段。等价：0 分歧（2,651+407 次）、末解与指纹逐位相同（120/360 轮 + large）。
 速度：objective 6.769 → 1.265 s（−81%）；端到端 medium 120 轮 1.040×、360 轮 1.035×；

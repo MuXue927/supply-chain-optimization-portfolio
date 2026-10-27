@@ -682,6 +682,37 @@ explicit, separately reported arm. Do not describe an experiment as
 - a time-based scheduler is named in the protocol and its effect is measured
   as a distinct variable.
 
+### 3.11 Three entropy sources that break bitwise reproducibility
+
+A search that is "deterministic given the seed" can still fork between runs.
+This project found three distinct sources, each with its own detection method.
+When a rerun disagrees, check them in this order; a fix that only addresses one
+leaves the other two in place.
+
+| Source | Symptom | Detection | Fix pattern |
+| --- | --- | --- | --- |
+| Shared random stream | A mechanism that consumes a draw shifts every later random choice, so "same seed, one knob changed" is not one knob | Compare two runs with the mechanism disabled; they must be bit-identical | Give each component a private derived stream (`default_rng(seed*31+17)`, etc.) |
+| Set/dict iteration order | Same seed, different process: final objective differs by 3–30 points | Run twice with different `PYTHONHASHSEED` | Sort keys through one helper (`stable_order.py`) before iterating a set that reaches a decision |
+| Wall clock inside a decision | Same seed, same fixed-iteration budget, different host load: final state differs | Rerun with an artificial delay injected into an expensive call (50 ms is enough); or sweep a fake clock at a fixed iteration | Dispatch every schedule through one progress basis; never compare `time.*` to a budget inside a decision |
+
+The third class is the easiest to miss because the *outer* loop looks
+deterministic. Two concrete instances: the regret operator's per-call 10 s
+budget changes how many candidates are enumerated (workload-level, accepted as
+such), and `ParamAutoTuner.adaptive_degree` scaled destroy strength by
+`elapsed / MAX_RUNTIME` even under `PROGRESS_BASIS="iteration"`, which made a
+full/seed pair finish at 782.67 and 799.63.
+
+**Detection that actually catches it:** inject a delay into a hot call and
+assert the decision sequence is unchanged, not just the final cost. A final
+cost can coincide by luck; a list of every `adaptive_degree` return value
+cannot. Pair that with a unit test that feeds two different fake clocks at the
+same iteration and asserts equality.
+
+**Fix that stays fixed:** route the schedule through the shared progress
+module, and keep the runtime branch untouched so the production default stays
+bit-identical. Add the new schedule to the module docstring's policy table;
+an unlisted schedule is how this defect survived two rounds of auditing.
+
 ---
 
 ## 4. Git and repository hygiene lessons
