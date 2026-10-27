@@ -85,7 +85,7 @@
 ## 8. 当前基线快照（会过期，以 `修复主线重估` 顶部为准）
 
 ```text
-2026-10-27   HEAD = M70 docs commit (code 1d78a27; gate 242a1b3)
+2026-10-27   HEAD = M70 docs commit (code 1d78a27; gate 242a1b3); M71 实验轮零代码改动
 737 passed / 42 deselected
 覆盖率 68.14% 本地 / 65.66% CI（**门禁 65.0**，M70 抬门）   ruff 干净   盲 except Exception 110（原 249）
 M68 surplus 同实例归因：`DISABLED_DESTROY_OPERATORS` 默认 `()`，禁用 = 不注册；
@@ -113,6 +113,15 @@ M70 重测终审（full 15/15 有效）：full 794.149，full−ml = +6.379，
 95% CI [+0.524,+12.235]，4 胜/11 负 ⇒ **分支 (a)：四臂表定稿，full 行是稳定罚分**；
 full−basic +5.924 (CI [+0.013,+11.835])；深盆地 +15.66 (4/4 变差)，浅盆地 +3.01 (CI 跨零)；
 tuner 基线调整仍 0。
+M71 四臂表收尾认证（同一 HEAD 互证，medium/dataset_13 × 360 轮 × 15 种子）：
+basic 锚复现 800.06 / 50bee477…，ml 锚复现 784.11 / 85bbaa90…。
+四臂终解均值 **basic 788.225 / ml 787.770 / tuner-only 792.654 / full 794.149**，
+逃出 ≤800 分别 **13 / 14 / 13 / 12**。
+tuner-only 补臂 `tuner − basic` = **+4.429**，95% CI **[−2.221,+11.078]**，5 胜/10 负
+⇒ **分支 b：360 轮窗口内不可区分**（作附录注记，四臂表以 M70 定稿版为准）；
+深盆地 +16.88（4/4 变差），浅盆地 −0.10；tuner 基线移动全为 0。
+⇒ 结论：**叠加更多机制没有正收益；full 显著差于单开 ML**。
+论文素材包见 `local-only/论文素材-ALNS主线-2026-10-27.md`（汇编性质，未改 docs/）。
 M66 regret N1（可信缓存基线）落地：objective(trust_inventory_cache=True) 公式不变、只跳过
 validate→compute_inventory 前置段。等价：0 分歧（2,651+407 次）、末解与指纹逐位相同（120/360 轮 + large）。
 速度：objective 6.769 → 1.265 s（−81%）；端到端 medium 120 轮 1.040×、360 轮 1.035×；
