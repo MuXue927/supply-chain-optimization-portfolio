@@ -1,20 +1,20 @@
 # AGENTS.md — 本仓库的项目级工作规则
 
 > 适用于在这个仓库里做任何修改、测量或排障的 agent。
-> 依据：`local-only/提示词-Codex-2026-10-17.md` §4、`docs/engineering_lessons.md` §3.8/§4.4、
+> 依据：`local-only/docs/提示词-Codex-2026-10-17.md` §4、`docs/engineering_lessons.md` §3.8/§4.4、
 > 以及 2026-10-23 的 `refactor-protocol` 对齐验证。
 > 更细的原文以 `local-only/` 与 `docs/engineering_lessons.md` 为准。
 
 ## 0. 开工前先读（预计 30 分钟，读完再动手）
 
-1. `local-only/交接书-Codex-2026-10-16.md`（仓库地图、进度、踩过的坑）
-2. `local-only/修复主线重估-2026-10-16.md`（**唯一进度入口**，顶部有最新基线与当前优先级）
-3. 本轮相关的最近 1–3 轮记录（在 `local-only/修复记录-P1-2026-10-16.md` 末尾）
+1. `local-only/docs/交接书-Codex-2026-10-16.md`（仓库地图、进度、踩过的坑）
+2. `local-only/docs/修复主线重估-2026-10-16.md`（**唯一进度入口**，顶部有最新基线与当前优先级）
+3. 本轮相关的最近 1–3 轮记录（在 `local-only/docs/修复记录-P1-2026-10-16.md` 末尾）
 
 ## 1. 范围纪律（这些行为会浪费大量 token，直接禁止）
 
 - 不做全仓扫描；仓库地图已在交接书 §1。
-- 不重做 `local-only/审核-*.md` 的三轮审核，其结论已逐条处置。
+- 不重做 `local-only/docs/审核-*.md` 的三轮审核，其结论已逐条处置。
 - 不重测已知数字；只有"复查某个具体数字"才允许重测。
 - 不碰 `single-period-delivery/`、任何 `monolithic/`、任何 `cplex_api_*/`、任何 Gurobi 相关代码。
 - 不 mock Gurobi（本机无 license）。
